@@ -10,8 +10,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 import logging
-logger = logging.getLogger(__name__)
+
 import os
+from datetime import datetime, date
+from typing import Optional, Dict, Any, List, Union  # ← Add this line
+
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self, db_path="data/tender_system.db"):
