@@ -1,0 +1,460 @@
+"""
+Analysis History Module - Refactored
+View, analyze, and export saved tender analyses with enhanced decision support
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+from database.db_manager import DatabaseManager
+from modules.pdf_generator import generate_enhanced_analysis_report
+from modules.ppr_viz import render_ppr_compliance_viz
+
+db = DatabaseManager()
+
+# =============================================================================
+# 🔹 CONFIGURATION & SESSION STATE
+# =============================================================================
+def _init_history_page_state():
+    """Initialize page-specific session state"""
+    defaults = {
+        'history_filter_type': 'All',
+        'history_filter_risk': 'All',
+        'history_filter_status': 'All',
+        'history_search_term': '',
+        'selected_analysis_id': None,
+        'auto_competitor_count': 3,  # ✅ Configurable competitor count
+    }
+    for k, v in defaults.items():
+        st.session_state.setdefault(k, v)
+
+def _get_best_bid_recommendation(analysis_dict: dict, historical_df: pd.DataFrame) -> dict:
+    """
+    Calculate best bid to win using historical patterns + PPR 2025 logic
+    Returns recommendation with confidence metrics
+    """
+    est = analysis_record.get('official_estimate', 0)
+    if est <= 0:
+        return {'bid': 0, 'confidence': 0, 'reason': 'Invalid estimate'}
+    
+    # Get historical win rates by bid ratio
+    if not historical_df.empty and 'bid_ratio' in historical_df.columns and 'bid_status' in historical_df.columns:
+        # Filter similar tenders (same procurement type, entity pattern)
+        similar = historical_df[
+            (historical_df['procurement_type'] == analysis_record.get('procurement_type')) &
+            (historical_df['official_estimate'].between(est * 0.5, est * 2.0))
+        ]
+        
+        if not similar.empty:
+            # Calculate win rate by bid ratio bucket
+            similar['ratio_bucket'] = pd.cut(
+                similar['bid_ratio'], 
+                bins=[0, 0.85, 0.90, 0.95, 1.0], 
+                labels=['<85%', '85-90%', '90-95%', '95-100%']
+            )
+            win_rates = similar.groupby('ratio_bucket')['bid_status'].apply(
+                lambda x: (x == 'Won').sum() / len(x) * 100
+            )
+            
+            # Find optimal ratio (highest win rate with acceptable margin)
+            best_ratio = win_rates.idxmax() if not win_rates.empty else '90-95%'
+            ratio_map = {'<85%': 0.87, '85-90%': 0.90, '90-95%': 0.93, '95-100%': 0.96}
+            optimal_ratio = ratio_map.get(best_ratio, 0.93)
+            confidence = win_rates.max() if not win_rates.empty else 50
+            
+            return {
+                'bid': round(est * optimal_ratio, 2),
+                'ratio': optimal_ratio,
+                'confidence': round(confidence, 1),
+                'reason': f"Based on {len(similar)} similar historical tenders"
+            }
+    
+    # Fallback: PPR 2025 compliant recommendation
+    from modules.advanced_bid_optimizer import calculate_optimal_bid_ppr2025
+    result = calculate_optimal_bid_ppr2025(
+        official_estimate=est,
+        competitor_bids=[],  # No competitor data
+        procurement_type=analysis_record.get('procurement_type', 'goods'),
+        risk_tolerance=analysis_record.get('risk_tolerance', 'moderate')
+    )
+    
+    return {
+        'bid': result['optimal_bid'],
+        'ratio': result['bid_ratio'],
+        'confidence': result['win_probability'] * 100,
+        'reason': "PPR 2025 compliant calculation (no historical data)"
+    }
+
+
+def show_analysis_history():
+    """Tender analysis history page with enhanced decision support"""
+    _init_history_page_state()
+    
+    st.markdown("""
+    <div class="main-header">
+        <h1>📜 Tender Analysis History</h1>
+        <p>Review past analyses, track win rates, and get data-driven bid recommendations</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # =============================================================================
+    # 🔹 1. LOAD & FILTER DATA
+    # =============================================================================
+    try:
+        analyses_df = db.get_user_analyses(
+            st.session_state.user_id,
+            st.session_state.company_id,
+            st.session_state.user_role,
+            limit=200
+        )
+    except Exception as e:
+        st.error(f"❌ Error loading analyses: {str(e)}")
+        return
+    
+    if analyses_df is None or analyses_df.empty:
+        st.info("📭 No saved analyses found. Run your first analysis in **Three-Tier Bid Optimization**!")
+        if st.button("🚀 Go to Bid Optimization", type="primary", use_container_width=True):
+            st.session_state.page = "new_analysis"
+            st.rerun()
+        return
+    
+    # Convert dates
+    if 'analysis_date' in analyses_df.columns:
+        analyses_df['analysis_date'] = pd.to_datetime(analyses_df['analysis_date'], errors='coerce')
+    
+    # =============================================================================
+    # 🔹 2. FILTERS & SEARCH (Compact Layout)
+    # =============================================================================
+    with st.expander("🔍 Filters & Search", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            type_opts = ["All"] + list(analyses_df['analysis_type'].dropna().unique()) if 'analysis_type' in analyses_df.columns else ["All"]
+            st.session_state.history_filter_type = st.selectbox("Type", type_opts, key="hist_type")
+        
+        with col2:
+            risk_opts = ["All"] + list(analyses_df['risk_level'].dropna().unique()) if 'risk_level' in analyses_df.columns else ["All"]
+            st.session_state.history_filter_risk = st.selectbox("Risk", risk_opts, key="hist_risk")
+        
+        with col3:
+            status_opts = ["All", "Won", "Lost", "Pending"]
+            st.session_state.history_filter_status = st.selectbox("Status", status_opts, key="hist_status")
+        
+        with col4:
+            st.session_state.history_search_term = st.text_input("🔍 Search", placeholder="Tender ID/Title...")
+    
+    # Apply filters
+    filtered = analyses_df.copy()
+    if st.session_state.history_filter_type != "All" and 'analysis_type' in filtered.columns:
+        filtered = filtered[filtered['analysis_type'] == st.session_state.history_filter_type]
+    if st.session_state.history_filter_risk != "All" and 'risk_level' in filtered.columns:
+        filtered = filtered[filtered['risk_level'] == st.session_state.history_filter_risk]
+    if st.session_state.history_filter_status != "All" and 'bid_status' in filtered.columns:
+        filtered = filtered[filtered['bid_status'] == st.session_state.history_filter_status]
+    if st.session_state.history_search_term and ('tender_id' in filtered.columns or 'tender_title' in filtered.columns):
+        term = st.session_state.history_search_term.lower()
+        filtered = filtered[
+            filtered['tender_id'].astype(str).str.contains(term, case=False, na=False) |
+            filtered['tender_title'].astype(str).str.contains(term, case=False, na=False)
+        ]
+    
+    # =============================================================================
+    # 🔹 3. SUMMARY STATISTICS (Enhanced)
+    # =============================================================================
+    st.markdown("### 📊 Performance Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Analyses", len(filtered))
+    with col2:
+        won = len(filtered[filtered['bid_status'] == 'Won']) if 'bid_status' in filtered.columns else 0
+        st.metric("Won Tenders", won)
+    with col3:
+        win_rate = (won / len(filtered) * 100) if len(filtered) > 0 else 0
+        st.metric("Win Rate", f"{win_rate:.0f}%")
+    with col4:
+        avg_bid = filtered['recommended_bid'].mean() if 'recommended_bid' in filtered.columns and not filtered.empty else 0
+        st.metric("Avg Recommended Bid", f"BDT {avg_bid:,.0f}")
+    
+    # Win rate trend (if enough data)
+    if len(filtered) >= 5 and 'analysis_date' in filtered.columns and 'bid_status' in filtered.columns:
+        with st.expander("📈 Win Rate Trend", expanded=False):
+            trend_df = filtered.sort_values('analysis_date').copy()
+            trend_df['cumulative_win_rate'] = trend_df['bid_status'].apply(lambda x: 1 if x == 'Won' else 0).cumsum() / range(1, len(trend_df)+1) * 100
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=trend_df['analysis_date'], y=trend_df['cumulative_win_rate'], mode='lines+markers', name='Win Rate %'))
+            fig.update_layout(title="Cumulative Win Rate Over Time", xaxis_title="Date", yaxis_title="Win Rate (%)", height=250)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # =============================================================================
+    # 🔹 4. ANALYSES TABLE (Interactive)
+    # =============================================================================
+    st.markdown("### 📋 Saved Analyses")
+    
+    display_cols = ['id', 'analysis_date', 'tender_id', 'tender_title', 'procuring_entity', 
+                    'official_estimate', 'recommended_bid', 'success_probability', 
+                    'risk_level', 'analysis_type', 'bid_status']
+    available_cols = [c for c in display_cols if c in filtered.columns]
+    
+    if available_cols:
+        display_df = filtered[available_cols].copy()
+        
+        # Format for display
+        for col in ['official_estimate', 'recommended_bid']:
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(lambda x: f"BDT {x:,.0f}" if pd.notna(x) else "N/A")
+        if 'success_probability' in display_df.columns:
+            display_df['success_probability'] = display_df['success_probability'].apply(lambda x: f"{x*100:.0f}%" if pd.notna(x) else "N/A")
+        if 'analysis_date' in display_df.columns:
+            display_df['analysis_date'] = display_df['analysis_date'].dt.strftime('%Y-%m-%d %H:%M')
+        if 'bid_status' in display_df.columns:
+            display_df['bid_status'] = display_df['bid_status'].apply(
+                lambda x: f"🏆 {x}" if x == 'Won' else (f"❌ {x}" if x == 'Lost' else f"⏳ {x}")
+            )
+        
+        # Interactive table with selection
+        event = st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode=["single-row"]
+        )
+        
+        # Handle selection
+        if event.selection.rows:
+            selected_idx = event.selection.rows[0]
+            selected_id = display_df.iloc[selected_idx]['id']
+            st.session_state.selected_analysis_id = int(selected_id)
+    
+    # =============================================================================
+    # 🔹 5. DETAILED VIEW (Tabs + Enhanced Visuals)
+    # =============================================================================
+    if st.session_state.selected_analysis_id:
+        # Fetch full record
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tender_analyses WHERE id = ?", (st.session_state.selected_analysis_id,))
+        cols = [d[0] for d in cursor.description]
+        record = dict(zip(cols, cursor.fetchone())) if cursor.fetchone else None
+        conn.close()
+        
+        if record:
+            st.markdown("---")
+            st.markdown(f"### 🔍 Analysis Details: `{record.get('tender_id')}`")
+            
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "📋 Tender Info", "🎯 Bid Analysis", "📈 PPR Compliance", "📊 Best Bid to Win", "📄 Report"
+            ])
+            
+            with tab1:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### 📋 Basic Information")
+                    st.info(f"""
+                    - **Tender ID:** `{record.get('tender_id')}`
+                    - **Title:** {record.get('tender_title', 'N/A')[:100]}{'...' if len(str(record.get('tender_title',''))) > 100 else ''}
+                    - **Entity:** {record.get('procuring_entity', 'N/A')}
+                    - **Type:** {record.get('procurement_type', 'N/A').upper()}
+                    - **Location:** {record.get('division', '')} / {record.get('district', '')}
+                    """)
+                with col2:
+                    st.markdown("#### 📅 Analysis Metadata")
+                    st.info(f"""
+                    - **Analyzed:** {record.get('analysis_date', 'N/A')}
+                    - **Method:** {record.get('analysis_type', 'N/A')}
+                    - **Status:** {record.get('bid_status', 'Pending')}
+                    - **Competitors:** {record.get('competitor_count', 0)}
+                    - **Risk:** {record.get('risk_level', 'N/A')}
+                    """)
+            
+            with tab2:
+                col1, col2 = st.columns(2)
+                with col1:
+                    est = record.get('official_estimate', 0)
+                    rec = record.get('recommended_bid', 0)
+                    ratio = rec / est * 100 if est > 0 else 0
+                    
+                    st.markdown("#### 🎯 Bid Metrics")
+                    st.metric("Official Estimate", f"BDT {est:,.0f}")
+                    st.metric("Recommended Bid", f"BDT {rec:,.0f}", delta=f"{ratio:.1f}% of estimate")
+                    st.metric("Win Probability", f"{record.get('success_probability', 0)*100:.0f}%")
+                    
+                    # Win probability gauge
+                    wp = record.get('success_probability', 0) * 100
+                    fig_gauge = go.Figure(go.Indicator(
+                        mode="gauge+number", value=wp,
+                        title={'text': "Win Probability"},
+                        gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#22c55e"},
+                               'steps': [{'range': [0, 33], 'color': "#fecaca"}, {'range': [33, 66], 'color': "#fde68a"}, {'range': [66, 100], 'color': "#bbf7d0"}]}
+                    ))
+                    fig_gauge.update_layout(height=220)
+                    st.plotly_chart(fig_gauge, use_container_width=True)
+                
+                with col2:
+                    st.markdown("#### 💰 Financial Projection")
+                    cost = est * 0.85
+                    profit = rec - cost
+                    exp_value = profit * record.get('success_probability', 0)
+                    
+                    st.metric("Estimated Cost", f"BDT {cost:,.0f}")
+                    st.metric("Expected Profit", f"BDT {profit:,.0f}", delta_color="normal")
+                    st.metric("Expected Value", f"BDT {exp_value:,.0f}")
+                    
+                    # Risk badge
+                    risk = record.get('risk_level', 'MEDIUM')
+                    risk_colors = {'LOW': '#22c55e', 'MEDIUM-LOW': '#84cc16', 'MEDIUM': '#f59e0b', 'MEDIUM-HIGH': '#f97316', 'HIGH': '#ef4444'}
+                    st.markdown(f"""
+                    <div style="background:{risk_colors.get(risk, '#94a3b8')}20; padding:12px; border-radius:8px; border-left:4px solid {risk_colors.get(risk, '#94a3b8')};">
+                        <strong>Risk Assessment:</strong> {risk}<br>
+                        <small>Based on bid ratio, market conditions, and PPR compliance</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            with tab3:
+                # ✅ Integrated PPR Compliance Visualization
+                render_ppr_compliance_viz(
+                    comparison={'advanced': record},  # Pass as comparison dict
+                    tender_data=record
+                )
+                
+                # Detailed calculation expander
+                with st.expander("🔍 View PPR 2025 Calculation Steps", expanded=False):
+                    st.markdown("##### Formula Reference (PPR 2025 Clause 49)")
+                    st.latex(r"\bar{X} = 0.5 \times \text{Avg}_{\text{comp}} + 0.2 \times \text{Est} + 0.3 \times \text{NPPI}")
+                    st.latex(r"S_d = \sqrt{\frac{\sum(\bar{X} - X_i)^2}{n}}")
+                    st.latex(r"\text{SLT}_{\text{threshold}} = \bar{X} - S_d")
+                    st.caption("Bids below SLT threshold may be rejected as Significantly Low-priced Tenders")
+            
+            with tab4:
+                # ✅ "Best Bid to Win" Recommendation Engine
+                st.markdown("### 🎯 Best Bid to Win Recommendation")
+                
+                # Configuration: Competitor Count for Auto-Calculation
+                st.markdown("#### ⚙️ Calculation Settings")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.session_state.auto_competitor_count = st.slider(
+                        "Number of Competitors for Auto-Calculation",
+                        min_value=2, max_value=10, value=st.session_state.auto_competitor_count,
+                        help="More competitors = more realistic bid distribution simulation"
+                    )
+                with col2:
+                    risk_pref = st.selectbox(
+                        "Risk Preference",
+                        options=['aggressive', 'moderate', 'conservative'],
+                        index=['aggressive', 'moderate', 'conservative'].index(record.get('risk_tolerance', 'moderate')),
+                        help="Aggressive: Lower bids, higher risk | Conservative: Higher bids, safer win"
+                    )
+                
+                if st.button("🔄 Recalculate Best Bid", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing historical patterns..."):
+                        best_bid = _get_best_bid_recommendation(record, analyses_df)
+                        st.session_state.best_bid_cache = best_bid
+                
+                # Show recommendation
+                best_bid = st.session_state.get('best_bid_cache')
+                if best_bid:
+                    st.success(f"""
+                    ### 💡 Recommended Bid: **BDT {best_bid['bid']:,.0f}**
+                    - **Ratio:** {best_bid['ratio']*100:.1f}% of estimate
+                    - **Confidence:** {best_bid['confidence']:.1f}%
+                    - **Reason:** {best_bid['reason']}
+                    """)
+                    
+                    # Comparison chart
+                    est = record.get('official_estimate', 0)
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=['Official Estimate', 'Original Rec.', 'Best to Win'],
+                        y=[est, record.get('recommended_bid', 0), best_bid['bid']],
+                        text=[f"BDT {est:,.0f}", f"BDT {record.get('recommended_bid',0):,.0f}", f"BDT {best_bid['bid']:,.0f}"],
+                        textposition='auto',
+                        marker_color=['#64748b', '#3b82f6', '#22c55e']
+                    ))
+                    fig.update_layout(title="Bid Comparison", yaxis_title="Amount (BDT)", height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Action buttons
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📥 Use This Bid", use_container_width=True):
+                            # Copy to clipboard or set as default for next analysis
+                            st.toast(f"💡 Best bid BDT {best_bid['bid']:,.0f} copied to clipboard!", icon="✅")
+                    with col2:
+                        if st.button("🔁 Re-run Analysis", use_container_width=True):
+                            # Redirect to analysis page with pre-filled best bid
+                            st.session_state.page = "new_analysis"
+                            st.session_state.prefill_best_bid = best_bid['bid']
+                            st.rerun()
+                else:
+                    st.info("👆 Click 'Recalculate Best Bid' to generate recommendation")
+            
+            with tab5:
+                # ✅ Enhanced PDF Report Generation
+                st.markdown("#### 📄 Enhanced Report Generation")
+                st.caption("Generate a professional PDF with charts, PPR compliance, and decision support visuals")
+                
+                if st.button("📑 Generate Enhanced PDF Report", type="primary", use_container_width=True):
+                    with st.spinner("🔄 Generating report with visuals..."):
+                        try:
+                            user_info = {
+                                'full_name': st.session_state.get('full_name', 'N/A'),
+                                'company_name': st.session_state.get('company_name', 'N/A'),
+                                'role': st.session_state.get('user_role', 'N/A'),
+                                'email': st.session_state.get('user_email', 'N/A'),
+                            }
+                            
+                            # Generate enhanced PDF with charts
+                            pdf_buffer = generate_enhanced_analysis_report(record, user_info, include_charts=True)
+                            
+                            fname = f"Enhanced_Analysis_{record.get('tender_id', 'Report')}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                            st.download_button(
+                                "💾 Download Enhanced PDF",
+                                data=pdf_buffer,
+                                file_name=fname,
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                            st.success("✅ Enhanced PDF ready with charts & decision visuals!")
+                            
+                        except Exception as e:
+                            st.error(f"❌ PDF generation failed: {str(e)}")
+                            st.info("Ensure reportlab and plotly are installed: `pip install reportlab plotly`")
+    
+    # =============================================================================
+    # 🔹 6. BULK ACTIONS & EXPORT
+    # =============================================================================
+    st.markdown("---")
+    st.markdown("### 📥 Export & Management")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        csv = filtered.to_csv(index=False)
+        st.download_button(
+            "📊 Export Filtered (CSV)",
+            data=csv,
+            file_name=f"analyses_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    
+    with col2:
+        if st.button("🗑️ Delete Draft Analyses", type="secondary", use_container_width=True):
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM tender_analyses WHERE is_final_submitted = 0 AND company_id = ?",
+                (st.session_state.company_id,)
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            st.success(f"✅ Deleted {deleted} draft analyses")
+            st.rerun()
+    
+    with col3:
+        st.caption("⚠️ Deleting drafts cannot be undone")
