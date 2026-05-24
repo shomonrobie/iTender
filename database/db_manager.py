@@ -1466,403 +1466,470 @@ class DatabaseManager:
         
         conn.commit()
         conn.close()
-def update_historical_tender_schema(self):
-    """Add new columns for winner tracking if not exists"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    # Add winning_company_type column
-    try:
-        cursor.execute("ALTER TABLE historical_tenders ADD COLUMN winning_company_type TEXT")
-        print("✓ Added winning_company_type column")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    
-    # Add our_awarded_price column
-    try:
-        cursor.execute("ALTER TABLE historical_tenders ADD COLUMN our_awarded_price REAL")
-        print("✓ Added our_awarded_price column")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    
-    conn.commit()
-    conn.close()
-
-def get_historical_tenders_with_winner(self, company_id, procurement_type=None, winner_type=None, limit=100):
-    """Get historical tenders with winner filtering"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    query = '''
-    SELECT * FROM historical_tenders 
-    WHERE company_id = ?
-    '''
-    params = [company_id]
-    
-    if procurement_type:
-        query += " AND procurement_type = ?"
-        params.append(procurement_type)
-    
-    if winner_type and winner_type != "All":
-        query += " AND winning_company_type = ?"
-        params.append(winner_type)
-    
-    query += " ORDER BY award_date DESC LIMIT ?"
-    params.append(limit)
-    
-    cursor.execute(query, params)
-    columns = [description[0] for description in cursor.description]
-    data = cursor.fetchall()
-    conn.close()
-    
-    if data:
-        return pd.DataFrame(data, columns=columns)
-    return pd.DataFrame()
-
-def get_winning_statistics(self, company_id, procurement_type=None):
-    """Get winning statistics for analysis"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    query = '''
-    SELECT 
-        COUNT(*) as total_tenders,
-        SUM(CASE WHEN winning_company_type = 'Our Company' THEN 1 ELSE 0 END) as our_wins,
-        SUM(CASE WHEN winning_company_type = 'Competitor' THEN 1 ELSE 0 END) as competitor_wins,
-        AVG(CASE WHEN winning_company_type = 'Our Company' THEN awarded_price ELSE NULL END) as avg_our_winning_price,
-        AVG(CASE WHEN winning_company_type = 'Competitor' THEN awarded_price ELSE NULL END) as avg_competitor_winning_price,
-        AVG(official_estimate) as avg_estimate
-    FROM historical_tenders 
-    WHERE company_id = ?
-    '''
-    params = [company_id]
-    
-    if procurement_type:
-        query += " AND procurement_type = ?"
-        params.append(procurement_type)
-    
-    cursor.execute(query, params)
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result:
-        return {
-            'total_tenders': result[0] or 0,
-            'our_wins': result[1] or 0,
-            'competitor_wins': result[2] or 0,
-            'our_win_rate': (result[1] / result[0] * 100) if result[0] > 0 else 0,
-            'avg_our_winning_price': result[3] or 0,
-            'avg_competitor_winning_price': result[4] or 0,
-            'avg_estimate': result[5] or 0
-        }
-    return None
-def save_historical_tender(self, user_id, company_id, data):
-    """Save historical tender data with competitor details and winner info"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-    INSERT INTO historical_tenders (
-        user_id, company_id, tender_id, tender_title, procuring_entity,
-        procurement_type, official_estimate, awarded_price, our_awarded_price,
-        num_competitors, total_bidders, our_rank, award_date, competitors_data,
-        winning_competitor, winning_company_type, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        user_id, company_id, data['tender_id'], data['tender_title'],
-        data['procuring_entity'], data['procurement_type'], data['official_estimate'],
-        data['awarded_price'], data.get('our_awarded_price'),
-        data.get('num_competitors', 0), data.get('total_bidders', 0),
-        data.get('our_rank'), data['award_date'], data.get('competitors_data'),
-        data.get('winning_competitor'), data.get('winning_company_type'),
-        data.get('notes', '')
-    ))
-    
-    tender_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return tender_id
-
-def add_tender_lot(self, tender_id, lot_data):
-    """Add lot information for a tender"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-    INSERT INTO tender_lots (tender_id, lot_no, lot_description, location, 
-                             security_amount, estimated_value, start_date, completion_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (tender_id, lot_data.get('lot_no'), lot_data.get('description'),
-          lot_data.get('location'), lot_data.get('security_amount', 0),
-          lot_data.get('estimated_value', 0), lot_data.get('start_date'),
-          lot_data.get('completion_date')))
-    
-    conn.commit()
-    conn.close()
-def update_tender_lock_status(self, tender_id: int, locked: bool) -> bool:
-    """Update the lock status of a tender"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        UPDATE company_tenders 
-        SET is_locked = ?, locked_at = ?, locked_by = ?
-        WHERE id = ?
-        ''', (
-            1 if locked else 0,
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S') if locked else None,
-            st.session_state.user_id if locked else None,
-            tender_id
-        ))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update tender lock status: {e}")
-        return False
-
-
-def create_tender_copy(self, original_tender_id: int, created_by: int) -> Optional[int]:
-    """Create a backup copy of a locked tender"""
-    try:
+    def update_historical_tender_schema(self):
+        """Add new columns for winner tracking if not exists"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Fetch original tender
-        cursor.execute('SELECT * FROM company_tenders WHERE id = ?', (original_tender_id,))
-        original = cursor.fetchone()
-        if not original:
+        # Add winning_company_type column
+        try:
+            cursor.execute("ALTER TABLE historical_tenders ADD COLUMN winning_company_type TEXT")
+            print("✓ Added winning_company_type column")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        # Add our_awarded_price column
+        try:
+            cursor.execute("ALTER TABLE historical_tenders ADD COLUMN our_awarded_price REAL")
+            print("✓ Added our_awarded_price column")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        conn.commit()
+        conn.close()
+
+    def get_historical_tenders_with_winner(self, company_id, procurement_type=None, winner_type=None, limit=100):
+        """Get historical tenders with winner filtering"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = '''
+        SELECT * FROM historical_tenders 
+        WHERE company_id = ?
+        '''
+        params = [company_id]
+        
+        if procurement_type:
+            query += " AND procurement_type = ?"
+            params.append(procurement_type)
+        
+        if winner_type and winner_type != "All":
+            query += " AND winning_company_type = ?"
+            params.append(winner_type)
+        
+        query += " ORDER BY award_date DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        columns = [description[0] for description in cursor.description]
+        data = cursor.fetchall()
+        conn.close()
+        
+        if data:
+            return pd.DataFrame(data, columns=columns)
+        return pd.DataFrame()
+
+    def get_winning_statistics(self, company_id, procurement_type=None):
+        """Get winning statistics for analysis"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = '''
+        SELECT 
+            COUNT(*) as total_tenders,
+            SUM(CASE WHEN winning_company_type = 'Our Company' THEN 1 ELSE 0 END) as our_wins,
+            SUM(CASE WHEN winning_company_type = 'Competitor' THEN 1 ELSE 0 END) as competitor_wins,
+            AVG(CASE WHEN winning_company_type = 'Our Company' THEN awarded_price ELSE NULL END) as avg_our_winning_price,
+            AVG(CASE WHEN winning_company_type = 'Competitor' THEN awarded_price ELSE NULL END) as avg_competitor_winning_price,
+            AVG(official_estimate) as avg_estimate
+        FROM historical_tenders 
+        WHERE company_id = ?
+        '''
+        params = [company_id]
+        
+        if procurement_type:
+            query += " AND procurement_type = ?"
+            params.append(procurement_type)
+        
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'total_tenders': result[0] or 0,
+                'our_wins': result[1] or 0,
+                'competitor_wins': result[2] or 0,
+                'our_win_rate': (result[1] / result[0] * 100) if result[0] > 0 else 0,
+                'avg_our_winning_price': result[3] or 0,
+                'avg_competitor_winning_price': result[4] or 0,
+                'avg_estimate': result[5] or 0
+            }
+        return None
+    def save_historical_tender(self, user_id, company_id, data):
+        """Save historical tender data with competitor details and winner info"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        INSERT INTO historical_tenders (
+            user_id, company_id, tender_id, tender_title, procuring_entity,
+            procurement_type, official_estimate, awarded_price, our_awarded_price,
+            num_competitors, total_bidders, our_rank, award_date, competitors_data,
+            winning_competitor, winning_company_type, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id, company_id, data['tender_id'], data['tender_title'],
+            data['procuring_entity'], data['procurement_type'], data['official_estimate'],
+            data['awarded_price'], data.get('our_awarded_price'),
+            data.get('num_competitors', 0), data.get('total_bidders', 0),
+            data.get('our_rank'), data['award_date'], data.get('competitors_data'),
+            data.get('winning_competitor'), data.get('winning_company_type'),
+            data.get('notes', '')
+        ))
+        
+        tender_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return tender_id
+
+    def add_tender_lot(self, tender_id, lot_data):
+        """Add lot information for a tender"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        INSERT INTO tender_lots (tender_id, lot_no, lot_description, location, 
+                                security_amount, estimated_value, start_date, completion_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (tender_id, lot_data.get('lot_no'), lot_data.get('description'),
+            lot_data.get('location'), lot_data.get('security_amount', 0),
+            lot_data.get('estimated_value', 0), lot_data.get('start_date'),
+            lot_data.get('completion_date')))
+        
+        conn.commit()
+        conn.close()
+    def update_tender_lock_status(self, tender_id: int, locked: bool) -> bool:
+        """Update the lock status of a tender"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE company_tenders 
+            SET is_locked = ?, locked_at = ?, locked_by = ?
+            WHERE id = ?
+            ''', (
+                1 if locked else 0,
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S') if locked else None,
+                st.session_state.user_id if locked else None,
+                tender_id
+            ))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update tender lock status: {e}")
+            return False
+
+
+    def create_tender_copy(self, original_tender_id: int, created_by: int) -> Optional[int]:
+        """Create a backup copy of a locked tender"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Fetch original tender
+            cursor.execute('SELECT * FROM company_tenders WHERE id = ?', (original_tender_id,))
+            original = cursor.fetchone()
+            if not original:
+                return None
+            
+            # Create copy with new ID and copy flags
+            cursor.execute('''
+            INSERT INTO company_tenders (
+                company_id, tender_id, tender_title, procuring_entity, official_estimate,
+                submission_deadline, procurement_type, division, district, thana,
+                tender_security, document_fee, evaluation_type, created_at,
+                is_locked, is_copy, original_tender_id, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                original[1],  # company_id
+                f"{original[2]}_COPY",  # tender_id with COPY suffix
+                f"{original[3]} (Backup Copy)",  # title with indicator
+                original[4], original[5], original[6], original[7],
+                original[8], original[9], original[10], original[11],
+                original[12], original[13], datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                0,  # is_locked = False for copy
+                1,  # is_copy = True
+                original_tender_id,  # reference to original
+                created_by
+            ))
+            
+            new_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return new_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create tender copy: {e}")
+            return None
+
+
+    def delete_tender(self, tender_id: int) -> bool:
+        """Soft delete a tender (mark as inactive)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE company_tenders 
+            SET is_active = 0, deleted_at = ?, deleted_by = ?
+            WHERE id = ?
+            ''', (
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                st.session_state.user_id,
+                tender_id
+            ))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete tender: {e}")
+            return False
+        
+
+
+    def increment_analysis_usage(self, user_id: int, company_id: Optional[int] = None) -> bool:
+        """Increment usage on the active subscription (company first, then personal)"""
+        try:
+            sub = self.get_effective_subscription(user_id, company_id)
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if sub['owner_type'] == 'company':
+                cursor.execute('''
+                UPDATE subscriptions SET analyses_used = analyses_used + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE company_id = ?
+                ''', (company_id,))
+            elif sub['owner_type'] == 'user':
+                cursor.execute('''
+                UPDATE subscriptions SET analyses_used = analyses_used + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                ''', (user_id,))
+                
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Usage increment error: {e}")
+            return False
+
+
+    def add_consultant_client(self, consultant_id: int, client_company_id: int, role: str = 'manager') -> bool:
+        """Link a consultant to a client company"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT OR IGNORE INTO consultant_clients (consultant_user_id, client_company_id, role)
+            VALUES (?, ?, ?)
+            ''', (consultant_id, client_company_id, role))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Client relationship error: {e}")
+            return False
+
+    def create_individual_user(self, user_data: Dict) -> tuple:
+        """Create an individual user (no company)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Create a personal company for the individual
+            personal_company_name = f"{user_data['full_name']} (Individual)"
+            
+            cursor.execute('''
+                INSERT INTO companies (company_name, email, phone, division, is_active)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (personal_company_name, user_data['email'], user_data.get('phone', ''), 'Dhaka', 1))
+            
+            company_id = cursor.lastrowid
+            
+            # Hash password
+            import bcrypt
+            hashed = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            cursor.execute('''
+                INSERT INTO users (company_id, username, password, email, full_name, phone, 
+                                role, account_type, status, is_approved, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                company_id,
+                user_data['username'],
+                hashed,
+                user_data['email'],
+                user_data['full_name'],
+                user_data.get('phone', ''),
+                user_data['role'],
+                'individual',
+                'active',
+                1,
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ))
+            
+            user_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            return True, user_id
+        except Exception as e:
+            logger.error(f"Individual user creation failed: {e}")
+            return False, str(e)
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get user by email address"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, username, password, email, full_name, role, company_id, 
+                    is_approved, account_type, auth_provider, created_at
+                FROM users 
+                WHERE email = ?
+            """, (email,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {
+                    'id': row[0],
+                    'username': row[1],
+                    'password': row[2],
+                    'email': row[3],
+                    'full_name': row[4],
+                    'role': row[5],
+                    'company_id': row[6],
+                    'is_approved': row[7],
+                    'account_type': row[8],
+                    'auth_provider': row[9],
+                    'created_at': row[10]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by email: {e}")
+            return None
+
+    def get_company_by_id(self, company_id: int) -> Optional[Dict[str, Any]]:
+        """Get company by ID"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, company_name, email, phone, division, district, is_individual, created_at
+                FROM companies 
+                WHERE id = ?
+            """, (company_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {
+                    'id': row[0],
+                    'company_name': row[1],
+                    'email': row[2],
+                    'phone': row[3],
+                    'division': row[4],
+                    'district': row[5],
+                    'is_individual': row[6],
+                    'created_at': row[7]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting company by ID: {e}")
+            return None
+
+    def migrate_schema(self):
+        """Auto-migrate database schema for new features"""
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(users)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Define new columns to add
+        new_columns = {
+            'users': [
+                ("auth_provider", "TEXT DEFAULT 'email'"),
+                ("email_verified", "BOOLEAN DEFAULT 0"),
+                ("email_verified_at", "TIMESTAMP"),
+                ("verification_token", "TEXT"),
+                ("reset_token", "TEXT"),
+                ("reset_token_expires", "TIMESTAMP"),
+                ("specialization", "TEXT"),
+                ("years_experience", "INTEGER")
+            ],
+            'companies': [
+                ("is_individual", "BOOLEAN DEFAULT 0")
+            ]
+        }
+        
+        # Add missing columns
+        for table, columns in new_columns.items():
+            for col_name, col_type in columns:
+                if col_name not in existing_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                        print(f"✅ Added column: {table}.{col_name}")
+                    except Exception as e:
+                        print(f"⚠️ Could not add {table}.{col_name}: {e}")
+        
+        # Create indexes
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
+            "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)"
+        ]
+        
+        for index in indexes:
+            try:
+                cursor.execute(index)
+            except Exception as e:
+                print(f"⚠️ Could not create index: {e}")
+        
+        conn.commit()
+        conn.close()
+
+
+    def get_consultant_clients(self, consultant_id: int) -> List[Dict]:
+        """Fetch all client companies linked to a consultant"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+            SELECT c.id, c.company_name, c.email, cc.role, cc.created_at
+            FROM consultant_clients cc
+            JOIN companies c ON cc.client_company_id = c.id
+            WHERE cc.consultant_user_id = ?
+            ''', (consultant_id,))
+            clients = [{'id': r[0], 'company_name': r[1], 'email': r[2], 'role': r[3]} for r in cursor.fetchall()]
+            conn.close()
+            return clients
+        except Exception as e:
+            logger.error(f"Fetch consultant clients error: {e}")
+            return []
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get user by username"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, username, email FROM users WHERE username = ?", (username,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {'id': row[0], 'username': row[1], 'email': row[2]}
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by username: {e}")
             return None
         
-        # Create copy with new ID and copy flags
-        cursor.execute('''
-        INSERT INTO company_tenders (
-            company_id, tender_id, tender_title, procuring_entity, official_estimate,
-            submission_deadline, procurement_type, division, district, thana,
-            tender_security, document_fee, evaluation_type, created_at,
-            is_locked, is_copy, original_tender_id, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            original[1],  # company_id
-            f"{original[2]}_COPY",  # tender_id with COPY suffix
-            f"{original[3]} (Backup Copy)",  # title with indicator
-            original[4], original[5], original[6], original[7],
-            original[8], original[9], original[10], original[11],
-            original[12], original[13], datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            0,  # is_locked = False for copy
-            1,  # is_copy = True
-            original_tender_id,  # reference to original
-            created_by
-        ))
-        
-        new_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return new_id
-        
-    except Exception as e:
-        logger.error(f"Failed to create tender copy: {e}")
-        return None
-
-
-def delete_tender(self, tender_id: int) -> bool:
-    """Soft delete a tender (mark as inactive)"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        UPDATE company_tenders 
-        SET is_active = 0, deleted_at = ?, deleted_by = ?
-        WHERE id = ?
-        ''', (
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            st.session_state.user_id,
-            tender_id
-        ))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to delete tender: {e}")
-        return False
-    
-
-
-def increment_analysis_usage(self, user_id: int, company_id: Optional[int] = None) -> bool:
-    """Increment usage on the active subscription (company first, then personal)"""
-    try:
-        sub = self.get_effective_subscription(user_id, company_id)
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if sub['owner_type'] == 'company':
-            cursor.execute('''
-            UPDATE subscriptions SET analyses_used = analyses_used + 1, updated_at = CURRENT_TIMESTAMP
-            WHERE company_id = ?
-            ''', (company_id,))
-        elif sub['owner_type'] == 'user':
-            cursor.execute('''
-            UPDATE subscriptions SET analyses_used = analyses_used + 1, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ?
-            ''', (user_id,))
-            
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Usage increment error: {e}")
-        return False
-
-
-def add_consultant_client(self, consultant_id: int, client_company_id: int, role: str = 'manager') -> bool:
-    """Link a consultant to a client company"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT OR IGNORE INTO consultant_clients (consultant_user_id, client_company_id, role)
-        VALUES (?, ?, ?)
-        ''', (consultant_id, client_company_id, role))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Client relationship error: {e}")
-        return False
-
-def create_individual_user(self, user_data: Dict) -> tuple:
-    """Create an individual user (no company)"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Create a personal company for the individual
-        personal_company_name = f"{user_data['full_name']} (Individual)"
-        
-        cursor.execute('''
-            INSERT INTO companies (company_name, email, phone, division, is_active)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (personal_company_name, user_data['email'], user_data.get('phone', ''), 'Dhaka', 1))
-        
-        company_id = cursor.lastrowid
-        
-        # Hash password
-        import bcrypt
-        hashed = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        
-        cursor.execute('''
-            INSERT INTO users (company_id, username, password, email, full_name, phone, 
-                             role, account_type, status, is_approved, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            company_id,
-            user_data['username'],
-            hashed,
-            user_data['email'],
-            user_data['full_name'],
-            user_data.get('phone', ''),
-            user_data['role'],
-            'individual',
-            'active',
-            1,
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ))
-        
-        user_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        return True, user_id
-    except Exception as e:
-        logger.error(f"Individual user creation failed: {e}")
-        return False, str(e)
-
-def get_user_by_email(self, email: str) -> Optional[Dict]:
-    """Get user by email address"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
-        columns = [desc[0] for desc in cursor.description]
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return dict(zip(columns, row))
-        return None
-    except Exception as e:
-        logger.error(f"Failed to get user by email: {e}")
-        return None
-
-def migrate_schema(self):
-    """Auto-migrate database schema for new features"""
-    
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    # Get existing columns
-    cursor.execute("PRAGMA table_info(users)")
-    existing_columns = [col[1] for col in cursor.fetchall()]
-    
-    # Define new columns to add
-    new_columns = {
-        'users': [
-            ("auth_provider", "TEXT DEFAULT 'email'"),
-            ("email_verified", "BOOLEAN DEFAULT 0"),
-            ("email_verified_at", "TIMESTAMP"),
-            ("verification_token", "TEXT"),
-            ("reset_token", "TEXT"),
-            ("reset_token_expires", "TIMESTAMP"),
-            ("specialization", "TEXT"),
-            ("years_experience", "INTEGER")
-        ],
-        'companies': [
-            ("is_individual", "BOOLEAN DEFAULT 0")
-        ]
-    }
-    
-    # Add missing columns
-    for table, columns in new_columns.items():
-        for col_name, col_type in columns:
-            if col_name not in existing_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
-                    print(f"✅ Added column: {table}.{col_name}")
-                except Exception as e:
-                    print(f"⚠️ Could not add {table}.{col_name}: {e}")
-    
-    # Create indexes
-    indexes = [
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
-        "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
-        "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)"
-    ]
-    
-    for index in indexes:
-        try:
-            cursor.execute(index)
-        except Exception as e:
-            print(f"⚠️ Could not create index: {e}")
-    
-    conn.commit()
-    conn.close()
-
-
-def get_consultant_clients(self, consultant_id: int) -> List[Dict]:
-    """Fetch all client companies linked to a consultant"""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        SELECT c.id, c.company_name, c.email, cc.role, cc.created_at
-        FROM consultant_clients cc
-        JOIN companies c ON cc.client_company_id = c.id
-        WHERE cc.consultant_user_id = ?
-        ''', (consultant_id,))
-        clients = [{'id': r[0], 'company_name': r[1], 'email': r[2], 'role': r[3]} for r in cursor.fetchall()]
-        conn.close()
-        return clients
-    except Exception as e:
-        logger.error(f"Fetch consultant clients error: {e}")
-        return []    
-# Singleton instance
+    # Singleton instance
 db = DatabaseManager()

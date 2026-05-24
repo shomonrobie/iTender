@@ -323,14 +323,13 @@ def initialize_session_state():
         'user_id': None,
         'company_id': None,
         'user_role': None,
-        'user_email': None,  # ✅ Added missing keys
+        'user_email': None,
         'full_name': None,
         'company_name': None,
         'subscription_plan': 'free',
         'subscription_status': 'active',
         
-        # Navigation
-        'page': PageRoutes.HOME,
+        # Navigation - DON'T override if already set
         'show_checkout': False,
         
         # Analysis Data
@@ -356,7 +355,12 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = default_value
     
+    # Only set default page if not already set by callback
+    if 'page' not in st.session_state:
+        st.session_state.page = PageRoutes.HOME
+    
     debug_print("✅ Session state initialization complete\n")
+
 
 # =============================================================================
 # 🔄 LAZY IMPORT HELPER (With error handling)
@@ -3271,13 +3275,45 @@ def main() -> None:
     Main application entry point with optimized routing.
     Uses PageRoutes constants, lazy imports, and safe error handling.
     """
-        # =========================================================================
-    # HANDLE GOOGLE OAUTH CALLBACK - MUST BE FIRST IN main()
+    import base64
+    import json
+    
+    # =========================================================================
+    # RESTORE SESSION FROM URL PARAMETER (Google OAuth)
+    # =========================================================================
+    query_params = st.query_params
+    
+    # Check for user data in URL (from Google callback)
+    if 'user' in query_params:
+        try:
+            user_data_b64 = query_params['user']
+            user_data_json = base64.urlsafe_b64decode(user_data_b64).decode()
+            user_data = json.loads(user_data_json)
+            
+            # Restore session state
+            for key, value in user_data.items():
+                st.session_state[key] = value
+            
+            # Clear the parameter to avoid re-processing
+            st.query_params.clear()
+            
+            # Force rerun to show dashboard
+            st.rerun()
+            return
+        except Exception as e:
+            debug_print(f"Error restoring session: {e}")
+    
+    # =========================================================================
+    # INITIALIZE SESSION STATE (MUST BE CALLED)
+    # =========================================================================
+    initialize_session_state()  # ← ADD THIS LINE
+    
+    # =========================================================================
+    # HANDLE GOOGLE OAUTH CALLBACK
     # =========================================================================
     from modules.google_auth import handle_google_callback
     
     # Check if this is an OAuth callback
-    query_params = st.query_params
     if 'code' in query_params:
         # Handle the callback - this will process the code and redirect
         handle_google_callback()
