@@ -11,5 +11,3 @@ magicEnabled = true
 [logger]
 # Level of logging for Streamlit's internal logger: "error", "warning", "info", or "debug"
 level = "warning"
-[logger.watchdog]
-level = "WARNING"
