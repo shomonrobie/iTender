@@ -1,0 +1,10 @@
+[server]
+enableCORS = true
+enableXsrfProtection = true
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+magicEnabled = true

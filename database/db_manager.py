@@ -1730,6 +1730,122 @@ def add_consultant_client(self, consultant_id: int, client_company_id: int, role
         logger.error(f"Client relationship error: {e}")
         return False
 
+def create_individual_user(self, user_data: Dict) -> tuple:
+    """Create an individual user (no company)"""
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Create a personal company for the individual
+        personal_company_name = f"{user_data['full_name']} (Individual)"
+        
+        cursor.execute('''
+            INSERT INTO companies (company_name, email, phone, division, is_active)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (personal_company_name, user_data['email'], user_data.get('phone', ''), 'Dhaka', 1))
+        
+        company_id = cursor.lastrowid
+        
+        # Hash password
+        import bcrypt
+        hashed = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        cursor.execute('''
+            INSERT INTO users (company_id, username, password, email, full_name, phone, 
+                             role, account_type, status, is_approved, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            company_id,
+            user_data['username'],
+            hashed,
+            user_data['email'],
+            user_data['full_name'],
+            user_data.get('phone', ''),
+            user_data['role'],
+            'individual',
+            'active',
+            1,
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ))
+        
+        user_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return True, user_id
+    except Exception as e:
+        logger.error(f"Individual user creation failed: {e}")
+        return False, str(e)
+
+def get_user_by_email(self, email: str) -> Optional[Dict]:
+    """Get user by email address"""
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+        columns = [desc[0] for desc in cursor.description]
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(zip(columns, row))
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get user by email: {e}")
+        return None
+
+def migrate_schema(self):
+    """Auto-migrate database schema for new features"""
+    
+    conn = self.get_connection()
+    cursor = conn.cursor()
+    
+    # Get existing columns
+    cursor.execute("PRAGMA table_info(users)")
+    existing_columns = [col[1] for col in cursor.fetchall()]
+    
+    # Define new columns to add
+    new_columns = {
+        'users': [
+            ("auth_provider", "TEXT DEFAULT 'email'"),
+            ("email_verified", "BOOLEAN DEFAULT 0"),
+            ("email_verified_at", "TIMESTAMP"),
+            ("verification_token", "TEXT"),
+            ("reset_token", "TEXT"),
+            ("reset_token_expires", "TIMESTAMP"),
+            ("specialization", "TEXT"),
+            ("years_experience", "INTEGER")
+        ],
+        'companies': [
+            ("is_individual", "BOOLEAN DEFAULT 0")
+        ]
+    }
+    
+    # Add missing columns
+    for table, columns in new_columns.items():
+        for col_name, col_type in columns:
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added column: {table}.{col_name}")
+                except Exception as e:
+                    print(f"⚠️ Could not add {table}.{col_name}: {e}")
+    
+    # Create indexes
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+        "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
+        "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)"
+    ]
+    
+    for index in indexes:
+        try:
+            cursor.execute(index)
+        except Exception as e:
+            print(f"⚠️ Could not create index: {e}")
+    
+    conn.commit()
+    conn.close()
+
 
 def get_consultant_clients(self, consultant_id: int) -> List[Dict]:
     """Fetch all client companies linked to a consultant"""

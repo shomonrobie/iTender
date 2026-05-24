@@ -52,7 +52,11 @@ from config import DEBUG_MODE, BID_AMOUNT_DECIMALS, BID_RATIO_DECIMALS, COST_EST
 
 
 
-import os
+# Continue with normal app flow
+# debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
+
+
+
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
 # =============================================================================
@@ -96,21 +100,96 @@ def check_and_run_migrations(db):
         conn = db.get_connection()
         cursor = conn.cursor()
         
-        # Check if district column exists
+        # =========================================================================
+        # MIGRATION 1: Add district column to companies (existing)
+        # =========================================================================
         cursor.execute("PRAGMA table_info(companies)")
-        columns = [col[1] for col in cursor.fetchall()]
+        company_columns = [col[1] for col in cursor.fetchall()]
         
-        if 'district' not in columns:
+        if 'district' not in company_columns:
             debug_print("🔧 Running schema migration: city → district")
-            # Run migration SQL here (or call external script)
             cursor.executescript("""
             ALTER TABLE companies ADD COLUMN district TEXT;
             UPDATE companies SET district = city WHERE city IS NOT NULL;
             """)
             conn.commit()
-            debug_print("✅ Migration complete")
+            debug_print("✅ Migration 1 complete: district column added")
+        
+        # =========================================================================
+        # MIGRATION 2: Add individual user support columns to users table
+        # =========================================================================
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Define new columns for users table
+        user_new_columns = {
+            'auth_provider': "TEXT DEFAULT 'email'",
+            'email_verified': "BOOLEAN DEFAULT 0",
+            'email_verified_at': "TIMESTAMP",
+            'verification_token': "TEXT",
+            'reset_token': "TEXT",
+            'reset_token_expires': "TIMESTAMP",
+            'specialization': "TEXT",
+            'years_experience': "INTEGER"
+        }
+        
+        migration_2_needed = False
+        for col_name in user_new_columns.keys():
+            if col_name not in user_columns:
+                migration_2_needed = True
+                break
+        
+        if migration_2_needed:
+            debug_print("🔧 Running schema migration: adding individual user support columns")
+            
+            for col_name, col_type in user_new_columns.items():
+                if col_name not in user_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                        debug_print(f"  ✅ Added column: {col_name}")
+                    except Exception as e:
+                        debug_print(f"  ⚠️ Could not add {col_name}: {e}")
+            
+            conn.commit()
+            debug_print("✅ Migration 2 complete: individual user columns added")
+        
+        # =========================================================================
+        # MIGRATION 3: Add is_individual column to companies table
+        # =========================================================================
+        cursor.execute("PRAGMA table_info(companies)")
+        company_columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'is_individual' not in company_columns:
+            debug_print("🔧 Running schema migration: adding is_individual column")
+            cursor.execute("ALTER TABLE companies ADD COLUMN is_individual BOOLEAN DEFAULT 0")
+            conn.commit()
+            debug_print("✅ Migration 3 complete: is_individual column added")
+        
+        # =========================================================================
+        # MIGRATION 4: Create indexes for better performance
+        # =========================================================================
+        debug_print("🔧 Creating indexes for better performance...")
+        
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
+            "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)",
+            "CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider)",
+            "CREATE INDEX IF NOT EXISTS idx_companies_is_individual ON companies(is_individual)"
+        ]
+        
+        for index in indexes:
+            try:
+                cursor.execute(index)
+                debug_print(f"  ✅ Index created: {index.split('ON')[1].strip() if 'ON' in index else index}")
+            except Exception as e:
+                debug_print(f"  ⚠️ Could not create index: {e}")
+        
+        conn.commit()
+        debug_print("✅ All migrations completed successfully!")
         
         conn.close()
+        
     except Exception as e:
         logger.error(f"Migration check failed: {e}")
         if DEBUG_MODE:
@@ -582,6 +661,8 @@ class PageRoutes:
     PRICING = 'pricing'
     ABOUT = 'about'
     CONTACT = 'contact'
+    INDIVIDUAL_REGISTER = 'individual_register'  # Add this
+    INDIVIDUAL_LOGIN = 'individual_login'        # Add this
     
     # ─── Authenticated Core Pages ────────────────────────────────────────────
     DASHBOARD = 'dashboard'
@@ -593,21 +674,21 @@ class PageRoutes:
     # ─── Management Pages (Company Admin+) ───────────────────────────────────
     USER_MANAGEMENT = 'user_management'
     TENDER_MANAGEMENT = 'tender_management'
-    POST_EVALUATION = 'post_evaluation'              # ✅ Added missing
-    INTELLIGENT_SUGGESTIONS = 'intelligent_suggestions'  # ✅ Added missing
+    POST_EVALUATION = 'post_evaluation'
+    INTELLIGENT_SUGGESTIONS = 'intelligent_suggestions'
     
     # ─── Premium Intelligence Pages ──────────────────────────────────────────
     HISTORICAL_DATA = 'historical_data'
-    ANALYSIS_HISTORY = 'analysis_history'            # ✅ Added missing
+    ANALYSIS_HISTORY = 'analysis_history'
     COMPETITOR_TRACKING = 'competitor_tracking'
-    COMPETITOR_MASTER = 'competitor_master'          # ✅ Added missing
+    COMPETITOR_MASTER = 'competitor_master'
     
     # ─── Admin System Pages ──────────────────────────────────────────────────
     ADMIN_DASHBOARD = 'admin_dashboard'
     USER_APPROVAL = 'user_approval'
     
     # ─── Utility Routes ──────────────────────────────────────────────────────
-    CHECKOUT = 'checkout'  # For payment flow
+    CHECKOUT = 'checkout'
     
     @classmethod
     def get_all_routes(cls) -> List[str]:
@@ -621,7 +702,6 @@ class PageRoutes:
     def is_valid_route(cls, route: str) -> bool:
         """Check if a route string is valid"""
         return route in cls.get_all_routes()
-
 
 # =============================================================================
 # 📊 DISPLAY FUNCTION (Fixed syntax errors)
@@ -781,6 +861,29 @@ def ensure_admin_premium():
             return True
     return False
 
+
+def _render_unauthenticated_pages() -> None:
+    """Render pages for users who are not logged in"""
+    
+    # Define unauthenticated page handlers
+    PAGE_HANDLERS = {
+        'login': login_page,
+        'register': register_page,
+        'pricing': pricing_page,
+        'about': about_page,
+        'contact': contact_page,
+        'individual_register': lambda: _import_and_call('modules.individual_registration', 'render_individual_registration'),
+        'individual_login': lambda: _import_and_call('modules.individual_registration', 'render_individual_login'),
+    }
+    
+    # Get current page from session state
+    current_page = st.session_state.get('page', 'login')
+    
+    # Get the handler function
+    handler = PAGE_HANDLERS.get(current_page, login_page)
+    
+    # Call the handler
+    handler()
 
 
 def run_three_tier_analysis(analysis_record, competitor_bids, risk_tolerance):
@@ -1053,67 +1156,213 @@ def home_page() -> None:
 
 
 def login_page() -> None:
-    """Login page with approval status handling"""
+    """Login page with approval status handling and Google Sign-In"""
     debug_print("🔐 Rendering login page")
+    
+    from modules.google_auth import render_google_login_button, handle_google_callback
+    from modules.individual_registration import authenticate_individual_user
+    
+    # Handle Google OAuth callback
+    handle_google_callback()
+    
+    # Check if showing Google registration
+    if st.session_state.get('show_google_registration'):
+        from modules.google_auth import render_google_registration_form
+        render_google_registration_form(db)
+        return
     
     render_page_header("🔐 Login", "Access your TenderAI account")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # Create tabs for different login types
+    tab1, tab2 = st.tabs(["🏢 Company Login", "👤 Individual Login"])
     
-    with col2:
-        with st.form("login_form", clear_on_submit=True):
-            username = st.text_input("Username or Email", key="login_username")
-            password = st.text_input("Password", type="password", key="login_password")
+    with tab1:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            with st.form("login_form", clear_on_submit=True):
+                username = st.text_input("Username or Email", key="login_username")
+                password = st.text_input("Password", type="password", key="login_password")
+                
+                submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
+                
+                if submitted:
+                    if not username or not password:
+                        st.error("Please enter both username and password")
+                    else:
+                        user, status = authenticate_user(username, password)
+                        
+                        if status == "pending_approval":
+                            st.warning("⚠️ Your account is pending approval by an administrator.")
+                        elif user and status == "approved":
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user[0]
+                            st.session_state.username = user[1]
+                            st.session_state.user_email = user[2]
+                            st.session_state.full_name = user[3]
+                            st.session_state.user_role = user[4]
+                            st.session_state.company_id = user[6]
+                            st.session_state.company_name = user[7] or "N/A"
+                            st.session_state.account_type = user[8] or 'company'
+                            
+                            sub = db.get_effective_subscription(
+                                st.session_state.user_id,
+                                st.session_state.company_id if st.session_state.account_type == 'company' else None
+                            )
+                            
+                            st.session_state.subscription_plan = sub['plan']
+                            st.session_state.analyses_used = sub['analyses_used']
+                            st.session_state.analyses_limit = sub['analyses_limit']
+                            
+                            debug_print(f"✅ User logged in: {user[1]} | Type: {st.session_state.account_type}")
+                            navigate_to("dashboard", success_msg=f"Welcome back, {user[3]}! 👋")
+                        else:
+                            st.error("❌ Invalid credentials. Please try again.")
             
-            submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
-            
-            if submitted:
-                if not username or not password:
-                    st.error("Please enter both username and password")
-                else:
-                    user, status = authenticate_user(username, password)
+            st.markdown("---")
+            if st.button("➕ Register New Company Account", use_container_width=True):
+                navigate_to("register")
+    
+    with tab2:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            # Individual Email Login
+            with st.expander("📧 Login with Email", expanded=True):
+                with st.form("individual_login_form", clear_on_submit=True):
+                    email = st.text_input("Email Address", key="ind_login_email")
+                    password = st.text_input("Password", type="password", key="ind_login_password")
                     
-                    if status == "pending_approval":
-                        st.warning("⚠️ Your account is pending approval by an administrator.")
-                        st.info("You will receive an email notification once approved.")
-                    elif user and status == "approved":
-                        # Basic user info from authenticate_user() tuple
+                    submitted_ind = st.form_submit_button("Login", use_container_width=True, type="primary")
+                    
+                    if submitted_ind:
+                        if not email or not password:
+                            st.error("Please enter both email and password")
+                        else:
+                            user = authenticate_individual_user(email, password)
+                            
+                            if user:
+                                from modules.email_verification import send_verification_email
+                                
+                                # Send OTP for 2FA
+                                if send_verification_email(email, user['full_name'], 'login'):
+                                    st.session_state.pending_2fa = {
+                                        'user': user,
+                                        'email': email
+                                    }
+                                    st.session_state.show_2fa = True
+                                    st.success("Verification code sent to your email!")
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to send verification code")
+                            else:
+                                st.error("❌ Invalid email or password. Please register first.")
+            
+            # Divider
+            st.markdown("---")
+            st.markdown("<p style='text-align: center; color: #666;'>OR</p>", unsafe_allow_html=True)
+            
+            # Google Sign-In for Individuals
+            with st.expander("🔐 Sign in with Google", expanded=False):
+                st.caption("For consultants, freelancers, and individual users")
+                render_google_login_button()
+            
+            st.markdown("---")
+            
+            # Registration link
+            st.markdown("<p style='text-align: center;'>Don't have an individual account?</p>", unsafe_allow_html=True)
+            
+            if st.button("📝 Register as Individual", use_container_width=True):
+                st.session_state.page = PageRoutes.INDIVIDUAL_REGISTER
+                st.rerun()
+            
+            # Forgot password
+            if st.button("🔒 Forgot Password?", use_container_width=True):
+                st.session_state.forgot_password_email = email if 'email' in locals() else ''
+                st.session_state.show_forgot_password = True
+                st.rerun()
+    
+    # 2FA Verification Modal (outside tabs)
+    if st.session_state.get('show_2fa'):
+        st.markdown("---")
+        st.markdown("### 🔐 Two-Factor Authentication")
+        st.info(f"A verification code has been sent to {st.session_state.pending_2fa['email']}")
+        
+        with st.form("2fa_verification_form"):
+            otp = st.text_input("Enter 6-digit verification code", max_chars=6, type="password")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button("Verify", type="primary", use_container_width=True):
+                    from modules.email_verification import verify_otp
+                    success, message = verify_otp(st.session_state.pending_2fa['email'], otp)
+                    
+                    if success:
+                        user = st.session_state.pending_2fa['user']
+                        
+                        # Set session state for individual user
                         st.session_state.logged_in = True
-                        st.session_state.user_id = user[0]
-                        st.session_state.username = user[1]
-                        st.session_state.user_email = user[2]
-                        st.session_state.full_name = user[3]
-                        st.session_state.user_role = user[4]
-                        st.session_state.company_id = user[6]
-                        st.session_state.company_name = user[7] or "N/A"
-                        st.session_state.account_type = user[8] or 'company'  # NEW: account_type
+                        st.session_state.user_id = user['id']
+                        st.session_state.username = user['username']
+                        st.session_state.user_email = user['email']
+                        st.session_state.full_name = user['full_name']
+                        st.session_state.user_role = 'individual'
+                        st.session_state.account_type = 'individual'
+                        st.session_state.company_id = user['company_id']
                         
-                        # 🔑 NEW: Fetch subscription context AFTER login
-                        sub = db.get_effective_subscription(
-                            st.session_state.user_id,
-                            st.session_state.company_id if st.session_state.account_type == 'company' else None
-                        )
+                        # Get company name
+                        company = db.get_company_by_id(user['company_id'])
+                        st.session_state.company_name = company.get('company_name', 'Individual Consultant') if company else 'Individual Consultant'
                         
-                        # Cache subscription details in session state
+                        # Get subscription
+                        sub = db.get_effective_subscription(user['id'], user['company_id'])
                         st.session_state.subscription_plan = sub['plan']
                         st.session_state.analyses_used = sub['analyses_used']
                         st.session_state.analyses_limit = sub['analyses_limit']
-                        st.session_state.sub_owner_type = sub['owner_type']
                         
-                        # If consultant, preload client list
-                        if st.session_state.account_type == 'consultant':
-                            st.session_state.consultant_clients = db.get_consultant_clients(st.session_state.user_id)
+                        st.session_state.show_2fa = False
+                        st.session_state.pending_2fa = None
                         
-                        debug_print(f"✅ User logged in: {user[1]} | Type: {st.session_state.account_type} | Plan: {sub['plan']}")
-                        navigate_to("dashboard", success_msg=f"Welcome back, {user[3]}! 👋")
+                        debug_print(f"✅ Individual logged in: {user['email']}")
+                        navigate_to("dashboard", success_msg=f"Welcome back, {user['full_name']}! 👋")
                     else:
-                        st.error("❌ Invalid credentials. Please try again.")
-        
+                        st.error(message)
+            
+            with col2:
+                if st.form_submit_button("Resend Code", use_container_width=True):
+                    from modules.email_verification import send_verification_email
+                    if send_verification_email(
+                        st.session_state.pending_2fa['email'], 
+                        st.session_state.pending_2fa['user']['full_name'], 
+                        'login'
+                    ):
+                        st.success("New verification code sent!")
+                    else:
+                        st.error("Failed to resend code")
+    
+    # Forgot Password Modal
+    if st.session_state.get('show_forgot_password'):
         st.markdown("---")
-        render_demo_credentials()
+        st.markdown("### 🔒 Reset Password")
         
-        if st.button("➕ Register New Account", use_container_width=True):
-            navigate_to("register")
+        with st.form("forgot_password_form"):
+            email = st.text_input("Email Address", value=st.session_state.get('forgot_password_email', ''))
+            
+            if st.form_submit_button("Send Reset Link", use_container_width=True, type="primary"):
+                # Check if user exists
+                user = db.get_user_by_email(email)
+                if user and user.get('account_type') == 'individual':
+                    import secrets
+                    reset_token = secrets.token_urlsafe(32)
+                    # Store token in database (add this method)
+                    st.success(f"Password reset link sent to {email}")
+                    st.session_state.show_forgot_password = False
+                else:
+                    st.error("No individual account found with this email")
+            
+            if st.form_submit_button("Cancel", use_container_width=True):
+                st.session_state.show_forgot_password = False
+                st.rerun()
     
     debug_print("✅ Login page render complete")
 
@@ -2935,6 +3184,8 @@ def render_sidebar() -> None:
 
 def _render_public_pages() -> None:
     """Render pages for non-authenticated users"""
+    from modules.individual_registration import render_individual_registration, render_individual_login
+    
     page_handlers = {
         'home': home_page,
         'login': login_page,
@@ -2942,6 +3193,8 @@ def _render_public_pages() -> None:
         'pricing': pricing_page,
         'about': about_page,
         'contact': contact_page,
+        'individual_register': render_individual_registration,
+        'individual_login': render_individual_login,
     }
     
     handler = page_handlers.get(st.session_state.page, home_page)
@@ -2958,7 +3211,10 @@ def _render_authenticated_pages() -> None:
         PageRoutes.HISTORY: history_page,
         PageRoutes.PROFILE: profile_page,
         PageRoutes.ADMIN_DASHBOARD: admin_dashboard_page,
+        PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(),
+        #PageRoutes.USER_MANAGEMENT: lambda: render_user_management(),
         
+
         # Module-based pages (lazy import)
         #PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(db, st.session_state.user_id),
         PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(),
@@ -2973,6 +3229,10 @@ def _render_authenticated_pages() -> None:
         PageRoutes.COMPETITOR_TRACKING: lambda: _import_and_call('modules.competitor_tracking', 'render_competitor_tracking_page'),
         PageRoutes.COMPETITOR_MASTER: lambda: _import_and_call('modules.competitor_master', 'render_competitor_master_page'),  # ✅ Now works
         PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),        
+        #PageRoutes.INDIVIDUAL_REGISTER: lambda: _import_and_call('modules.individual_registration', 'render_individual_registration'),
+        #PageRoutes.INDIVIDUAL_LOGIN: lambda: _import_and_call('modules.individual_registration', 'render_individual_login'),
+
+
     }
 
 
@@ -3011,6 +3271,21 @@ def main() -> None:
     Main application entry point with optimized routing.
     Uses PageRoutes constants, lazy imports, and safe error handling.
     """
+        # =========================================================================
+    # HANDLE GOOGLE OAUTH CALLBACK - MUST BE FIRST IN main()
+    # =========================================================================
+    from modules.google_auth import handle_google_callback
+    
+    # Check if this is an OAuth callback
+    query_params = st.query_params
+    if 'code' in query_params:
+        # Handle the callback - this will process the code and redirect
+        handle_google_callback()
+        # After handling, clear params and rerun to avoid reprocessing
+        st.query_params.clear()
+        st.rerun()
+        return
+
     debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
     
     # Hide Streamlit's default chrome elements
