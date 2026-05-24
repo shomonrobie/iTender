@@ -1247,71 +1247,13 @@ def pricing_page() -> None:
     """Pricing plans page with interactive selection"""
     debug_print("💰 Rendering pricing page")
     
-    render_page_header("💰 Pricing Plans", "Choose the plan that fits your business")
-    
-    # Plan definitions (module-level constant would be better, but keeping local for now)
-    plans = {
-        'free': {
-            'name': 'Free', 
-            'price': 0, 
-            'features': [
-                '5 analyses/month',
-                'Basic statistical reports',
-                'Email support',
-                'Single user account'
-            ]
-        },
-        'basic': {
-            'name': 'Basic', 
-            'price': 4999, 
-            'features': [
-                '30 analyses/month',
-                'AI-powered predictions',
-                'Competitor analysis',
-                'Priority email support',
-                'Up to 3 team members'
-            ]
-        },
-        'professional': {
-            'name': 'Professional', 
-            'price': 14999, 
-            'features': [
-                'Unlimited analyses',
-                'ML ensemble predictions',
-                'Real-time market intelligence',
-                'Team collaboration tools',
-                'Advanced reporting & export',
-                'Priority support + training'
-            ]
-        },
-        'enterprise': {
-            'name': 'Enterprise', 
-            'price': 49999, 
-            'features': [
-                'Everything in Professional',
-                'Custom AI model training',
-                'Dedicated account manager',
-                'API access & webhooks',
-                'SLA guarantee (99.9% uptime)',
-                'On-premise deployment option'
-            ]
-        }
-    }
-    
-    # Display pricing cards
-    col1, col2, col3, col4 = st.columns(4)
-    columns = [col1, col2, col3, col4]
-    
-    for idx, (plan_key, plan_data) in enumerate(plans.items()):
-        with columns[idx]:
-            is_recommended = (plan_key == 'professional')
-            render_pricing_card(plan_key, plan_data, is_recommended)
-    
-    # Trial reminder
-    st.markdown("---")
-    st.info("🎁 **All plans include a 14-day free trial** – No credit card required to start. Cancel anytime.")
+    # Import and call the subscription module
+    from modules.subscription import render_subscription_page
+    render_subscription_page()
     
     debug_print("✅ Pricing page render complete")
+
+
 
 
 def about_page() -> None:
@@ -3030,9 +2972,10 @@ def _render_authenticated_pages() -> None:
         PageRoutes.ANALYSIS_HISTORY: lambda: _import_and_call('modules.analysis_history', 'show_analysis_history'),  # ✅ Now works
         PageRoutes.COMPETITOR_TRACKING: lambda: _import_and_call('modules.competitor_tracking', 'render_competitor_tracking_page'),
         PageRoutes.COMPETITOR_MASTER: lambda: _import_and_call('modules.competitor_master', 'render_competitor_master_page'),  # ✅ Now works
-        PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),
+        PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),        
     }
-    
+
+
     # Get handler with fallback to dashboard for unknown routes
     handler = PAGE_HANDLERS.get(st.session_state.page, PAGE_HANDLERS[PageRoutes.DASHBOARD])
     
