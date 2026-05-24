@@ -4,6 +4,18 @@ Complete Working Version - Fixed & Debug-Enabled
 """
 
 import streamlit as st
+
+# =============================================================================
+# 🎨 PAGE CONFIG & STYLING
+# =============================================================================
+st.set_page_config(
+    page_title="TenderAI - Tender Management System",
+    page_icon="🏗️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -133,16 +145,6 @@ try:
 except ImportError:
     ADVANCED_OPTIMIZER_AVAILABLE = False
     debug_print("⚠️ Advanced optimizer not available - using fallback")
-
-# =============================================================================
-# 🎨 PAGE CONFIG & STYLING
-# =============================================================================
-st.set_page_config(
-    page_title="TenderAI - Tender Management System",
-    page_icon="🏗️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Custom CSS
 st.markdown("""
