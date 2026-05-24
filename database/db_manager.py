@@ -434,7 +434,7 @@ class DatabaseManager:
                     is_active, created_by, is_approved, account_type
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    company_id, user_data['username'], hashed_pw, user_data['email'],
+                    company_id, user_data['username'], hashed_pass, user_data['email'],
                     user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'user'),
                     1, created_by, user_data.get('is_approved', False), user_data.get('account_type', 'company')
                 ))
