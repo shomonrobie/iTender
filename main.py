@@ -55,7 +55,7 @@ import os
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
 # =============================================================================
-DEBUG_MODE = True
+
 def has_data(data) -> bool:
     """Safe check for None, empty list, dict, or pandas DataFrame"""
     if data is None:
@@ -63,10 +63,6 @@ def has_data(data) -> bool:
     if hasattr(data, 'empty'):  # pandas DataFrame
         return not data.empty
     return len(data) > 0  # list, tuple, dict, etc.
-
-def debug_print(*args, **kwargs):
-    if DEBUG_MODE:
-        print(*args, **kwargs)
 
 def setup_logging():
     level = logging.DEBUG if DEBUG_MODE else logging.INFO
@@ -80,22 +76,6 @@ setup_logging()
 logger = logging.getLogger(__name__)
 st.markdown(get_compact_css(), unsafe_allow_html=True)
 
-# =============================================================================
-# 📐 CONFIGURABLE CONSTANTS (Extracted magic numbers)
-# =============================================================================
-COST_ESTIMATE_RATIO = 0.85  # ✅ Configurable business logic
-BID_RATIO_DECIMALS = 4
-BID_AMOUNT_DECIMALS = 3
-
-
-# =============================================================================
-# 📐 CONFIGURABLE PPR CONSTANTS
-# =============================================================================
-PPR_CONFIG = {
-    'nppi_factor': float(os.getenv('PPR_NPPI_FACTOR', '0.920')),  # ✅ Configurable
-    'weights': {'competitor_avg': 0.5, 'official_est': 0.2, 'nppi': 0.3},
-    'slt_buffer': 1.0  # Standard deviation multiplier
-}
 
 # =============================================================================
 # 🗄️ DATABASE & MODULE IMPORTS

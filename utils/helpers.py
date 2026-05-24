@@ -33,7 +33,7 @@ def debug_print(*args, **kwargs):
 
 # Import BID_AMOUNT_DECIMALS from main or define it here
 try:
-    from main import BID_AMOUNT_DECIMALS
+    from config import BID_AMOUNT_DECIMALS
 except ImportError:
     BID_AMOUNT_DECIMALS = 3  # Default to 3 decimals for e-GP compliance
 
