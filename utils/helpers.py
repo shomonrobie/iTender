@@ -472,22 +472,47 @@ def _generate_and_download_pdf_old(analysis_id: int, analysis_record: dict) -> N
                     st.code(traceback.format_exc(), language="python")
 
 import re
+def validate_password_strength(password: str) -> tuple[int, str, str]:
+    """Validate password strength and return score (0-100), message, and color."""
+    score = 0
+    feedback = []
 
-def validate_password_strength(password: str) -> tuple[bool, str]:
-    """Validate password strength"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long."
-    
-    if not re.search(r"[A-Z]", password):
-        return False, "Password must contain at least one uppercase letter."
-    
-    if not re.search(r"[a-z]", password):
-        return False, "Password must contain at least one lowercase letter."
-    
-    if not re.search(r"\d", password):
-        return False, "Password must contain at least one number."
-    
-    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        return False, "Password must contain at least one special character (!@#$%^&* etc)."
-    
-    return True, "Strong password ✓"
+    if len(password) >= 8:
+        score += 25
+    else:
+        feedback.append("8+ characters")
+
+    if re.search(r'[A-Z]', password):
+        score += 25
+    else:
+        feedback.append("uppercase letter")
+
+    if re.search(r'[a-z]', password):
+        score += 20
+    else:
+        feedback.append("lowercase letter")
+
+    if re.search(r'\d', password):
+        score += 15
+    else:
+        feedback.append("number")
+
+    if re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        score += 15
+    else:
+        feedback.append("special character")
+
+    # Cap at 100
+    score = min(score, 100)
+
+    if score >= 80:
+        message = f"Strong password! {' '.join(feedback) if feedback else ''}"
+        color = "#10b981"  # green
+    elif score >= 60:
+        message = f"Medium password. Add: {', '.join(feedback)}"
+        color = "#f59e0b"  # orange
+    else:
+        message = f"Weak password. Add: {', '.join(feedback)}"
+        color = "#ef4444"  # red
+
+    return score, message.strip(), color
