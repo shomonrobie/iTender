@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 import logging
-
+import bcrypt
 import os
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Union  # ← Add this line
@@ -304,7 +304,53 @@ class DatabaseManager:
         print("Database initialized successfully")
     
     # ==================== AUTHENTICATION METHODS ====================
-    
+    def store_password_reset_token(self, email: str, token: str, expires_in_minutes: int = 60):
+        """Store password reset token"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            expires_at = (datetime.now() + timedelta(minutes=expires_in_minutes)).strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO password_reset_tokens 
+                (email, token, expires_at) 
+                VALUES (?, ?, ?)
+            ''', (email, token, expires_at))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to store reset token: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def verify_reset_token(self, token: str):
+        """Verify reset token and return email if valid"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                SELECT email FROM password_reset_tokens 
+                WHERE token = ? AND expires_at > ?
+            ''', (token, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            
+            result = cursor.fetchone()
+            return result[0] if result else None
+        finally:
+            conn.close()
+
+    def update_password(self, email: str, new_password: str):
+        """Update user password with bcrypt"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            cursor.execute("UPDATE users SET password = ? WHERE email = ?", (hashed, email))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
     def authenticate_user(self, username, password):
         try:
             conn = self.get_connection()
@@ -372,61 +418,76 @@ class DatabaseManager:
             logger.error(f"Authentication error: {e}", exc_info=True)
             return None, "auth_error"
             
-    def authenticate_user_old(self, username, password):
-        """Authenticate user with secure password check and safe last_login update"""
+    def authenticate_user(self, username, password):
+        """Improved authentication with clear error messages"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Fetch user by username or email
             cursor.execute('''
-            SELECT id, username, email, full_name, role, is_active, company_id, 
-                company_name, subscription_plan, subscription_status, password_hash
-            FROM users 
-            WHERE (username = ? OR email = ?) AND is_active = 1
+            SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active, 
+                u.company_id, u.password, u.last_login, u.is_approved, u.account_type
+            FROM users u
+            WHERE (u.username = ? OR u.email = ?)
             ''', (username, username))
             
             user = cursor.fetchone()
+            
             if not user:
                 conn.close()
-                return None, "invalid_credentials"
-            
-            # Verify password (assuming bcrypt or similar hashing)
-            import bcrypt
-            stored_hash = user[10]  # password_hash column
-            try:
-                if bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
-                    # ✅ SAFE: Format datetime to string to avoid SQLite type errors
-                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    # Update last_login safely (won't crash if column is missing)
-                    try:
-                        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', (now_str, user[0]))
-                        conn.commit()
-                    except Exception:
-                        pass  # Ignore if last_login column doesn't exist yet
-                    
-                    conn.close()
-                    return user, "success"
-                else:
-                    conn.close()
-                    return None, "invalid_credentials"
-            except Exception as hash_err:
+                return None, "invalid_credentials", "❌ Username or email not found."
+
+            is_active = user[5]
+            if not is_active:
                 conn.close()
-                logger.error(f"Password hash verification failed: {hash_err}")
-                return None, "invalid_credentials"
-                
+                return None, "inactive", "⚠️ Your account is inactive. Please contact support."
+
+            stored_pass = user[7]  # password column
+            
+            password_match = False
+            error_message = "❌ Invalid password."
+            
+            if stored_pass and password:
+                try:
+                    if str(stored_pass).startswith('$2b$') or str(stored_pass).startswith('$2y$'):
+                        # bcrypt hash
+                        password_match = bcrypt.checkpw(
+                            password.encode('utf-8'), 
+                            str(stored_pass).encode('utf-8')
+                        )
+                    else:
+                        # Legacy SHA256
+                        import hashlib
+                        hashed_input = hashlib.sha256(password.encode()).hexdigest()
+                        password_match = (hashed_input == stored_pass)
+                except Exception as e:
+                    print(f"Hash verification error: {e}")
+                    password_match = False
+
+            if not password_match:
+                conn.close()
+                return None, "invalid_password", error_message
+
+            # Success - update last login
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', (now_str, user[0]))
+            conn.commit()
+            conn.close()
+            
+            status = "approved" if user[9] else "pending_approval"
+            return user, status, "success"
+
         except Exception as e:
             logger.error(f"Authentication error: {e}", exc_info=True)
-            return None, "auth_error"
+            return None, "auth_error", "❌ System error during login. Please try again."
 
     
     def create_user(self, company_id, user_data, created_by):
         """Create a new user with pending approval"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        hashed_pass = hashlib.sha256(user_data['password'].encode()).hexdigest()
         
+        hashed_pass = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         try:
             cursor.execute('''
                 INSERT INTO users (

@@ -35,7 +35,7 @@ import importlib  # ✅ Added for lazy imports
 from contextlib import contextmanager  # ✅ For resource management
 from utils.bid_generators import _generate_competitor_bids
 from modules.pdf_generator import _generate_and_download_pdf
-
+from modules.ppr_viz import render_ppr_compliance_viz
 from utils.helpers import (
     render_page_header,
     render_feature_card,
@@ -46,15 +46,17 @@ from utils.helpers import (
     format_currency_bd,
     format_percentage,
     get_bid_status_badge,
-    get_risk_indicator
+    get_risk_indicator,
+    validate_password_strength
 )
 from config import DEBUG_MODE, BID_AMOUNT_DECIMALS, BID_RATIO_DECIMALS, COST_ESTIMATE_RATIO, PPR_CONFIG, debug_print
-
-
-
+from modules.pdf_generator import generate_babui_detailed_report
+from modules.advanced_bid_optimizer import get_three_tier_comparison
+from modules.report_generator import generate_unified_report
 # Continue with normal app flow
 # debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
-
+from modules.forgot_password import render_forgot_password
+from modules.reset_password import render_reset_password
 
 
 # =============================================================================
@@ -674,7 +676,9 @@ class PageRoutes:
     HISTORY = 'history'
     PROFILE = 'profile'
     SUBSCRIPTION = 'subscription'
-    
+    # Inside PageRoutes class
+    FORGOT_PASSWORD = 'forgot_password'
+    RESET_PASSWORD = 'reset_password'
     # ─── Management Pages (Company Admin+) ───────────────────────────────────
     USER_MANAGEMENT = 'user_management'
     TENDER_MANAGEMENT = 'tender_management'
@@ -762,12 +766,13 @@ def display_analysis_results_with_report(
         comparison_data.append({
             'Analysis Type': tier.upper(),
             'Method': result.get('method', 'N/A'),
-            'Optimal Bid': f"BDT {result.get('optimal_bid', 0):,.{BID_AMOUNT_DECIMALS}f}",  # ✅ 3 decimals
+            'Optimal Bid': f"BDT {result.get('optimal_bid', 0):,.3f}",  # ✅ Changed to 3 decimals
             '% of Estimate': f"{result.get('bid_ratio', 0)*100:.1f}%",
             'Win Probability': f"{result.get('win_probability', 0)*100:.0f}%",
             'Confidence': f"{result.get('confidence_score', 0.70)*100:.0f}%",
             'Risk': f"{result.get('risk_color', '⚪')} {result.get('risk_level', 'Unknown')}"
         })
+
     
     # ✅ Fixed: Complete condition with colon
     if comparison_data:  # ✅ Was: if comparison_
@@ -870,24 +875,30 @@ def _render_unauthenticated_pages() -> None:
     """Render pages for users who are not logged in"""
     
     # Define unauthenticated page handlers
-    PAGE_HANDLERS = {
+    UNAUTH_PAGE_HANDLERS = {
+        'home': home_page,
         'login': login_page,
         'register': register_page,
         'pricing': pricing_page,
         'about': about_page,
         'contact': contact_page,
-        'individual_register': lambda: _import_and_call('modules.individual_registration', 'render_individual_registration'),
-        'individual_login': lambda: _import_and_call('modules.individual_registration', 'render_individual_login'),
+        'forgot_password': render_forgot_password,
+        'reset_password': lambda: render_reset_password(st.query_params.get("token", "")),
     }
     
     # Get current page from session state
     current_page = st.session_state.get('page', 'login')
     
     # Get the handler function
-    handler = PAGE_HANDLERS.get(current_page, login_page)
+    handler = UNAUTH_PAGE_HANDLERS.get(current_page, login_page)
     
     # Call the handler
-    handler()
+    try:
+        handler()
+    except Exception as e:
+        debug_print(f"❌ Unauthenticated page render error: {e}")
+        st.error("⚠️ Unable to load this page. Please try again.")
+
 
 
 def run_three_tier_analysis(analysis_record, competitor_bids, risk_tolerance):
@@ -1160,9 +1171,13 @@ def home_page() -> None:
 
 
 def login_page() -> None:
-    """Login page with approval status handling and Google Sign-In"""
+    """Updated Login Page with Better Integration (Forgot Password + Navigation)"""
     debug_print("🔐 Rendering login page")
-    
+    if 'show_forgot_password' not in st.session_state:
+        st.session_state.show_forgot_password = False
+    if 'forgot_password_email' not in st.session_state:
+        st.session_state.forgot_password_email = ''
+
     from modules.google_auth import render_google_login_button, handle_google_callback
     from modules.individual_registration import authenticate_individual_user
     
@@ -1182,11 +1197,10 @@ def login_page() -> None:
     
     with tab1:
         col1, col2, col3 = st.columns([1, 2, 1])
-        
         with col2:
-            with st.form("login_form", clear_on_submit=True):
-                username = st.text_input("Username or Email", key="login_username")
-                password = st.text_input("Password", type="password", key="login_password")
+            with st.form("company_login_form", clear_on_submit=True):
+                username = st.text_input("Username or Email", key="comp_login_username")
+                password = st.text_input("Password", type="password", key="comp_login_password")
                 
                 submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
                 
@@ -1194,42 +1208,23 @@ def login_page() -> None:
                     if not username or not password:
                         st.error("Please enter both username and password")
                     else:
-                        user, status = authenticate_user(username, password)
+                        user, status, message = authenticate_user(username, password)
                         
                         if status == "pending_approval":
                             st.warning("⚠️ Your account is pending approval by an administrator.")
                         elif user and status == "approved":
-                            st.session_state.logged_in = True
-                            st.session_state.user_id = user[0]
-                            st.session_state.username = user[1]
-                            st.session_state.user_email = user[2]
-                            st.session_state.full_name = user[3]
-                            st.session_state.user_role = user[4]
-                            st.session_state.company_id = user[6]
-                            st.session_state.company_name = user[7] or "N/A"
-                            st.session_state.account_type = user[8] or 'company'
-                            
-                            sub = db.get_effective_subscription(
-                                st.session_state.user_id,
-                                st.session_state.company_id if st.session_state.account_type == 'company' else None
-                            )
-                            
-                            st.session_state.subscription_plan = sub['plan']
-                            st.session_state.analyses_used = sub['analyses_used']
-                            st.session_state.analyses_limit = sub['analyses_limit']
-                            
-                            debug_print(f"✅ User logged in: {user[1]} | Type: {st.session_state.account_type}")
-                            navigate_to("dashboard", success_msg=f"Welcome back, {user[3]}! 👋")
+                            login_user(user)
+                            st.success(f"Welcome back, {user.get('full_name', username)}! 👋")
+                            navigate_to("dashboard")
                         else:
-                            st.error("❌ Invalid credentials. Please try again.")
+                            st.error(message or "❌ Invalid credentials. Please try again.")
             
             st.markdown("---")
             if st.button("➕ Register New Company Account", use_container_width=True):
                 navigate_to("register")
-    
+
     with tab2:
         col1, col2, col3 = st.columns([1, 2, 1])
-        
         with col2:
             # Individual Email Login
             with st.expander("📧 Login with Email", expanded=True):
@@ -1244,53 +1239,43 @@ def login_page() -> None:
                             st.error("Please enter both email and password")
                         else:
                             user = authenticate_individual_user(email, password)
-                            
                             if user:
                                 from modules.email_verification import send_verification_email
-                                
-                                # Send OTP for 2FA
-                                if send_verification_email(email, user['full_name'], 'login'):
-                                    st.session_state.pending_2fa = {
-                                        'user': user,
-                                        'email': email
-                                    }
+                                if send_verification_email(email, user.get('full_name', 'User'), 'login'):
+                                    st.session_state.pending_2fa = {'user': user, 'email': email}
                                     st.session_state.show_2fa = True
                                     st.success("Verification code sent to your email!")
                                     st.rerun()
                                 else:
                                     st.error("Failed to send verification code")
                             else:
-                                st.error("❌ Invalid email or password. Please register first.")
-            
-            # Divider
+                                st.error("❌ Invalid email or password.")
+
             st.markdown("---")
             st.markdown("<p style='text-align: center; color: #666;'>OR</p>", unsafe_allow_html=True)
             
-            # Google Sign-In for Individuals
+            # Google Sign-In
             with st.expander("🔐 Sign in with Google", expanded=False):
                 st.caption("For consultants, freelancers, and individual users")
                 render_google_login_button()
             
             st.markdown("---")
             
-            # Registration link
-            st.markdown("<p style='text-align: center;'>Don't have an individual account?</p>", unsafe_allow_html=True)
-            
-            if st.button("📝 Register as Individual", use_container_width=True):
-                st.session_state.page = PageRoutes.INDIVIDUAL_REGISTER
-                st.rerun()
-            
-            # Forgot password
-            if st.button("🔒 Forgot Password?", use_container_width=True):
-                st.session_state.forgot_password_email = email if 'email' in locals() else ''
-                st.session_state.show_forgot_password = True
-                st.rerun()
-    
-    # 2FA Verification Modal (outside tabs)
+            # Registration & Forgot Password Links
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("📝 Register as Individual", use_container_width=True):
+                    navigate_to(PageRoutes.INDIVIDUAL_REGISTER)
+            with col_b:
+                if st.button("🔒 Forgot Password?", use_container_width=True, type="secondary"):
+                    st.session_state.show_forgot_password = True
+                    st.rerun()
+
+    # ====================== 2FA Verification ======================
     if st.session_state.get('show_2fa'):
         st.markdown("---")
         st.markdown("### 🔐 Two-Factor Authentication")
-        st.info(f"A verification code has been sent to {st.session_state.pending_2fa['email']}")
+        st.info(f"A verification code has been sent to **{st.session_state.pending_2fa['email']}**")
         
         with st.form("2fa_verification_form"):
             otp = st.text_input("Enter 6-digit verification code", max_chars=6, type="password")
@@ -1303,31 +1288,19 @@ def login_page() -> None:
                     
                     if success:
                         user = st.session_state.pending_2fa['user']
-                        
-                        # Set session state for individual user
+                        # Set session state
                         st.session_state.logged_in = True
                         st.session_state.user_id = user['id']
-                        st.session_state.username = user['username']
+                        st.session_state.username = user.get('username')
                         st.session_state.user_email = user['email']
                         st.session_state.full_name = user['full_name']
                         st.session_state.user_role = 'individual'
                         st.session_state.account_type = 'individual'
-                        st.session_state.company_id = user['company_id']
-                        
-                        # Get company name
-                        company = db.get_company_by_id(user['company_id'])
-                        st.session_state.company_name = company.get('company_name', 'Individual Consultant') if company else 'Individual Consultant'
-                        
-                        # Get subscription
-                        sub = db.get_effective_subscription(user['id'], user['company_id'])
-                        st.session_state.subscription_plan = sub['plan']
-                        st.session_state.analyses_used = sub['analyses_used']
-                        st.session_state.analyses_limit = sub['analyses_limit']
+                        st.session_state.company_id = user.get('company_id')
                         
                         st.session_state.show_2fa = False
                         st.session_state.pending_2fa = None
                         
-                        debug_print(f"✅ Individual logged in: {user['email']}")
                         navigate_to("dashboard", success_msg=f"Welcome back, {user['full_name']}! 👋")
                     else:
                         st.error(message)
@@ -1337,96 +1310,126 @@ def login_page() -> None:
                     from modules.email_verification import send_verification_email
                     if send_verification_email(
                         st.session_state.pending_2fa['email'], 
-                        st.session_state.pending_2fa['user']['full_name'], 
+                        st.session_state.pending_2fa['user'].get('full_name', 'User'), 
                         'login'
                     ):
                         st.success("New verification code sent!")
                     else:
                         st.error("Failed to resend code")
     
-    # Forgot Password Modal
+    # ====================== Forgot Password Modal ======================
     if st.session_state.get('show_forgot_password'):
         st.markdown("---")
-        st.markdown("### 🔒 Reset Password")
+        st.markdown("### 🔒 Reset Your Password")
         
-        with st.form("forgot_password_form"):
-            email = st.text_input("Email Address", value=st.session_state.get('forgot_password_email', ''))
+        with st.form("forgot_password_form", clear_on_submit=True):
+            email_input = st.text_input(
+                "Enter your registered email", 
+                value=st.session_state.get('forgot_password_email', '')
+            )
             
-            if st.form_submit_button("Send Reset Link", use_container_width=True, type="primary"):
-                # Check if user exists
-                user = db.get_user_by_email(email)
-                if user and user.get('account_type') == 'individual':
-                    import secrets
-                    reset_token = secrets.token_urlsafe(32)
-                    # Store token in database (add this method)
-                    st.success(f"Password reset link sent to {email}")
-                    st.session_state.show_forgot_password = False
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                send_clicked = st.form_submit_button("Send Reset Link", 
+                                                   use_container_width=True, 
+                                                   type="primary")
+            
+            with col2:
+                cancel_clicked = st.form_submit_button("Cancel", 
+                                                     use_container_width=True, 
+                                                     type="secondary")
+            
+            if send_clicked:
+                if not email_input or "@" not in email_input:
+                    st.error("Please enter a valid email address")
                 else:
-                    st.error("No individual account found with this email")
+                    user = db.get_user_by_email(email_input)
+                    if user:
+                        import secrets
+                        reset_token = secrets.token_urlsafe(32)
+                        
+                        if db.store_password_reset_token(email_input, reset_token):
+                            reset_link = f"https://itender-bd.streamlit.app/reset-password?token={reset_token}"
+                            from modules.email_verification import send_password_reset_email
+                            
+                            if send_password_reset_email(email_input, reset_link):
+                                st.success(f"✅ Password reset link sent to **{email_input}**")
+                                st.session_state.show_forgot_password = False
+                                st.rerun()
+                            else:
+                                st.error("Failed to send reset email. Please try again.")
+                        else:
+                            st.error("System error. Please try again later.")
+                    else:
+                        st.error("No account found with this email.")
             
-            if st.form_submit_button("Cancel", use_container_width=True):
+            if cancel_clicked:
                 st.session_state.show_forgot_password = False
                 st.rerun()
-    
-    debug_print("✅ Login page render complete")
 
 
 def register_page() -> None:
-    """User registration page with company + admin account creation"""
+    """Registration Page - Separate flows for Company vs Individual"""
     debug_print("📝 Rendering registration page")
     
-    render_page_header("📝 Create Account", "Start your 14-day free trial • Approval required")
+    render_page_header("📝 Create New Account", "Choose the account type that best fits you")
     
-    col1, col2 = st.columns(2)
+    # Tabs for clear separation
+    tab1, tab2 = st.tabs(["🏢 Company Registration", "👤 Individual Registration"])
     
-    with col1:
-        with st.form("register_form", clear_on_submit=True):
-            st.markdown("### 🏢 Company Information")
-            company_name = st.text_input("Company Name *", key="reg_company")
-            company_email = st.text_input("Company Email *", key="reg_comp_email")
-            company_phone = st.text_input("Company Phone", key="reg_comp_phone")
-            division = st.selectbox("Division", 
+    # ====================== COMPANY REGISTRATION ======================
+    with tab1:
+        st.markdown("### 🏢 Register as a Company")
+        st.caption("For construction companies, contractors, and organizations (requires admin approval)")
+        
+        with st.form("company_register_form", clear_on_submit=True):
+            st.markdown("#### Company Information")
+            company_name = st.text_input("Company Name *", key="comp_reg_name")
+            company_email = st.text_input("Company Email *", key="comp_reg_email")
+            company_phone = st.text_input("Company Phone *", key="comp_reg_phone")
+            division = st.selectbox("Division / Region *", 
                 ["Dhaka", "Chittagong", "Rajshahi", "Khulna", "Barisal", "Sylhet", "Rangpur", "Mymensingh"],
-                key="reg_division"
+                key="comp_reg_division"
             )
             
-            st.markdown("### 👤 Admin Account")
-            full_name = st.text_input("Full Name *", key="reg_fullname")
-            email = st.text_input("Email Address *", key="reg_email")
-            username = st.text_input("Username *", key="reg_username")
-            password = st.text_input("Password *", type="password", key="reg_password")
-            confirm_password = st.text_input("Confirm Password *", type="password", key="reg_confpass")
+            st.markdown("#### Admin Account Details")
+            full_name = st.text_input("Full Name (Admin) *", key="comp_reg_fullname")
+            email = st.text_input("Admin Email *", key="comp_reg_admin_email")
+            username = st.text_input("Username *", key="comp_reg_username")
             
-            terms = st.checkbox("I agree to the Terms of Service and Privacy Policy *", key="reg_terms")
+            password = st.text_input("Password *", type="password", key="comp_reg_password")
+            confirm_password = st.text_input("Confirm Password *", type="password", key="comp_reg_confpass")
             
-            submitted = st.form_submit_button("Create Account", use_container_width=True, type="primary")
-            account_type = st.radio(
-                "Account Type",
-                options=["company", "consultant"],
-                captions=["I represent a construction company", "I'm an independent consultant serving multiple clients"],
-                index=0,
-                key="reg_account_type"
-            )
-
+            # Password Strength
+            if password:
+                score, message, color = validate_password_strength(password)
+                st.progress(score / 100)
+                st.markdown(f"<p style='color:{color}; font-size:0.9em;'>{message}</p>", unsafe_allow_html=True)
+            
+            terms = st.checkbox("I agree to the Terms of Service and Privacy Policy *", key="comp_reg_terms")
+            
+            submitted = st.form_submit_button("Submit Company Registration", 
+                                            use_container_width=True, 
+                                            type="primary")
+            
             if submitted:
-                # Validation
-                if not all([company_name, company_email, full_name, email, username, password]):
-                    st.error("❌ Please fill all required fields marked with *")
+                if not all([company_name, company_email, full_name, email, username, password, division]):
+                    st.error("❌ Please fill all required fields.")
                 elif password != confirm_password:
-                    st.error("❌ Passwords do not match")
+                    st.error("❌ Passwords do not match.")
                 elif len(password) < 8:
-                    st.error("❌ Password must be at least 8 characters")
+                    st.error("❌ Password must be at least 8 characters.")
+                elif score < 60:
+                    st.error("❌ Password is too weak.")
                 elif not terms:
-                    st.error("❌ Please accept the terms to continue")
+                    st.error("❌ You must accept the terms.")
                 else:
                     try:
-                        # ✅ SECURITY NOTE: In production, hash passwords before storage
-                        # Example: import bcrypt; hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-                        # Create company first
                         company_data = {
-                            'company_name': company_name,
-                            'email': company_email,
-                            'phone': company_phone,
+                            'company_name': company_name.strip(),
+                            'email': company_email.strip(),
+                            'phone': company_phone.strip(),
                             'division': division
                         }
                         
@@ -1434,59 +1437,51 @@ def register_page() -> None:
                         
                         if success:
                             company_id = result
-                            
-                            # Create admin user
                             user_data = {
-                                'username': username,
+                                'username': username.strip(),
                                 'password': password,
-                                'email': email,
-                                'full_name': full_name,
-                                'phone': '',
-                                'role': 'company_admin' if account_type == 'company' else 'consultant',
-                                'account_type': account_type,  # ← NEW FIELD
+                                'email': email.strip(),
+                                'full_name': full_name.strip(),
+                                'phone': company_phone.strip(),
+                                'role': 'company_admin',
+                                'account_type': 'company',
                                 'is_approved': False
                             }
                             
                             user_success, user_result = db.create_user(company_id, user_data, None)
                             
                             if user_success:
-                                st.success("✅ Account created successfully! Please wait for admin approval.")
-                                st.info("You will receive an email notification once your account is approved.")
+                                st.success("✅ Company registration submitted successfully!")
+                                st.info("Your account is under review. You will receive an email once approved (usually within 24-48 hours).")
                                 navigate_to("login")
                             else:
-                                st.error(f"❌ Error creating user: {user_result}")
-                                # Rollback company creation if user creation fails
-                                db.delete_company(company_id)  # Assuming this method exists
+                                st.error(f"❌ User creation failed: {user_result}")
                         else:
-                            st.error(f"❌ Error creating company: {result}")
-                            
+                            st.error(f"❌ Company creation failed: {result}")
                     except Exception as e:
-                        debug_print(f"❌ Registration error: {e}")
-                        logger.error("Registration failed", exc_info=True)
-                        st.error(f"❌ An unexpected error occurred. Please try again.")
+                        logger.error("Company registration error", exc_info=True)
+                        st.error("❌ An error occurred. Please try again.")
     
-    with col2:
-        st.markdown("### 📋 Registration Process")
+        # ====================== INDIVIDUAL REGISTRATION ======================
+    with tab2:
+        # Use the imported individual registration module
+        from modules.individual_registration import render_individual_registration
+        render_individual_registration()
+
+    
+    # Sidebar / Info Box
+    with st.sidebar:
+        st.markdown("### 📋 Registration Guidelines")
         st.markdown("""
-        1. **Fill out the registration form** with company & admin details
-        2. **Submit for approval** – our team reviews each application
-        3. **Wait for admin approval** – typically within 24-48 hours
-        4. **Login to your account** – start your free trial immediately
+        **Company Accounts:**
+        - Require admin approval
+        - Suitable for teams
+        - Full platform access after approval
         
-        ### 🔐 Why Approval Required?
-        - Ensures only legitimate construction companies access the platform
-        - Prevents spam and abuse of AI prediction resources
-        - Enables personalized onboarding and support
-        """)
-        
-        st.markdown("### 🎁 Free Trial Includes")
-        st.markdown("""
-        ✅ **Professional plan features** (৳14,999/mo value)  
-        ✅ **Unlimited tender analyses** during trial period  
-        ✅ **AI-powered bid predictions** with 85% accuracy  
-        ✅ **Team collaboration** – invite up to 5 members  
-        ✅ **Priority email support**  
-        ✅ **No credit card required** – cancel anytime  
+        **Individual Accounts:**
+        - Faster activation
+        - Ideal for freelancers & consultants
+        - Auto-approved
         """)
         
         st.info("💡 Already have an account?")
@@ -2393,7 +2388,1393 @@ def _process_competitor_bids_input(
     
     return competitor_bids
 
+# =============================================================================
+# REPLACE THE EXISTING tender_analysis_page() IN main.py WITH THIS VERSION
+# =============================================================================
+
 def tender_analysis_page() -> None:
+    """
+    Three-Tier Tender Analysis Page - Refactored for unified reporting
+    Features: 
+    - Searchable table selector at top (like Edit Tender)
+    - Clean collapsible form sections
+    - Robust session state sync for auto-populate
+    - Compact locking workflow + visual PPR compliance
+    - UNIFIED PDF & HTML reports (same format)
+    """
+    debug_print("🎯 Rendering tender analysis page")
+    
+    # Clear stale flags
+    if 'tender_form_submitted' in st.session_state:
+        del st.session_state.tender_form_submitted
+
+    # Header
+    render_page_header(
+        "🎯 Three-Tier Bid Optimization", 
+        "Compare Basic, Advanced (PPR 2025), and Enhanced (ML) analysis",
+        icon="🏗️"
+    )
+    
+    # Ensure admin has premium access
+    ensure_admin_premium()
+    
+    # 🔑 HYBRID SUBSCRIPTION CHECK
+    sub = db.get_effective_subscription(
+        st.session_state.user_id, 
+        st.session_state.company_id if st.session_state.get('account_type') == 'company' else None
+    )
+    st.session_state.subscription_plan = sub.get('plan', 'free')
+    st.session_state.analyses_used = sub.get('analyses_used', 0)
+    st.session_state.analyses_limit = sub.get('analyses_limit', 5)
+    st.session_state.sub_owner_type = sub.get('owner_type', 'free')
+    
+    # Check usage limits
+    if st.session_state.analyses_limit > 0 and st.session_state.analyses_used >= st.session_state.analyses_limit:
+        st.warning(f"🔒 {st.session_state.sub_owner_type.title()} analysis limit reached.")
+        if st.button("💳 Upgrade Plan", type="primary"):
+            st.session_state.page = "subscription"
+            st.rerun()
+        return
+    
+    is_premium = st.session_state.subscription_plan in ['professional', 'enterprise'] or st.session_state.user_role == 'admin'
+    
+    # =============================================================================
+    # 🔹 1. SESSION STATE INITIALIZATION (Page-specific)
+    # =============================================================================
+    page_defaults = {
+        'selected_tender_for_analysis': None,
+        'analysis_competitor_bids': [],
+        'analysis_ready_to_save': False,
+        'last_analysis_comparison': None,
+        'last_analysis_record': None,
+        'ppr_calculation_cache': None,
+        'tender_lock_status': 'unlocked',
+        # Widget keys (must match st.text_input key= values)
+        'input_tender_id': '', 'input_tender_title': '', 'input_procuring_entity': '',
+        'input_division': 'Dhaka', 'input_district': '', 'input_thana': '',
+        'input_official_estimate': 0.0, 'input_tender_security': 0.0, 
+        'input_document_fee': 0.0, 'input_procurement_type': 'works',
+        '_pdf_buffer': None,          # For PDF download
+        '_pdf_filename': None,        # For PDF filename
+        'analysis_ready_to_save': False,
+    }
+    for k, v in page_defaults.items():
+        st.session_state.setdefault(k, v)
+    
+    # =============================================================================
+    # 🔹 2. SEARCHABLE TENDER SELECTOR (Top of Page - Like Edit Tender)
+    # =============================================================================
+    st.markdown("### 🔍 Select Tender for Analysis")
+    
+    # Search filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        search_id = st.text_input("Tender ID", key="analysis_search_id", placeholder="e.g., 1265809")
+    with col2:
+        search_title = st.text_input("Title/Entity", key="analysis_search_title", placeholder="Search...")
+    with col3:
+        filter_type = st.selectbox("Type", ["All", "works", "goods", "services"], key="analysis_filter_type")
+    
+    # Fetch & filter tenders
+    all_tenders = _get_company_tenders_cached(st.session_state.company_id)
+    filtered = all_tenders.copy()
+    
+    if search_id:
+        filtered = filtered[filtered['tender_id'].str.contains(search_id, case=False, na=False)]
+    if search_title:
+        filtered = filtered[
+            filtered['tender_title'].str.contains(search_title, case=False, na=False) | 
+            filtered['procuring_entity'].str.contains(search_title, case=False, na=False)
+        ]
+    if filter_type != "All":
+        filtered = filtered[filtered['procurement_type'] == filter_type]
+    
+    # Display selection table
+    if not filtered.empty:
+        display_df = filtered[['id', 'tender_id', 'tender_title', 'procuring_entity', 
+                              'procurement_type', 'official_estimate', 'submission_deadline', 
+                              'is_locked', 'is_copy']].copy()
+        
+        display_df['estimate_fmt'] = display_df['official_estimate'].apply(lambda x: f"BDT {x:,.0f}" if pd.notna(x) else "N/A")
+        display_df['deadline_fmt'] = pd.to_datetime(display_df['submission_deadline'], errors='coerce').dt.strftime('%d %b %Y')
+        display_df['status'] = display_df.apply(lambda r: "🔒 LOCKED" if r['is_locked'] else ("📋 COPY" if r['is_copy'] else "🔓 Open"), axis=1)
+        
+        st.dataframe(
+            display_df[['tender_id', 'tender_title', 'procuring_entity', 'procurement_type', 'estimate_fmt', 'deadline_fmt', 'status']],
+            use_container_width=True,
+            height=250,
+            column_config={
+                "tender_id": "ID",
+                "tender_title": st.column_config.TextColumn("Title", width="large"),
+                "procuring_entity": "Entity",
+                "procurement_type": "Type",
+                "estimate_fmt": "Estimate",
+                "deadline_fmt": "Deadline",
+                "status": "Status"
+            }
+        )
+        
+        # Selection dropdown + Load button
+        tender_options = {f"{row['tender_id']} • {str(row['tender_title'])[:50]}...": row.to_dict() for _, row in filtered.iterrows()}
+        selected_label = st.selectbox("Select tender to analyze:", options=["-- Create New Analysis --"] + list(tender_options.keys()), key="analysis_selector")
+        
+        if selected_label != "-- Create New Analysis --" and selected_label in tender_options:
+            selected_data = tender_options[selected_label]
+            
+            if st.button("📥 Load Tender for Analysis", type="primary", key="load_analysis_tender"):
+                # Sync to widget keys (input_*), NOT form_* keys
+                st.session_state.selected_tender_for_analysis = selected_data
+                
+                # Basic details
+                st.session_state.input_tender_id = str(selected_data.get('tender_id', ''))
+                st.session_state.input_tender_title = str(selected_data.get('tender_title', ''))
+                st.session_state.input_procuring_entity = str(selected_data.get('procuring_entity', ''))
+                
+                # Location
+                st.session_state.input_division = str(selected_data.get('division', 'Dhaka'))
+                st.session_state.input_district = str(selected_data.get('district', ''))
+                st.session_state.input_thana = str(selected_data.get('thana', ''))
+                
+                # Financials
+                st.session_state.input_official_estimate = float(selected_data.get('official_estimate', 0) or 0)
+                st.session_state.input_tender_security = float(selected_data.get('tender_security', 0) or 0)
+                st.session_state.input_document_fee = float(selected_data.get('document_fee', 0) or 0)
+                st.session_state.input_procurement_type = str(selected_data.get('procurement_type', 'works'))
+                
+                # Lock status
+                is_locked = bool(selected_data.get('is_locked', False))
+                st.session_state.tender_lock_status = 'locked' if is_locked else 'unlocked'
+                
+                # Show toast AND rerun
+                st.toast(f"✅ Loaded: {selected_data['tender_title'][:40]}", icon="📋")
+                st.rerun()
+    else:
+        st.info("📭 No tenders found. Create a tender first or adjust your search.")
+    
+    # Show loaded tender summary (compact)
+    if st.session_state.selected_tender_for_analysis:
+        t = st.session_state.selected_tender_for_analysis
+        status_badge = "🔒" if t.get('is_locked') else ("📋" if t.get('is_copy') else "🔓")
+        st.markdown(f"""
+        <div style="background:#f8fafc;padding:0.75rem 1rem;border-radius:8px;border-left:4px solid #3b82f6;margin:0.5rem 0">
+            <strong>{status_badge} {str(t.get('tender_title',''))[:70]}{'...' if len(str(t.get('tender_title',''))) > 70 else ''}</strong><br>
+            <small>ID: {t.get('tender_id')} • Est: BDT {t.get('official_estimate',0):,.0f} • Deadline: {str(t.get('submission_deadline',''))[:10]}</small>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # =============================================================================
+    # 🔹 3. COMPACT ANALYSIS FORM (Collapsible Sections)
+    # =============================================================================
+    st.markdown("### 📝 Analysis Inputs")
+    
+    # Determine form disabled state
+    is_new = st.session_state.selected_tender_for_analysis is None
+    is_locked = st.session_state.tender_lock_status == 'locked' and not is_new
+    form_disabled = is_locked and st.session_state.user_role != 'admin'
+    
+    if form_disabled:
+        st.warning("🔒 Tender is locked. Only admin can edit. Request a backup copy if needed.")
+    
+    with st.form("analysis_form", clear_on_submit=False):
+        # Section 1: Basic Details (Collapsible)
+        with st.expander("📋 Basic Tender Details", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Tender ID *", key="input_tender_id", disabled=form_disabled)
+                st.text_area("Tender Title *", height=40, key="input_tender_title", disabled=form_disabled)
+                st.text_input("Procuring Entity *", key="input_procuring_entity", disabled=form_disabled)
+            with c2:
+                from modules.bangladesh_locations import DIVISIONS, get_districts, get_upazilas
+                div = st.selectbox("Division", DIVISIONS, key="input_division", disabled=form_disabled)
+                dists = get_districts(div)
+                dist = st.selectbox("District", dists, key="input_district", disabled=form_disabled)
+                upzs = get_upazilas(dist)
+                if upzs:
+                    st.selectbox("Thana/Upazila", upzs, key="input_thana", disabled=form_disabled)
+                else:
+                    st.text_input("Thana/Upazila", key="input_thana_text", disabled=form_disabled)
+        
+        # Section 2: Financials (Collapsible)
+        with st.expander("💰 Financial Details", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.number_input("Official Estimate (BDT) *", min_value=0.0, step=100000.0, format="%.3f", key="input_official_estimate", disabled=form_disabled)
+                st.number_input("Tender Security (BDT)", min_value=0.0, step=10000.0, format="%.3f", key="input_tender_security", disabled=form_disabled)
+            with c2:
+                st.selectbox("Procurement Type", ["works", "goods", "services"], key="input_procurement_type", disabled=form_disabled)
+                st.number_input("Document Fee (BDT)", min_value=0.0, step=500.0, format="%.3f", key="input_document_fee", disabled=form_disabled)
+        
+        with st.expander("👥 Competitor Intelligence", expanded=True):
+            bid_source = st.radio(
+                "Provide competitor bids:",
+                ["🤖 Auto-generate realistic bids", "✍️ Enter manually from known competitors"],
+                horizontal=True,
+                key="analysis_bid_source",
+                disabled=form_disabled
+            )
+
+            if "manual" in bid_source.lower():
+                competitors = db.get_competitor_master_list(st.session_state.company_id)
+                competitor_options = {c[1]: c[0] for c in competitors} if competitors else {}
+                
+                if competitor_options:
+                    st.markdown("#### Add Competitor Bids")
+                    
+                    if 'competitor_rows' not in st.session_state:
+                        st.session_state.competitor_rows = [{'id': 0, 'name': '', 'bid': 0.0}]
+                    
+                    for i, row in enumerate(st.session_state.competitor_rows):
+                        c1, c2, c3 = st.columns([3, 2, 0.5])
+                        with c1:
+                            name = st.selectbox(
+                                "Competitor",
+                                options=[""] + list(competitor_options.keys()),
+                                index=list(competitor_options.keys()).index(row['name']) if row['name'] in competitor_options else 0,
+                                key=f"comp_name_{i}",
+                                disabled=form_disabled
+                            )
+                        with c2:
+                            bid = st.number_input(
+                                "Bid (BDT)",
+                                min_value=0.0,
+                                value=float(row['bid']),
+                                step=100000.0,
+                                format="%.3f",
+                                key=f"comp_bid_{i}",
+                                disabled=form_disabled
+                            )
+                        with c3:
+                            if st.button("🗑️", key=f"comp_del_{i}", disabled=form_disabled):
+                                st.session_state.competitor_rows.pop(i)
+                                st.rerun()
+                        
+                        st.session_state.competitor_rows[i]['name'] = name
+                        st.session_state.competitor_rows[i]['bid'] = bid
+                    
+                    c1, c2 = st.columns([1, 4])
+                    with c1:
+                        if st.button("➕ Add Competitor", key="add_comp_row", disabled=form_disabled):
+                            new_id = max([r['id'] for r in st.session_state.competitor_rows], default=-1) + 1
+                            st.session_state.competitor_rows.append({'id': new_id, 'name': '', 'bid': 0.0})
+                            st.rerun()
+                    with c2:
+                        if st.button("🗑️ Clear All", key="clear_comp_rows", disabled=form_disabled):
+                            st.session_state.competitor_rows = []
+                            st.rerun()
+                    
+                    # Build and save competitor_bids
+                    competitor_bids = [
+                        {'name': row['name'], 'bid': float(row['bid'])}
+                        for row in st.session_state.competitor_rows
+                        if row['name'] and row['bid'] > 0
+                    ]
+                    st.session_state.analysis_competitor_bids = competitor_bids  # Persist for post-form
+                    
+                    if not competitor_bids:
+                        st.caption("💡 Add at least one competitor with a bid value")
+                else:
+                    st.info("📭 No competitors in master list. Add competitors first in Competitor Management.")
+            else:
+                # Auto-generate: USE configured settings
+                estimate_val = st.session_state.get('input_official_estimate', 0.0) or 0
+                competitor_count = st.session_state.get('auto_competitor_count', 3)
+                risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
+                
+                if estimate_val > 0:
+                    # Generate bids using configured count + risk preference
+                    competitor_bids = _generate_competitor_bids(
+                        estimate_val, 
+                        num_competitors=competitor_count,
+                        risk_preference=risk_pref  # Pass risk pref to generation function
+                    )
+                    st.session_state.analysis_competitor_bids = competitor_bids
+                    st.caption(f"🤖 Generated {competitor_count} {risk_pref} competitor bids")
+                else:
+                    st.caption("💡 Enter Official Estimate first to auto-generate bids")
+                    competitor_bids = []
+                    st.session_state.analysis_competitor_bids = []
+        
+        # Section 4: Risk Strategy
+        with st.expander("🎯 Risk Strategy", expanded=True):
+            risk_tolerance = st.select_slider(
+                "Risk tolerance",
+                options=['aggressive', 'moderate', 'conservative'],
+                value='moderate',
+                key="analysis_risk_tolerance",
+                disabled=form_disabled,
+                help="Aggressive: Lower bids | Conservative: Safer wins"
+            )
+        
+        # =============================================================================
+        # ⚙️ AUTO-BID CALCULATION SETTINGS (New Section)
+        # =============================================================================
+        with st.expander("⚙️ Auto-Bid Calculation Settings", expanded=False):
+            st.markdown("Configure how competitor bids are generated for analysis")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # Configurable competitor count (persisted in session state)
+                st.session_state.auto_competitor_count = st.slider(
+                    "Number of Competitors for Auto-Generation",
+                    min_value=2, max_value=20, value=st.session_state.get('auto_competitor_count', 3),
+                    help="More competitors = more realistic bid distribution. Affects auto-generated bids only."
+                )
+            with col2:
+                # Risk preference for auto-generation
+                st.session_state.auto_risk_pref = st.selectbox(
+                    "Auto-Generation Risk Preference",
+                    options=['aggressive', 'moderate', 'conservative'],
+                    index=['aggressive', 'moderate', 'conservative'].index(st.session_state.get('auto_risk_pref', 'moderate')),
+                    help="Aggressive: Lower bids | Conservative: Higher, safer bids"
+                )
+            
+            st.caption("💡 These settings only affect 🤖 Auto-generate mode. Manual entries are always respected.")
+        
+        # Submit button
+        form_complete = all([
+            st.session_state.get('input_tender_id', ''),
+            st.session_state.get('input_tender_title', ''),
+            st.session_state.get('input_procuring_entity', ''),
+            (st.session_state.get('input_official_estimate', 0) or 0) > 0
+        ])
+        submit_disabled = not form_complete or not st.session_state.get('analysis_competitor_bids', []) or form_disabled
+
+        form_submitted = st.form_submit_button("🚀 Run Three-Tier Analysis", type="primary", use_container_width=True, disabled=submit_disabled)
+
+        if not form_complete and not form_disabled:
+            st.caption("⚠️ Fill required fields: Tender ID, Title, Entity, Estimate")
+        elif not st.session_state.get('analysis_competitor_bids', []) and not form_disabled:
+            st.caption("⚠️ Add at least one competitor bid")
+    
+    # =============================================================================
+    # 🔹 RUN ANALYSIS ON FORM SUBMIT
+    # =============================================================================
+    if form_submitted and not form_disabled:
+        try:
+            # 1. Read & Validate Inputs
+            inputs = {
+                'tender_id': st.session_state.get('input_tender_id', '').strip(),
+                'tender_title': st.session_state.get('input_tender_title', '').strip(),
+                'procuring_entity': st.session_state.get('input_procuring_entity', '').strip(),
+                'official_estimate': float(st.session_state.get('input_official_estimate', 0) or 0),
+                'procurement_type': st.session_state.get('input_procurement_type', 'works'),
+                'division': st.session_state.get('input_division', 'Dhaka'),
+                'district': st.session_state.get('input_district', ''),
+                'thana': st.session_state.get('input_thana', st.session_state.get('input_thana_text', '')),
+                'risk_tolerance': st.session_state.get('analysis_risk_tolerance', 'moderate'),
+                'competitor_bids': st.session_state.get('analysis_competitor_bids', [])
+            }
+            
+            required_missing = [k for k in ['tender_id', 'tender_title', 'procuring_entity'] if not inputs[k]]
+            if inputs['official_estimate'] <= 0:
+                required_missing.append('official_estimate')
+            
+            if required_missing:
+                st.error(f"❌ Please fill required fields: {', '.join(required_missing)}")
+            elif not inputs['competitor_bids']:
+                st.error("❌ Please provide at least one competitor bid")
+            else:
+                # 2. Run Analysis
+                with st.spinner("🔍 Running Three-Tier Analysis..."):
+                    from modules.advanced_bid_optimizer import get_three_tier_comparison
+                    comparison = get_three_tier_comparison(
+                        official_estimate=inputs['official_estimate'],
+                        competitor_bids=inputs['competitor_bids'],
+                        procurement_type=inputs['procurement_type'],
+                        risk_tolerance=inputs['risk_tolerance'],
+                        company_id=st.session_state.company_id
+                    )
+                    
+                    best_tier = max(comparison.keys(), key=lambda t: comparison[t].get('confidence_score', 0) * comparison[t]['win_probability'])
+                    
+                    # 3. Store in Session State (PERSISTS across reruns)
+                    st.session_state.current_analysis_record = {
+                        'tender_id': inputs['tender_id'], 
+                        'tender_title': inputs['tender_title'],
+                        'procuring_entity': inputs['procuring_entity'], 
+                        'division': inputs['division'],
+                        'district': inputs['district'], 
+                        'thana': inputs['thana'],
+                        'construction_type': inputs['procurement_type'],
+                        'official_estimate': round(inputs['official_estimate'], 3),
+                        'competitor_bids': inputs['competitor_bids'], 
+                        'risk_tolerance': inputs['risk_tolerance'],
+                        'procurement_type': inputs['procurement_type'],
+                        'competitor_count': len(inputs['competitor_bids']) if isinstance(inputs['competitor_bids'], list) else 0  # ← ADD THIS
+                    }
+                    st.session_state.current_comparison = comparison
+                    st.session_state.current_best_result = comparison[best_tier]
+                    st.session_state.current_best_tier = best_tier
+                    st.session_state.current_competitor_bids = inputs['competitor_bids']
+                    st.session_state.current_risk_tolerance = inputs['risk_tolerance']
+                    st.session_state.analysis_ready_to_save = True
+                    
+                    db.increment_analysis_usage(st.session_state.user_id)
+                    st.session_state.analyses_used += 1
+                    
+        except Exception as e:
+            logger.error(f"Analysis failed: {e}", exc_info=True)
+            st.error(f"❌ Analysis error: {str(e)}")
+
+    # =============================================================================
+    # 🔹 DISPLAY RESULTS (PERSISTS AFTER SAVE/INSPECT CLICKS)
+    # =============================================================================
+    if st.session_state.get('current_analysis_record') is not None:
+        comparison = st.session_state.current_comparison
+        analysis_record = st.session_state.current_analysis_record
+        inputs = {'official_estimate': analysis_record['official_estimate'], 'tender_id': analysis_record['tender_id']}
+        
+        # Import unified report generator
+        
+        
+        # Display results based on subscription
+        if is_premium:
+            # Display the unified HTML report directly
+            user_info = {
+                'full_name': st.session_state.get('full_name', 'N/A'),
+                'company_name': st.session_state.get('company_name', 'N/A')
+            }
+            
+            # This displays the HTML report in the Streamlit UI
+            generate_unified_report(
+                analysis_record=analysis_record,
+                comparison=comparison,
+                user_info=user_info,
+                format='html'  # Only display HTML, don't return PDF yet
+            )
+        else:
+            st.info("🔓 Free Plan: Showing Basic vs Advanced. Upgrade for ML analysis!")
+            render_comparison(
+                basic_result=comparison['basic'], 
+                advanced_result=comparison['advanced'],
+                official_estimate=analysis_record['official_estimate'],
+                competitor_bids=st.session_state.current_competitor_bids,
+                risk_tolerance=st.session_state.current_risk_tolerance
+            )
+        
+        # =============================================================================
+        # 📄 UNIFIED PDF EXPORT (Matches HTML exactly)
+        # =============================================================================
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        
+        with col1:
+            if st.button("📑 Generate PDF Report", use_container_width=True, type="secondary", key="gen_pdf_btn"):
+                user_info = {
+                    'full_name': st.session_state.get('full_name', 'N/A'),
+                    'company_name': st.session_state.get('company_name', 'N/A')
+                }
+                analysis_record_for_report = {
+                    'tender_id': st.session_state.current_analysis_record.get('tender_id'),
+                    'tender_title': st.session_state.current_analysis_record.get('tender_title'),
+                    'procuring_entity': st.session_state.current_analysis_record.get('procuring_entity'),
+                    'official_estimate': st.session_state.current_analysis_record.get('official_estimate'),
+                    'division': st.session_state.current_analysis_record.get('division'),
+                    'district': st.session_state.current_analysis_record.get('district'),
+                    'thana': st.session_state.current_analysis_record.get('thana'),
+                    'procurement_type': st.session_state.current_analysis_record.get('procurement_type'),
+                    'submission_deadline': st.session_state.current_analysis_record.get('submission_deadline', 'N/A'),
+                    'risk_tolerance': st.session_state.current_analysis_record.get('risk_tolerance', 'moderate'),
+                    # ↓↓↓ CRITICAL: Explicitly include competitor bids ↓↓↓
+                    'competitor_bids': st.session_state.current_competitor_bids,  # ← USE THIS
+                    'current_competitor_bids': st.session_state.current_competitor_bids,  # ← AND THIS (for redundancy)
+                    'competitor_count': len(st.session_state.current_competitor_bids) if st.session_state.current_competitor_bids else 0
+                }
+                
+
+                # Generate PDF using unified report generator
+                pdf_buffer = generate_unified_report(
+                    analysis_record=analysis_record_for_report,
+                    comparison=comparison,
+                    user_info=user_info,
+                    format='pdf'  # Return PDF buffer
+                )
+                
+                if pdf_buffer and pdf_buffer.getbuffer().nbytes > 0:
+                    safe_tid = str(analysis_record.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
+                    filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    st.session_state._pdf_buffer = pdf_buffer
+                    st.session_state._pdf_filename = filename
+                    st.success("✅ PDF generated! Scroll down to download.")
+                    st.rerun()
+                else:
+                    st.error("❌ PDF generation failed")
+        
+        with col2:
+            # CSV Export
+            export_rows = []
+            for tier, result in comparison.items():
+                export_rows.append({
+                    'Tier': tier.upper(), 
+                    'Method': result.get('method', ''),
+                    'Optimal_Bid_BDT': result['optimal_bid'],
+                    'Win_Probability_%': round(result['win_probability'] * 100, 1),
+                    'Confidence_%': round(result.get('confidence_score', 0.7) * 100, 1),
+                    'PPR_Compliant': 'Yes' if result['optimal_bid'] >= (comparison.get('advanced', comparison.get('basic', {})).get('slt_threshold', 0)) else 'No'
+                })
+            csv = pd.DataFrame(export_rows).to_csv(index=False)
+            st.download_button(
+                "📥 Export CSV", 
+                data=csv, 
+                file_name=f"analysis_{inputs['tender_id']}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", 
+                use_container_width=True
+            )
+        
+        with col3:
+            # Save to History button
+            has_valid_data = (
+                st.session_state.get('current_analysis_record') is not None and
+                st.session_state.get('current_best_result') is not None
+            )
+            st.button(
+                "💾 Save to History", 
+                key="save_analysis_btn", 
+                use_container_width=True, 
+                type="primary",
+                disabled=not has_valid_data,
+                on_click=_save_analysis_callback
+            )
+        
+        with col4:
+            if st.button("🔄 New Analysis", use_container_width=True, type="secondary"):
+                # Clear analysis state but keep form data
+                st.session_state.current_analysis_record = None
+                st.session_state.current_comparison = None
+                st.session_state.current_best_result = None
+                st.session_state._pdf_buffer = None
+                st.session_state._pdf_filename = None
+                st.rerun()
+        
+        # PDF Download Button (Shows if buffer exists)
+        if st.session_state.get('_pdf_buffer') and st.session_state.get('_pdf_filename'):
+            st.markdown("---")
+            st.info(f"📄 **PDF Report Ready:** `{st.session_state._pdf_filename}`")
+            col_d1, col_d2, col_d3 = st.columns([3, 1, 1])
+            with col_d2:
+                st.download_button(
+                    "💾 Download PDF", 
+                    data=st.session_state._pdf_buffer,
+                    file_name=st.session_state._pdf_filename, 
+                    mime="application/pdf",
+                    use_container_width=True, 
+                    key="download_unified_pdf"
+                )
+            with col_d3:
+                if st.button("🗑️ Clear", key="clear_pdf_buf", use_container_width=True):
+                    st.session_state.pop('_pdf_buffer', None)
+                    st.session_state.pop('_pdf_filename', None)
+                    st.rerun()
+        
+        # Show recently saved status
+        if st.session_state.get('last_saved_analysis_id'):
+            saved_id = st.session_state.last_saved_analysis_id
+            saved_tender = st.session_state.get('last_saved_tender_id', 'Unknown')
+            st.success(f"✨ Last saved: Analysis #{saved_id} for Tender {saved_tender}")
+    
+    # =============================================================================
+    # 🔬 DEBUG PANEL (Optional)
+    # =============================================================================
+    if DEBUG_MODE and st.button("🔬 Inspect Report Data", key="debug_report_data"):
+        st.write("### Report Data Preview")
+        if st.session_state.get('current_analysis_record'):
+            st.json({
+                'tender_id': st.session_state.current_analysis_record.get('tender_id'),
+                'official_estimate': st.session_state.current_analysis_record.get('official_estimate'),
+                'competitor_count': len(st.session_state.get('current_competitor_bids', [])),
+                'comparison_tiers': list(st.session_state.get('current_comparison', {}).keys())
+            })
+    
+    debug_print("✅ Tender analysis page complete")
+
+def tender_analysis_page_bak2() -> None:
+    """
+    Three-Tier Tender Analysis Page - Refactored with Export & Debug Tools
+    Features: 
+    - Searchable table selector at top
+    - Clean collapsible form sections
+    - Robust session state sync for auto-populate
+    - HTML export for dashboard comparison
+    - PDF export with debug comparison
+    - Locking workflow + visual PPR compliance
+    """
+    debug_print("🎯 Rendering tender analysis page")
+    
+    # Clear stale flags
+    if 'tender_form_submitted' in st.session_state:
+        del st.session_state.tender_form_submitted
+
+    # Header
+    render_page_header(
+        "🎯 Three-Tier Bid Optimization", 
+        "Compare Basic, Advanced (PPR 2025), and Enhanced (ML) analysis",
+        icon="🏗️"
+    )
+    
+    # Ensure admin has premium access
+    ensure_admin_premium()
+    
+    # 🔑 HYBRID SUBSCRIPTION CHECK
+    sub = db.get_effective_subscription(
+        st.session_state.user_id, 
+        st.session_state.company_id if st.session_state.get('account_type') == 'company' else None
+    )
+    st.session_state.subscription_plan = sub.get('plan', 'free')
+    st.session_state.analyses_used = sub.get('analyses_used', 0)
+    st.session_state.analyses_limit = sub.get('analyses_limit', 5)
+    st.session_state.sub_owner_type = sub.get('owner_type', 'free')
+    
+    # Check usage limits
+    if st.session_state.analyses_limit > 0 and st.session_state.analyses_used >= st.session_state.analyses_limit:
+        st.warning(f"🔒 {st.session_state.sub_owner_type.title()} analysis limit reached.")
+        if st.button("💳 Upgrade Plan", type="primary"):
+            st.session_state.page = "subscription"
+            st.rerun()
+        return
+    
+    is_premium = st.session_state.subscription_plan in ['professional', 'enterprise'] or st.session_state.user_role == 'admin'
+    
+    # =============================================================================
+    # 🔹 1. SESSION STATE INITIALIZATION (Page-specific)
+    # =============================================================================
+    page_defaults = {
+        'selected_tender_for_analysis': None,
+        'analysis_competitor_bids': [],
+        'analysis_ready_to_save': False,
+        'last_analysis_comparison': None,
+        'last_analysis_record': None,
+        'ppr_calculation_cache': None,
+        'tender_lock_status': 'unlocked',
+        # Widget keys (must match st.text_input key= values)
+        'input_tender_id': '', 'input_tender_title': '', 'input_procuring_entity': '',
+        'input_division': 'Dhaka', 'input_district': '', 'input_thana': '',
+        'input_official_estimate': 0.0, 'input_tender_security': 0.0, 
+        'input_document_fee': 0.0, 'input_procurement_type': 'works',
+        '_pdf_buffer': None,
+        '_pdf_filename': None,
+        'analysis_ready_to_save': False,
+        'auto_competitor_count': 3,
+        'auto_risk_pref': 'moderate',
+        'analysis_bid_source': '🤖 Auto-generate realistic bids',
+        'current_competitor_bids': [],
+        'last_html_export': None,
+        'debug_comparison_mode': False,
+    }
+    for k, v in page_defaults.items():
+        st.session_state.setdefault(k, v)
+    
+    # =============================================================================
+    # 🔹 2. SEARCHABLE TENDER SELECTOR
+    # =============================================================================
+    st.markdown("### 🔍 Select Tender for Analysis")
+    
+    # Search filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        search_id = st.text_input("Tender ID", key="analysis_search_id", placeholder="e.g., 1265809")
+    with col2:
+        search_title = st.text_input("Title/Entity", key="analysis_search_title", placeholder="Search...")
+    with col3:
+        filter_type = st.selectbox("Type", ["All", "works", "goods", "services"], key="analysis_filter_type")
+    
+    # Fetch & filter tenders
+    all_tenders = _get_company_tenders_cached(st.session_state.company_id)
+    filtered = all_tenders.copy()
+    
+    if search_id:
+        filtered = filtered[filtered['tender_id'].str.contains(search_id, case=False, na=False)]
+    if search_title:
+        filtered = filtered[
+            filtered['tender_title'].str.contains(search_title, case=False, na=False) | 
+            filtered['procuring_entity'].str.contains(search_title, case=False, na=False)
+        ]
+    if filter_type != "All":
+        filtered = filtered[filtered['procurement_type'] == filter_type]
+    
+    # Display selection table
+    if not filtered.empty:
+        display_df = filtered[['id', 'tender_id', 'tender_title', 'procuring_entity', 
+                              'procurement_type', 'official_estimate', 'submission_deadline', 
+                              'is_locked', 'is_copy']].copy()
+        
+        display_df['estimate_fmt'] = display_df['official_estimate'].apply(lambda x: f"BDT {x:,.0f}" if pd.notna(x) else "N/A")
+        display_df['deadline_fmt'] = pd.to_datetime(display_df['submission_deadline'], errors='coerce').dt.strftime('%d %b %Y')
+        display_df['status'] = display_df.apply(lambda r: "🔒 LOCKED" if r['is_locked'] else ("📋 COPY" if r['is_copy'] else "🔓 Open"), axis=1)
+        
+        st.dataframe(
+            display_df[['tender_id', 'tender_title', 'procuring_entity', 'procurement_type', 'estimate_fmt', 'deadline_fmt', 'status']],
+            use_container_width=True,
+            height=250,
+            column_config={
+                "tender_id": "ID",
+                "tender_title": st.column_config.TextColumn("Title", width="large"),
+                "procuring_entity": "Entity",
+                "procurement_type": "Type",
+                "estimate_fmt": "Estimate",
+                "deadline_fmt": "Deadline",
+                "status": "Status"
+            }
+        )
+        
+        # Selection dropdown + Load button
+        tender_options = {f"{row['tender_id']} • {str(row['tender_title'])[:50]}...": row.to_dict() for _, row in filtered.iterrows()}
+        selected_label = st.selectbox("Select tender to analyze:", options=["-- Create New Analysis --"] + list(tender_options.keys()), key="analysis_selector")
+        
+        if selected_label != "-- Create New Analysis --" and selected_label in tender_options:
+            selected_data = tender_options[selected_label]
+            
+            if st.button("📥 Load Tender for Analysis", type="primary", key="load_analysis_tender"):
+                st.session_state.selected_tender_for_analysis = selected_data
+                st.session_state.input_tender_id = str(selected_data.get('tender_id', ''))
+                st.session_state.input_tender_title = str(selected_data.get('tender_title', ''))
+                st.session_state.input_procuring_entity = str(selected_data.get('procuring_entity', ''))
+                st.session_state.input_division = str(selected_data.get('division', 'Dhaka'))
+                st.session_state.input_district = str(selected_data.get('district', ''))
+                st.session_state.input_thana = str(selected_data.get('thana', ''))
+                st.session_state.input_official_estimate = float(selected_data.get('official_estimate', 0) or 0)
+                st.session_state.input_tender_security = float(selected_data.get('tender_security', 0) or 0)
+                st.session_state.input_document_fee = float(selected_data.get('document_fee', 0) or 0)
+                st.session_state.input_procurement_type = str(selected_data.get('procurement_type', 'works'))
+                is_locked = bool(selected_data.get('is_locked', False))
+                st.session_state.tender_lock_status = 'locked' if is_locked else 'unlocked'
+                st.toast(f"✅ Loaded: {selected_data['tender_title'][:40]}", icon="📋")
+                st.rerun()
+    else:
+        st.info("📭 No tenders found. Create a tender first or adjust your search.")
+    
+    # Show loaded tender summary
+    if st.session_state.selected_tender_for_analysis:
+        t = st.session_state.selected_tender_for_analysis
+        status_badge = "🔒" if t.get('is_locked') else ("📋" if t.get('is_copy') else "🔓")
+        st.markdown(f"""
+        <div style="background:#f8fafc;padding:0.75rem 1rem;border-radius:8px;border-left:4px solid #3b82f6;margin:0.5rem 0">
+            <strong>{status_badge} {str(t.get('tender_title',''))[:70]}{'...' if len(str(t.get('tender_title',''))) > 70 else ''}</strong><br>
+            <small>ID: {t.get('tender_id')} • Est: BDT {t.get('official_estimate',0):,.0f} • Deadline: {str(t.get('submission_deadline',''))[:10]}</small>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # =============================================================================
+    # 🔹 3. COMPACT ANALYSIS FORM
+    # =============================================================================
+    st.markdown("### 📝 Analysis Inputs")
+    
+    is_new = st.session_state.selected_tender_for_analysis is None
+    is_locked = st.session_state.tender_lock_status == 'locked' and not is_new
+    form_disabled = is_locked and st.session_state.user_role != 'admin'
+    
+    if form_disabled:
+        st.warning("🔒 Tender is locked. Only admin can edit.")
+    
+    with st.form("analysis_form", clear_on_submit=False):
+        # Section 1: Basic Details
+        with st.expander("📋 Basic Tender Details", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Tender ID *", key="input_tender_id", disabled=form_disabled)
+                st.text_area("Tender Title *", height=40, key="input_tender_title", disabled=form_disabled)
+                st.text_input("Procuring Entity *", key="input_procuring_entity", disabled=form_disabled)
+            with c2:
+                from modules.bangladesh_locations import DIVISIONS, get_districts, get_upazilas
+                div = st.selectbox("Division", DIVISIONS, key="input_division", disabled=form_disabled)
+                dists = get_districts(div)
+                dist = st.selectbox("District", dists, key="input_district", disabled=form_disabled)
+                upzs = get_upazilas(dist)
+                if upzs:
+                    st.selectbox("Thana/Upazila", upzs, key="input_thana", disabled=form_disabled)
+                else:
+                    st.text_input("Thana/Upazila", key="input_thana_text", disabled=form_disabled)
+        
+        # Section 2: Financials
+        with st.expander("💰 Financial Details", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.number_input("Official Estimate (BDT) *", min_value=0.0, step=100000.0, format="%.3f", key="input_official_estimate", disabled=form_disabled)
+                st.number_input("Tender Security (BDT)", min_value=0.0, step=10000.0, format="%.3f", key="input_tender_security", disabled=form_disabled)
+            with c2:
+                st.selectbox("Procurement Type", ["works", "goods", "services"], key="input_procurement_type", disabled=form_disabled)
+                st.number_input("Document Fee (BDT)", min_value=0.0, step=500.0, format="%.3f", key="input_document_fee", disabled=form_disabled)
+        
+        # Section 3: Competitor Intelligence
+        with st.expander("👥 Competitor Intelligence", expanded=True):
+            bid_source = st.radio(
+                "Provide competitor bids:",
+                ["🤖 Auto-generate realistic bids", "✍️ Enter manually from known competitors"],
+                horizontal=True,
+                key="analysis_bid_source",
+                disabled=form_disabled
+            )
+
+            if "manual" in bid_source.lower():
+                competitors = db.get_competitor_master_list(st.session_state.company_id)
+                competitor_options = {c[1]: c[0] for c in competitors} if competitors else {}
+                
+                if competitor_options:
+                    st.markdown("#### Add Competitor Bids")
+                    if 'competitor_rows' not in st.session_state:
+                        st.session_state.competitor_rows = [{'id': 0, 'name': '', 'bid': 0.0}]
+                    
+                    for i, row in enumerate(st.session_state.competitor_rows):
+                        c1, c2, c3 = st.columns([3, 2, 0.5])
+                        with c1:
+                            name = st.selectbox("Competitor", options=[""] + list(competitor_options.keys()),
+                                index=list(competitor_options.keys()).index(row['name']) if row['name'] in competitor_options else 0,
+                                key=f"comp_name_{i}", disabled=form_disabled)
+                        with c2:
+                            bid = st.number_input("Bid (BDT)", min_value=0.0, value=float(row['bid']), step=100000.0,
+                                format="%.3f", key=f"comp_bid_{i}", disabled=form_disabled)
+                        with c3:
+                            if st.button("🗑️", key=f"comp_del_{i}", disabled=form_disabled):
+                                st.session_state.competitor_rows.pop(i)
+                                st.rerun()
+                        st.session_state.competitor_rows[i]['name'] = name
+                        st.session_state.competitor_rows[i]['bid'] = bid
+                    
+                    c1, c2 = st.columns([1, 4])
+                    with c1:
+                        if st.button("➕ Add Competitor", key="add_comp_row", disabled=form_disabled):
+                            new_id = max([r['id'] for r in st.session_state.competitor_rows], default=-1) + 1
+                            st.session_state.competitor_rows.append({'id': new_id, 'name': '', 'bid': 0.0})
+                            st.rerun()
+                    with c2:
+                        if st.button("🗑️ Clear All", key="clear_comp_rows", disabled=form_disabled):
+                            st.session_state.competitor_rows = []
+                            st.rerun()
+                    
+                    competitor_bids = [{'name': row['name'], 'bid': float(row['bid'])} for row in st.session_state.competitor_rows if row['name'] and row['bid'] > 0]
+                    st.session_state.analysis_competitor_bids = competitor_bids
+                    st.session_state.current_competitor_bids = competitor_bids
+                else:
+                    st.info("📭 No competitors in master list.")
+            else:
+                # Auto-generate mode
+                estimate_val = st.session_state.get('input_official_estimate', 0.0) or 0
+                competitor_count = st.session_state.get('auto_competitor_count', 3)
+                risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
+                
+                if estimate_val > 0:
+                    
+                    competitor_bids = _generate_competitor_bids(estimate_val, num_competitors=competitor_count, risk_preference=risk_pref)
+                    st.session_state.analysis_competitor_bids = competitor_bids
+                    st.session_state.current_competitor_bids = competitor_bids
+                    st.caption(f"🤖 Generated {len(competitor_bids)} {risk_pref} competitor bids")
+                else:
+                    st.caption("💡 Enter Official Estimate first to auto-generate bids")
+                    st.session_state.analysis_competitor_bids = []
+                    st.session_state.current_competitor_bids = []
+        
+        # Section 4: Risk Strategy
+        with st.expander("🎯 Risk Strategy", expanded=True):
+            risk_tolerance = st.select_slider("Risk tolerance", options=['aggressive', 'moderate', 'conservative'],
+                value='moderate', key="analysis_risk_tolerance", disabled=form_disabled)
+        
+        # Auto-Bid Settings
+        with st.expander("⚙️ Auto-Bid Calculation Settings", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state.auto_competitor_count = st.slider("Number of Competitors", min_value=2, max_value=10,
+                    value=st.session_state.get('auto_competitor_count', 3))
+            with col2:
+                st.session_state.auto_risk_pref = st.selectbox("Risk Preference", options=['aggressive', 'moderate', 'conservative'],
+                    index=['aggressive', 'moderate', 'conservative'].index(st.session_state.get('auto_risk_pref', 'moderate')))
+        
+        # Submit button
+        form_complete = all([st.session_state.get('input_tender_id', ''), st.session_state.get('input_tender_title', ''),
+            st.session_state.get('input_procuring_entity', ''), (st.session_state.get('input_official_estimate', 0) or 0) > 0])
+        competitor_bids_check = st.session_state.get('analysis_competitor_bids', [])
+        submit_disabled = not form_complete or not competitor_bids_check or form_disabled
+        form_submitted = st.form_submit_button("🚀 Run Three-Tier Analysis", type="primary", use_container_width=True, disabled=submit_disabled)
+    
+    # =============================================================================
+    # 🔹 RUN ANALYSIS ON FORM SUBMIT
+    # =============================================================================
+    if form_submitted and not form_disabled:
+        try:
+            competitor_bids_source = st.session_state.get('analysis_competitor_bids', [])
+            if not competitor_bids_source and st.session_state.get('analysis_bid_source', '').startswith('Auto'):
+                estimate_val = float(st.session_state.get('input_official_estimate', 0) or 0)
+                if estimate_val > 0:
+                    competitor_count = st.session_state.get('auto_competitor_count', 3)
+                    risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
+                    
+                    competitor_bids_source = _generate_competitor_bids(estimate_val, num_competitors=competitor_count, risk_preference=risk_pref)
+                    st.session_state.analysis_competitor_bids = competitor_bids_source
+                    st.session_state.current_competitor_bids = competitor_bids_source
+            
+            inputs = {
+                'tender_id': st.session_state.get('input_tender_id', '').strip(),
+                'tender_title': st.session_state.get('input_tender_title', '').strip(),
+                'procuring_entity': st.session_state.get('input_procuring_entity', '').strip(),
+                'official_estimate': float(st.session_state.get('input_official_estimate', 0) or 0),
+                'procurement_type': st.session_state.get('input_procurement_type', 'works'),
+                'division': st.session_state.get('input_division', 'Dhaka'),
+                'district': st.session_state.get('input_district', ''),
+                'thana': st.session_state.get('input_thana', st.session_state.get('input_thana_text', '')),
+                'risk_tolerance': st.session_state.get('analysis_risk_tolerance', 'moderate'),
+                'competitor_bids': competitor_bids_source
+            }
+            
+            if not inputs['competitor_bids']:
+                st.error("❌ Please provide at least one competitor bid")
+            else:
+                with st.spinner("🔍 Running Three-Tier Analysis..."):
+                    
+                    comparison = get_three_tier_comparison(
+                        official_estimate=inputs['official_estimate'],
+                        competitor_bids=inputs['competitor_bids'],
+                        procurement_type=inputs['procurement_type'],
+                        risk_tolerance=inputs['risk_tolerance'],
+                        company_id=st.session_state.company_id
+                    )
+                    
+                    best_tier = max(comparison.keys(), key=lambda t: comparison[t].get('confidence_score', 0) * comparison[t]['win_probability'])
+                    
+                    st.session_state.current_analysis_record = {
+                        'tender_id': inputs['tender_id'], 'tender_title': inputs['tender_title'],
+                        'procuring_entity': inputs['procuring_entity'], 'division': inputs['division'],
+                        'district': inputs['district'], 'thana': inputs['thana'],
+                        'construction_type': inputs['procurement_type'],
+                        'official_estimate': round(inputs['official_estimate'], 3),
+                        'competitor_bids': inputs['competitor_bids'], 'risk_tolerance': inputs['risk_tolerance'],
+                        'procurement_type': inputs['procurement_type']
+                    }
+                    st.session_state.current_comparison = comparison
+                    st.session_state.current_best_result = comparison[best_tier]
+                    st.session_state.current_best_tier = best_tier
+                    st.session_state.current_competitor_bids = inputs['competitor_bids']
+                    st.session_state.current_risk_tolerance = inputs['risk_tolerance']
+                    st.session_state.analysis_ready_to_save = True
+                    
+                    db.increment_analysis_usage(st.session_state.user_id)
+                    st.session_state.analyses_used += 1
+                    st.success(f"✅ Analysis complete! Using {len(inputs['competitor_bids'])} competitor bids.")
+                    
+        except Exception as e:
+            logger.error(f"Analysis failed: {e}", exc_info=True)
+            st.error(f"❌ Analysis error: {str(e)}")
+
+    # =============================================================================
+    # 🔹 DISPLAY RESULTS & EXPORT TOOLS
+    # =============================================================================
+    if st.session_state.get('current_analysis_record') is not None:
+        comparison = st.session_state.current_comparison
+        analysis_record = st.session_state.current_analysis_record
+        
+        # Display results
+        if is_premium:
+            user_info = {
+                'full_name': st.session_state.get('full_name', 'N/A'),
+                'company_name': st.session_state.get('company_name', 'N/A')
+            }
+            
+            # ✅ Use the same data preparation for HTML display
+            competitor_bids_data = st.session_state.get('current_competitor_bids', [])
+            if competitor_bids_data and isinstance(competitor_bids_data[0], (int, float)):
+                competitor_bids_data = [
+                    {'name': f'Competitor {i+1}', 'bid': bid} 
+                    for i, bid in enumerate(competitor_bids_data)
+                ]
+            
+            analysis_record_for_display = {
+                **analysis_record,
+                'competitor_bids': competitor_bids_data,
+                'competitor_count': len(competitor_bids_data)
+            }
+            
+            generate_unified_report(
+                analysis_record=analysis_record_for_display,
+                comparison=comparison,
+                user_info=user_info,
+                format='html'
+            )
+
+        else:
+            render_comparison(
+                basic_result=comparison['basic'], advanced_result=comparison['advanced'],
+                official_estimate=analysis_record['official_estimate'],
+                competitor_bids=st.session_state.current_competitor_bids,
+                risk_tolerance=st.session_state.current_risk_tolerance
+            )
+        
+        # PPR Visualization
+        st.markdown("---\n### 📈 PPR 2025 Compliance")
+        try:
+            
+            render_ppr_compliance_viz(comparison, analysis_record)
+        except ImportError:
+            adv = comparison.get('advanced', comparison.get('basic', {}))
+            rec_bid = adv.get('optimal_bid', 0)
+            slt = adv.get('slt_threshold', 0)
+            nppi = adv.get('nppi_factor', 0.92)
+            is_compliant = rec_bid >= slt
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("NPPI Factor", f"{nppi:.3f}")
+            mc2.metric("NPPI Price", f"BDT {analysis_record['official_estimate']*nppi:,.0f}")
+            mc3.metric("Weighted Avg", f"BDT {adv.get('weighted_average', 0):,.0f}")
+            mc4.metric("SLT Threshold", f"BDT {slt:,.0f}")
+            if is_compliant: st.success(f"✅ PPR Compliant: Bid BDT {rec_bid:,.0f} meets requirements")
+            else: st.error(f"🚨 SLT Risk: Bid BDT {rec_bid:,.0f} is below threshold")
+        
+        # Debug: Show what's actually in session state
+        if st.session_state.get('debug_comparison_mode', False):
+            with st.expander("🔍 Verify Competitor Bids Consistency", expanded=True):
+                st.write("### Competitor Bids in Different Session State Locations")
+                
+                analysis_bids = st.session_state.get('current_analysis_record', {}).get('competitor_bids', [])
+                current_bids = st.session_state.get('current_competitor_bids', [])
+                analysis_comp_bids = st.session_state.get('analysis_competitor_bids', [])
+                
+                st.write(f"**analysis_record.competitor_bids:** {len(analysis_bids)} bids")
+                if analysis_bids:
+                    st.write(f"  First bid: {analysis_bids[0]}")
+                
+                st.write(f"**current_competitor_bids:** {len(current_bids)} bids")
+                if current_bids:
+                    st.write(f"  First bid: {current_bids[0]}")
+                
+                st.write(f"**analysis_competitor_bids:** {len(analysis_comp_bids)} bids")
+                if analysis_comp_bids:
+                    st.write(f"  First bid: {analysis_comp_bids[0]}")
+                
+                # Check if they match
+                if analysis_bids and current_bids:
+                    if analysis_bids[0].get('bid') == current_bids[0].get('bid'):
+                        st.success("✅ analysis_record and current_competitor_bids match!")
+                    else:
+                        st.error(f"❌ MISMATCH! analysis_record: {analysis_bids[0].get('bid')} vs current: {current_bids[0].get('bid')}")
+                
+                if st.button("🔧 Fix Inconsistent Bids", key="fix_inconsistent_bids"):
+                    # Sync all sources to analysis_record
+                    if analysis_bids:
+                        st.session_state.current_competitor_bids = analysis_bids
+                        st.session_state.analysis_competitor_bids = analysis_bids
+                        st.success(f"Synced all sources to {len(analysis_bids)} bids from analysis_record")
+                        st.rerun()
+
+        # =========================================================================
+        # 📊 EXPORT & DEBUG TOOLS SECTION
+        # =========================================================================
+        st.markdown("---")
+        st.markdown("### 📄 Export & Debug Tools")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            # PDF Export Button - FIXED
+            if st.button("📑 Generate PDF Report", use_container_width=True, type="primary", key="gen_pdf_btn"):
+                
+                # ==================== CRITICAL SYNC ====================
+                # Force synchronization of competitor bids from the most reliable source
+                competitor_bids = st.session_state.get('current_competitor_bids', [])
+                
+                if not competitor_bids:
+                    competitor_bids = st.session_state.get('analysis_competitor_bids', [])
+                if not competitor_bids:
+                    analysis_record_check = st.session_state.get('current_analysis_record', {})
+                    competitor_bids = analysis_record_check.get('competitor_bids', [])
+                
+                # Final safety net - ensure it's always a list
+                if not isinstance(competitor_bids, list):
+                    competitor_bids = []
+                
+                # ==================== FORCE SYNC ACROSS ALL SOURCES ====================
+                st.session_state.current_competitor_bids = competitor_bids
+                st.session_state.analysis_competitor_bids = competitor_bids
+                
+                if 'current_analysis_record' in st.session_state and st.session_state.current_analysis_record:
+                    st.session_state.current_analysis_record['competitor_bids'] = competitor_bids
+                
+                debug_print(f"📄 PDF GEN: Final competitor_bids count = {len(competitor_bids)}")
+                
+                if len(competitor_bids) != st.session_state.get('auto_competitor_count', 3):
+                    st.warning(f"⚠️ Using {len(competitor_bids)} competitor bids for PDF (Dashboard shows {st.session_state.get('auto_competitor_count', 3)})")
+                
+                # Get analysis data
+                analysis_record = st.session_state.get('current_analysis_record', {})
+                best_result = st.session_state.get('current_best_result', {})
+                comparison = st.session_state.get('current_comparison', {})
+                
+                # Fix comparison data with clean formatting
+                fixed_comparison = {}
+                for tier, data in comparison.items():
+                    fixed_comparison[tier] = {
+                        **data,
+                        'optimal_bid': round(float(data.get('optimal_bid', 0)), 3),
+                        'win_probability': round(float(data.get('win_probability', 0)), 4),
+                        'confidence_score': round(float(data.get('confidence_score', 0.7)), 4),
+                        'risk_level': data.get('risk_level', 'MEDIUM'),
+                        'method': data.get('method', ''),
+                        'bid_ratio': round(float(data.get('bid_ratio', 0)), 4),
+                        'slt_threshold': round(float(data.get('slt_threshold', 0)), 3),
+                    }
+                
+                # Build report_data
+                report_data = {
+                    **analysis_record,
+                    **best_result,
+                    'comparison': fixed_comparison,
+                    'competitor_bids': competitor_bids,
+                    'competitor_count': len(competitor_bids),
+                    'bid_source': st.session_state.get('analysis_bid_source', 'Auto-Generated'),
+                    'risk_tolerance': st.session_state.get('current_risk_tolerance', 'moderate'),
+                }
+                
+                # Ensure critical fields with 3 decimal precision
+                est = round(float(analysis_record.get('official_estimate', 0)), 3)
+                recommended_bid = round(float(best_result.get('optimal_bid', 0)), 3)
+                slt_threshold = round(float(best_result.get('slt_threshold', est * 0.89)), 3)
+                nppi_factor = round(float(best_result.get('nppi_factor', 0.89)), 4)
+                win_prob = round(float(best_result.get('win_probability', 0.65)), 4)
+                
+                report_data.update({
+                    'official_estimate': est,
+                    'recommended_bid': recommended_bid,
+                    'optimal_bid': recommended_bid,
+                    'slt_threshold': slt_threshold,
+                    'nppi_factor': nppi_factor,
+                    'success_probability': win_prob,
+                    'win_probability': win_prob,
+                })
+                
+                debug_print(f"📄 PDF: est={est:.3f}, bid={recommended_bid:.3f}, slt={slt_threshold:.3f}, competitors={len(competitor_bids)}")
+                
+                # Generate PDF
+                with st.spinner("🔄 Generating PDF with synchronized data..."):
+                    try:
+                        from modules.pdf_generator import generate_babui_detailed_report
+                        user_info = {
+                            'full_name': st.session_state.get('full_name', 'N/A'),
+                            'company_name': st.session_state.get('company_name', 'N/A')
+                        }
+                        pdf_buffer = generate_babui_detailed_report(report_data, user_info, include_charts=True)
+                        
+                        safe_tid = str(report_data.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
+                        st.session_state._pdf_buffer = pdf_buffer
+                        st.session_state._pdf_filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+                        
+                        st.success(f"✅ PDF generated successfully with {len(competitor_bids)} competitors!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ PDF Error: {str(e)}")
+                        if DEBUG_MODE:
+                            st.code(traceback.format_exc())
+
+
+        with col2:
+            # HTML Export Button
+            if st.button("🌐 Export Dashboard HTML", use_container_width=True, type="secondary", key="export_html_btn"):
+                
+                competitor_bids = st.session_state.get('current_competitor_bids', [])
+                best_result = st.session_state.get('current_best_result', {})
+                best_tier = st.session_state.get('current_best_tier', 'unknown')
+                analysis_record = st.session_state.get('current_analysis_record', {})
+                
+                est = float(analysis_record.get('official_estimate', 1))
+                
+                # Ensure consistent 3 decimal formatting
+                optimal_bid = round(float(best_result.get('optimal_bid', 0)), 3)
+                
+                html_content = f"""<!DOCTYPE html>
+                <html><head><title>Babui TenderAI Export</title>
+                <style>
+                    body{{font-family:Arial;margin:20px}} 
+                    h1{{color:#1e40af}} h2{{color:#2563eb}} 
+                    table{{border-collapse:collapse;width:100%}} 
+                    th,td{{border:1px solid #ddd;padding:8px;text-align:left}} 
+                    th{{background:#dbeafe}} 
+                    .metric{{background:#f8fafc;padding:10px;margin:10px 0;border-left:4px solid #3b82f6}}
+                </style>
+                </head><body>
+                <h1>📊 Babui TenderAI Dashboard Export</h1>
+                <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <h2>🎯 AI Recommendation</h2>
+                <div class="metric">
+                    <strong>Best Tier:</strong> {best_tier}<br>
+                    <strong>Suggested Bid:</strong> BDT {optimal_bid:,.3f}<br>
+                    <strong>Bid Ratio:</strong> {best_result.get('bid_ratio', 0)*100:.1f}%<br>
+                    <strong>Win Probability:</strong> {best_result.get('win_probability', 0)*100:.0f}%<br>
+                    <strong>Confidence:</strong> {best_result.get('confidence_score', 0)*100:.0f}%
+                </div>
+                <h2>🏆 Three-Tier Analysis</h2>
+                <table><tr><th>Tier</th><th>Optimal Bid</th><th>Win Prob</th><th>Confidence</th><th>Risk</th></tr>
+                """
+                
+                comparison = st.session_state.get('current_comparison', {})
+                for tier, data in comparison.items():
+                    opt_bid = round(float(data.get('optimal_bid', 0)), 3)
+                    html_content += f"<tr><td>{tier.upper()}</td><td>BDT {opt_bid:,.3f}</td><td>{data.get('win_probability',0)*100:.0f}%</td><td>{data.get('confidence_score',0)*100:.0f}%</td><td>{data.get('risk_level','N/A')}</td></tr>"
+                
+                html_content += f"""</table>
+                <h2>👥 Competitor Bids ({len(competitor_bids)} competitors)</h2>
+                <table><tr><th>#</th><th>Competitor</th><th>Bid Amount</th><th>% of Estimate</th></tr>"""
+                
+                for i, comp in enumerate(competitor_bids, 1):
+                    bid_amount = round(float(comp.get('bid', 0)), 3)
+                    pct = (bid_amount / est * 100) if est > 0 else 0
+                    html_content += f"<tr><td>{i}</td><td>{comp.get('name', f'Competitor {i}')}</td><td>BDT {bid_amount:,.3f}</td><td>{pct:.1f}%</td></tr>"
+                
+                html_content += f"""</table>
+                <h2>📊 Statistics</h2>
+                <div class="metric">
+                    <strong>Official Estimate:</strong> BDT {est:,.3f}<br>
+                    <strong>SLT Threshold:</strong> BDT {best_result.get('slt_threshold', 0):,.3f}<br>
+                    <strong>Risk Tolerance:</strong> {st.session_state.get('current_risk_tolerance', 'moderate')}
+                </div>
+                </body></html>"""
+                
+                st.download_button(
+                    "💾 Download HTML Report", 
+                    data=html_content, 
+                    file_name=f"dashboard_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html", 
+                    mime="text/html", 
+                    key="html_download"
+                )
+                st.success("✅ HTML export ready!")
+
+        with col3:
+            # Debug Mode Toggle
+            debug_mode = st.checkbox(
+                "🐛 Debug Mode", 
+                key="debug_comparison_mode", 
+                value=st.session_state.get('debug_comparison_mode', False),
+                help="Enable to see dashboard vs PDF data comparison"
+            )
+
+        with col4:
+            # CSV Export with 3 decimal places
+            export_rows = []
+            slt_threshold = None
+            for tier, result in comparison.items():
+                if tier == 'advanced' or (not slt_threshold and tier == 'basic'):
+                    slt_threshold = result.get('slt_threshold', 0)
+                export_rows.append({
+                    'Tier': tier.upper(),
+                    'Method': result.get('method', ''),
+                    'Optimal_Bid_BDT': round(result['optimal_bid'], 3),  # ✅ 3 decimal places
+                    'Win_Probability_%': round(result['win_probability'] * 100, 1),
+                    'Confidence_%': round(result.get('confidence_score', 0.7) * 100, 1),
+                    'PPR_Compliant': 'Yes' if result['optimal_bid'] >= (slt_threshold or 0) else 'No'
+                })
+            csv = pd.DataFrame(export_rows).to_csv(index=False)
+            st.download_button("📥 Export CSV", data=csv, file_name=f"analysis_{analysis_record.get('tender_id', 'report')}_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
+        # ==================== GLOBAL SYNC BUTTON ====================
+        st.markdown("---")
+        if st.button("🔄 Sync All Data Sources", type="secondary", use_container_width=True, key="global_sync_btn"):
+            comp_bids = st.session_state.get('current_competitor_bids', [])
+            if not comp_bids:
+                comp_bids = st.session_state.get('analysis_competitor_bids', [])
+            if not comp_bids:
+                comp_bids = st.session_state.get('current_analysis_record', {}).get('competitor_bids', [])
+            
+            # Force sync
+            st.session_state.current_competitor_bids = comp_bids
+            st.session_state.analysis_competitor_bids = comp_bids
+            if st.session_state.get('current_analysis_record'):
+                st.session_state.current_analysis_record['competitor_bids'] = comp_bids
+            
+            st.success(f"✅ Successfully synced {len(comp_bids)} competitor bids across all sources")
+            st.rerun()
+
+        # =========================================================================
+        # 🔍 DEBUG COMPARISON SECTION (Shows when Debug Mode is ON)
+        # =========================================================================
+        if st.session_state.get('debug_comparison_mode', False):
+            st.markdown("---")
+            st.markdown("### 🐛 Debug: Dashboard vs PDF Data Comparison")
+            
+            tab1, tab2, tab3 = st.tabs(["📊 Current Dashboard State", "📄 PDF Input Data", "⚖️ Comparison Analysis"])
+            
+            with tab1:
+                st.write("#### Dashboard Current State")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.metric("Best Tier", st.session_state.get('current_best_tier', 'N/A'))
+                    optimal_bid_dash = st.session_state.get('current_best_result', {}).get('optimal_bid', 0)
+                    st.metric("Optimal Bid", f"BDT {optimal_bid_dash:,.3f}")  # ✅ 3 decimal places
+                    st.metric("Win Probability", f"{st.session_state.get('current_best_result', {}).get('win_probability', 0)*100:.0f}%")
+                with col_b:
+                    st.metric("Competitor Count", len(st.session_state.get('current_competitor_bids', [])))
+                    slt_dash = st.session_state.get('current_best_result', {}).get('slt_threshold', 0)
+                    st.metric("SLT Threshold", f"BDT {slt_dash:,.3f}")  # ✅ 3 decimal places
+                    st.metric("Confidence", f"{st.session_state.get('current_best_result', {}).get('confidence_score', 0)*100:.0f}%")
+                
+                st.write("**Competitor Bids:**")
+                comp_df = pd.DataFrame(st.session_state.get('current_competitor_bids', []))
+                if not comp_df.empty:
+                    # Format bids with 3 decimal places for display
+                    comp_df['bid'] = comp_df['bid'].apply(lambda x: f"{x:,.3f}")
+                    st.dataframe(comp_df, use_container_width=True)
+                else:
+                    st.warning("No competitor bids found")
+            
+            with tab2:
+                st.write("#### Data Sent to PDF Generator")
+                competitor_bids = st.session_state.get('current_competitor_bids', [])
+                test_report_data = {
+                    'competitor_count': len(competitor_bids),
+                    'competitor_bids_sample': [{'name': c.get('name'), 'bid': round(c.get('bid', 0), 3)} for c in competitor_bids[:3]] if competitor_bids else [],
+                    'best_tier': st.session_state.get('current_best_tier'),
+                    'optimal_bid': round(st.session_state.get('current_best_result', {}).get('optimal_bid', 0), 3),
+                    'win_probability': st.session_state.get('current_best_result', {}).get('win_probability'),
+                    'slt_threshold': round(st.session_state.get('current_best_result', {}).get('slt_threshold', 0), 3),
+                }
+                st.json(test_report_data)
+                
+                st.write("**Full Best Result:**")
+                best_result = st.session_state.get('current_best_result', {})
+                if best_result:
+                    formatted_result = {k: round(v, 3) if isinstance(v, float) else v for k, v in best_result.items()}
+                    st.json(formatted_result)
+            
+            with tab3:
+                st.write("#### Comparison Analysis")
+                dashboard_comp_count = len(st.session_state.get('current_competitor_bids', []))
+                dashboard_bid = st.session_state.get('current_best_result', {}).get('optimal_bid', 0)
+                dashboard_win = st.session_state.get('current_best_result', {}).get('win_probability', 0)
+                
+                st.info(f"""
+                **Dashboard Values (PPR 2025 Compliant - 3 decimals):**
+                - Competitors: {dashboard_comp_count}
+                - Optimal Bid: BDT {dashboard_bid:,.3f}
+                - Win Probability: {dashboard_win*100:.0f}%
+                
+                **Expected PDF Values:**
+                - Should match dashboard values above
+                - All monetary values must have 3 decimal places
+                - Competitors should be {dashboard_comp_count}
+                - Bid should be BDT {dashboard_bid:,.3f}
+                
+                **If PDF shows different values, check:**
+                1. `current_competitor_bids` session state
+                2. PDF generator's data extraction logic
+                3. Type conversions in PDF generator
+                4. Decimal rounding in PDF generator
+                """)
+                
+                if st.button("🔄 Sync & Test PDF Data", key="sync_test_pdf"):
+                    st.session_state.current_competitor_bids = st.session_state.get('analysis_competitor_bids', [])
+                    st.success(f"Synced {len(st.session_state.current_competitor_bids)} competitor bids")
+                    st.rerun()
+
+        
+        # PDF Download Button (if buffer exists)
+        if st.session_state.get('_pdf_buffer') and st.session_state.get('_pdf_filename'):
+            st.markdown("---")
+            st.info(f"📄 **PDF Report Ready:** {st.session_state._pdf_filename}")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.caption(f"Size: {len(st.session_state._pdf_buffer.getvalue()) / 1024:.1f} KB")
+            with col2:
+                if st.button("🗑️ Clear PDF", key="clear_pdf_buf", use_container_width=True):
+                    st.session_state.pop('_pdf_buffer', None)
+                    st.session_state.pop('_pdf_filename', None)
+                    st.rerun()
+            st.download_button("💾 Download PDF Report", data=st.session_state._pdf_buffer,
+                              file_name=st.session_state._pdf_filename, mime="application/pdf",
+                              use_container_width=True, key="download_pdf")
+    
+    debug_print("✅ Tender analysis page complete")
+    
+def tender_analysis_page_bak() -> None:
     """
     Three-Tier Tender Analysis Page - Refactored for better UX
     Features: 
@@ -2664,10 +4045,11 @@ def tender_analysis_page() -> None:
                     
                     # Build and save competitor_bids
                     competitor_bids = [
-                        {'name': row['name'], 'bid': float(row['bid'])}
+                        {'name': row['name'], 'bid': round(float(row['bid']), 3)}  # ✅ Round to 3 decimals
                         for row in st.session_state.competitor_rows
                         if row['name'] and row['bid'] > 0
                     ]
+
                     st.session_state.analysis_competitor_bids = competitor_bids  # ✅ Persist for post-form
                     
                     if not competitor_bids:
@@ -2682,17 +4064,30 @@ def tender_analysis_page() -> None:
                 
                 if estimate_val > 0:
                     # Generate bids using configured count + risk preference
+                    from modules.competitor_utils import _generate_competitor_bids
                     competitor_bids = _generate_competitor_bids(
                         estimate_val, 
                         num_competitors=competitor_count,
-                        risk_preference=risk_pref  # Pass risk pref to generation function
+                        risk_preference=risk_pref
                     )
+                    
+                    # 👇 REPLACE THIS SECTION WITH THE NEW CODE
+                    
+                    # OLD CODE (replace this):
                     st.session_state.analysis_competitor_bids = competitor_bids
                     st.caption(f"🤖 Generated {competitor_count} {risk_pref} competitor bids")
+                    
+                    # NEW CODE (put this instead):
+                    # ✅ CRITICAL: Set BOTH variables
+                    st.session_state.analysis_competitor_bids = competitor_bids
+                    st.session_state.current_competitor_bids = competitor_bids  # This is key!
+                    
+                    debug_print(f"🤖 Generated {len(competitor_bids)} bids (stored in both locations)")
+                    st.caption(f"🤖 Generated {len(competitor_bids)} {risk_pref} competitor bids")
                 else:
                     st.caption("💡 Enter Official Estimate first to auto-generate bids")
-                    competitor_bids = []
                     st.session_state.analysis_competitor_bids = []
+                    st.session_state.current_competitor_bids = []  # Also clear this
         
         # Section 4: Risk Strategy
         with st.expander("🎯 Risk Strategy", expanded=True):
@@ -2753,7 +4148,34 @@ def tender_analysis_page() -> None:
     # =============================================================================
     if form_submitted and not form_disabled:
         try:
+            # ✅ DEBUG: Check what's in session state before anything
+            debug_print("=" * 50)
+            debug_print("🔍 FORM SUBMISSION DEBUG START")
+            debug_print(f"analysis_competitor_bids count: {len(st.session_state.get('analysis_competitor_bids', []))}")
+            debug_print(f"auto_competitor_count setting: {st.session_state.get('auto_competitor_count', 3)}")
+            debug_print(f"analysis_bid_source: {st.session_state.get('analysis_bid_source', 'Not set')}")
+            
             # ✅ 1. Read & Validate Inputs
+            # CRITICAL: Get competitor bids from the correct source
+            competitor_bids_source = st.session_state.get('analysis_competitor_bids', [])
+            
+            # If empty, check if we're in auto-generate mode and need to regenerate
+            if not competitor_bids_source and st.session_state.get('analysis_bid_source', '').startswith('Auto'):
+                estimate_val = float(st.session_state.get('input_official_estimate', 0) or 0)
+                if estimate_val > 0:
+                    competitor_count = st.session_state.get('auto_competitor_count', 3)
+                    risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
+                    debug_print(f"🔄 Regenerating {competitor_count} competitor bids for {risk_pref} risk")
+                                        
+                    competitor_bids_source = _generate_competitor_bids(
+                        estimate_val, 
+                        num_competitors=competitor_count,
+                        risk_preference=risk_pref
+                    )
+                    # Update session state
+                    st.session_state.analysis_competitor_bids = competitor_bids_source
+                    debug_print(f"✅ Regenerated {len(competitor_bids_source)} bids")
+            
             inputs = {
                 'tender_id': st.session_state.get('input_tender_id', '').strip(),
                 'tender_title': st.session_state.get('input_tender_title', '').strip(),
@@ -2764,8 +4186,12 @@ def tender_analysis_page() -> None:
                 'district': st.session_state.get('input_district', ''),
                 'thana': st.session_state.get('input_thana', st.session_state.get('input_thana_text', '')),
                 'risk_tolerance': st.session_state.get('analysis_risk_tolerance', 'moderate'),
-                'competitor_bids': st.session_state.get('analysis_competitor_bids', [])
+                'competitor_bids': competitor_bids_source  # Use the verified source
             }
+            
+            debug_print(f"📝 Inputs assembled - competitor_bids count: {len(inputs['competitor_bids'])}")
+            if inputs['competitor_bids']:
+                debug_print(f"First 3 bids: {inputs['competitor_bids'][:3]}")
             
             required_missing = [k for k in ['tender_id', 'tender_title', 'procuring_entity'] if not inputs[k]]
             if inputs['official_estimate'] <= 0:
@@ -2773,12 +4199,15 @@ def tender_analysis_page() -> None:
             
             if required_missing:
                 st.error(f"❌ Please fill required fields: {', '.join(required_missing)}")
+                debug_print(f"❌ Missing fields: {required_missing}")
             elif not inputs['competitor_bids']:
                 st.error("❌ Please provide at least one competitor bid")
+                debug_print("❌ No competitor bids found")
             else:
                 # ✅ 2. Run Analysis
+                debug_print("🚀 Starting Three-Tier Analysis...")
                 with st.spinner("🔍 Running Three-Tier Analysis..."):
-                    from modules.advanced_bid_optimizer import get_three_tier_comparison
+                   
                     comparison = get_three_tier_comparison(
                         official_estimate=inputs['official_estimate'],
                         competitor_bids=inputs['competitor_bids'],
@@ -2791,27 +4220,39 @@ def tender_analysis_page() -> None:
                     
                     # ✅ 3. Store in Session State (PERSISTS across reruns)
                     st.session_state.current_analysis_record = {
-                        'tender_id': inputs['tender_id'], 'tender_title': inputs['tender_title'],
-                        'procuring_entity': inputs['procuring_entity'], 'division': inputs['division'],
-                        'district': inputs['district'], 'thana': inputs['thana'],
+                        'tender_id': inputs['tender_id'], 
+                        'tender_title': inputs['tender_title'],
+                        'procuring_entity': inputs['procuring_entity'], 
+                        'division': inputs['division'],
+                        'district': inputs['district'], 
+                        'thana': inputs['thana'],
                         'construction_type': inputs['procurement_type'],
-                        'official_estimate': round(inputs['official_estimate'], 3),
-                        'competitor_bids': inputs['competitor_bids'], 'risk_tolerance': inputs['risk_tolerance'],
+                        'official_estimate': round(inputs['official_estimate'], 3),  # ✅ 3 decimals
+                        'competitor_bids': inputs['competitor_bids'], 
+                        'risk_tolerance': inputs['risk_tolerance'],
                         'procurement_type': inputs['procurement_type']
                     }
                     st.session_state.current_comparison = comparison
                     st.session_state.current_best_result = comparison[best_tier]
                     st.session_state.current_best_tier = best_tier
-                    st.session_state.current_competitor_bids = inputs['competitor_bids']
+                    st.session_state.current_competitor_bids = inputs['competitor_bids']  # This should have all bids
                     st.session_state.current_risk_tolerance = inputs['risk_tolerance']
                     st.session_state.analysis_ready_to_save = True
+                    
+                    debug_print(f"✅ Analysis complete! Stored {len(st.session_state.current_competitor_bids)} competitor bids")
+                    debug_print(f"Best tier: {best_tier}")
                     
                     db.increment_analysis_usage(st.session_state.user_id)
                     st.session_state.analyses_used += 1
                     
+                    # ✅ Show success message with competitor count
+                    st.success(f"✅ Analysis complete! Using {len(inputs['competitor_bids'])} competitor bids.")
+                    
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             st.error(f"❌ Analysis error: {str(e)}")
+            debug_print(f"❌ Exception: {str(e)}")
+
 
     # =============================================================================
     # 🔹 DISPLAY RESULTS (PERSISTS AFTER SAVE/INSPECT CLICKS)
@@ -2840,7 +4281,7 @@ def tender_analysis_page() -> None:
         # ✅ PPR Visualization
         st.markdown("---\n### 📈 PPR 2025 Compliance")
         try:
-            from modules.ppr_viz import render_ppr_compliance_viz
+            
             render_ppr_compliance_viz(comparison, analysis_record)
         except ImportError:
             adv = comparison.get('advanced', comparison.get('basic', {}))
@@ -2856,18 +4297,31 @@ def tender_analysis_page() -> None:
             if is_compliant: st.success(f"✅ **PPR Compliant**: Bid BDT {rec_bid:,.0f} meets requirements")
             else: st.error(f"🚨 **SLT Risk**: Bid BDT {rec_bid:,.0f} is below threshold BDT {slt:,.0f}")
         
-        # =============================================================================
+       # =============================================================================
         # 📄 PDF EXPORT (Fixed Data Mapping)
         # =============================================================================
         if st.button("📑 Generate PDF Report", use_container_width=True, type="secondary", key="gen_pdf_btn"):
             # ✅ 1. Build complete report_data dict
+            # ✅ CRITICAL FIX: Get competitor bids correctly
+            competitor_bids = st.session_state.get('current_competitor_bids', [])
+            
+            # Debug print to verify
+            st.write(f"🔍 Debug: Found {len(competitor_bids)} competitor bids")  # Should show 9
+            
+            # ✅ FIXED: Proper dictionary syntax with commas
             report_data = {
                 **st.session_state.get('current_analysis_record', {}),
-                **st.session_state.get('current_best_result', {})
+                **st.session_state.get('current_best_result', {}),
+                'competitor_bids': competitor_bids,  # Full list
+                'competitor_count': len(competitor_bids),  # Explicit count
+                'bid_source': st.session_state.get('analysis_bid_source', 'Auto-Generated'),
+                'nppi_factor': st.session_state.get('current_best_result', {}).get('nppi_factor', 0.92),
+                'slt_threshold': st.session_state.get('current_best_result', {}).get('slt_threshold', 0),
             }
             
             # ✅ 2. Explicitly map & cast critical fields
             est = float(st.session_state.get('input_official_estimate', report_data.get('official_estimate', 1)) or 1)
+            
             report_data.update({
                 'official_estimate': est,
                 'recommended_bid': float(report_data.get('optimal_bid', 0)),
@@ -2883,7 +4337,7 @@ def tender_analysis_page() -> None:
             # ✅ 3. Call generator
             with st.spinner("🔄 Generating Babui TenderAI Report..."):
                 try:
-                    from modules.pdf_generator import generate_babui_detailed_report
+                   
                     user_info = {
                         'full_name': st.session_state.get('full_name', 'N/A'),
                         'company_name': st.session_state.get('company_name', 'N/A')
@@ -2903,7 +4357,7 @@ def tender_analysis_page() -> None:
         for tier, result in comparison.items():
             export_rows.append({
                 'Tier': tier.upper(), 'Method': result.get('method', ''),
-                'Optimal_Bid_BDT': result['optimal_bid'],
+                'Optimal_Bid_BDT': round(result['optimal_bid'], 3),  # ✅ 3 decimals in CSV
                 'Win_Probability_%': round(result['win_probability'] * 100, 1),
                 'Confidence_%': round(result.get('confidence_score', 0.7) * 100, 1),
                 'PPR_Compliant': 'Yes' if result['optimal_bid'] >= (comparison.get('advanced', comparison['basic']).get('slt_threshold', 0)) else 'No'
@@ -2968,6 +4422,7 @@ def tender_analysis_page() -> None:
             st.code(traceback.format_exc(), language="python")
     debug_print("✅ Tender analysis page complete")
     
+
 # =============================================================================
 # 🎨 SIDEBAR COMPONENT (Refactored + UI Optimized)
 # =============================================================================
@@ -3209,35 +4664,44 @@ def _render_authenticated_pages() -> None:
     """Render pages for authenticated users with lazy module imports"""
     
     PAGE_HANDLERS: Dict[str, Callable] = {
-        # Core pages (already imported at module level)
+        # Core pages
         PageRoutes.DASHBOARD: dashboard_page,
         PageRoutes.NEW_ANALYSIS: tender_analysis_page,
         PageRoutes.HISTORY: history_page,
         PageRoutes.PROFILE: profile_page,
         PageRoutes.ADMIN_DASHBOARD: admin_dashboard_page,
         PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(),
-        #PageRoutes.USER_MANAGEMENT: lambda: render_user_management(),
-        
-
-        # Module-based pages (lazy import)
-        #PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(db, st.session_state.user_id),
-        PageRoutes.SUBSCRIPTION: lambda: render_subscription_page(),
-        #PageRoutes.USER_MANAGEMENT: lambda: render_user_management(db, st.session_state.user_id, st.session_state.company_id),
         PageRoutes.USER_MANAGEMENT: lambda: render_user_management(),
-        # Advanced modules (import only when accessed)
+        
+        # Advanced modules (lazy import)
         PageRoutes.TENDER_MANAGEMENT: lambda: _import_and_call('modules.tender_management', 'render_tender_management'),
-        PageRoutes.POST_EVALUATION: lambda: _import_and_call('modules.post_evaluation', 'render_post_evaluation_page'),  # ✅ Now works
-        PageRoutes.INTELLIGENT_SUGGESTIONS: lambda: _import_and_call('modules.post_evaluation', 'render_intelligent_suggestions'),  # ✅ Now works
+        PageRoutes.POST_EVALUATION: lambda: _import_and_call('modules.post_evaluation', 'render_post_evaluation_page'),
+        PageRoutes.INTELLIGENT_SUGGESTIONS: lambda: _import_and_call('modules.post_evaluation', 'render_intelligent_suggestions'),
         PageRoutes.HISTORICAL_DATA: lambda: _import_and_call('modules.historical_data', 'render_historical_data_page'),
-        PageRoutes.ANALYSIS_HISTORY: lambda: _import_and_call('modules.analysis_history', 'show_analysis_history'),  # ✅ Now works
+        PageRoutes.ANALYSIS_HISTORY: lambda: _import_and_call('modules.analysis_history', 'show_analysis_history'),
         PageRoutes.COMPETITOR_TRACKING: lambda: _import_and_call('modules.competitor_tracking', 'render_competitor_tracking_page'),
-        PageRoutes.COMPETITOR_MASTER: lambda: _import_and_call('modules.competitor_master', 'render_competitor_master_page'),  # ✅ Now works
-        PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),        
-        #PageRoutes.INDIVIDUAL_REGISTER: lambda: _import_and_call('modules.individual_registration', 'render_individual_registration'),
-        #PageRoutes.INDIVIDUAL_LOGIN: lambda: _import_and_call('modules.individual_registration', 'render_individual_login'),
-
-
+        PageRoutes.COMPETITOR_MASTER: lambda: _import_and_call('modules.competitor_master', 'render_competitor_master_page'),
+        PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),
     }
+    
+    # Get handler with fallback to dashboard for unknown routes
+    handler = PAGE_HANDLERS.get(st.session_state.page, PAGE_HANDLERS[PageRoutes.DASHBOARD])
+    
+    try:
+        handler()
+    except ImportError as e:
+        debug_print(f"❌ Module import error for '{st.session_state.page}': {e}")
+        logger.error(f"Import failed: {st.session_state.page}", exc_info=True)
+        st.error(f"⚠️ Feature unavailable: {st.session_state.page.replace('_', ' ').title()}")
+        st.info("This feature may require a higher subscription plan or system configuration.")
+    except Exception as e:
+        debug_print(f"❌ Render error for '{st.session_state.page}': {e}")
+        logger.error(f"Page render failed: {st.session_state.page}", exc_info=True)
+        st.error("⚠️ Unable to load this page. Please try again or contact support.")
+        if DEBUG_MODE:
+            with st.expander("🐛 Debug Traceback"):
+                st.code(traceback.format_exc(), language="python")
+
 
 
     # Get handler with fallback to dashboard for unknown routes
@@ -3392,6 +4856,18 @@ Debug Mode: {DEBUG_MODE}
 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             """, language="python")
 
+def debug_competitor_bids_state(location: str):
+    """Debug helper to track competitor bids through session state"""
+    debug_print(f"\n📍 COMPETITOR DEBUG [{location}]")
+    debug_print(f"  analysis_competitor_bids: {len(st.session_state.get('analysis_competitor_bids', []))}")
+    debug_print(f"  current_competitor_bids: {len(st.session_state.get('current_competitor_bids', []))}")
+    debug_print(f"  auto_competitor_count: {st.session_state.get('auto_competitor_count', 3)}")
+    debug_print(f"  analysis_bid_source: {st.session_state.get('analysis_bid_source', 'N/A')}")
+    
+    # Show actual data if available
+    comp_bids = st.session_state.get('analysis_competitor_bids', [])
+    if comp_bids:
+        debug_print(f"  Sample: {comp_bids[0] if comp_bids else 'None'}")
 
 # =============================================================================
 # 🎬 APP LAUNCH (Final safety)

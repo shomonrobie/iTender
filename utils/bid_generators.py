@@ -60,7 +60,7 @@ def _generate_competitor_bids(official_estimate: float, num_competitors: int = 3
         bid_amount = official_estimate * ratio
         competitor_bids.append({
             'name': f"Competitor {i+1}",
-            'bid': round(bid_amount, 2)
+            'bid': round(bid_amount, 3)
         })
     
     return competitor_bids    

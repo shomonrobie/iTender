@@ -191,3 +191,42 @@ def verify_token(token):
         else:
             del verification_tokens[token]
     return False, None
+def send_password_reset_email(to_email: str, reset_link: str) -> bool:
+    """Send password reset email with secure link"""
+    subject = "🔑 Reset Your iTender Password"
+    
+    body_html = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <h2>Password Reset Request</h2>
+        <p>Hello,</p>
+        <p>You requested to reset your password for your iTender account.</p>
+        <p style="margin: 30px 0;">
+            <a href="{reset_link}" 
+               style="background-color: #1e3c72; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 6px; font-weight: bold;">
+                Reset My Password
+            </a>
+        </p>
+        <p><strong>This link will expire in 60 minutes.</strong></p>
+        <p>If you didn't request this, please ignore this email.</p>
+        <hr>
+        <p style="font-size: 0.9em; color: #666;">
+            iTender - Tender Management System<br>
+            Bangladesh
+        </p>
+    </body>
+    </html>
+    """
+    
+    body_text = f"""
+    Password Reset Request
+    
+    You requested to reset your password.
+    Click here to reset: {reset_link}
+    
+    This link expires in 60 minutes.
+    If you didn't request this, ignore this email.
+    """
+    
+    return send_email(to_email, subject, body_html, body_text)

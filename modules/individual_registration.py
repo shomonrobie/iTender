@@ -9,7 +9,7 @@ from database.db_manager import DatabaseManager
 import re
 import secrets
 import bcrypt
-
+from modules.google_auth import render_google_login_button, handle_google_callback
 db = DatabaseManager()
 
 def debug_print(*args, **kwargs):
@@ -29,15 +29,15 @@ def render_individual_registration():
     """, unsafe_allow_html=True)
     
     # Google Sign-In option
-    from modules.google_auth import render_google_login_button, handle_google_callback
+    
     
     # Handle Google OAuth callback
-    handle_google_callback(db)
+    handle_google_callback()
     
     # Check if showing Google registration
     if st.session_state.get('show_google_registration'):
         from modules.google_auth import render_google_registration_form
-        render_google_registration_form(db)
+        render_google_registration_form()
         return
     
     col1, col2, col3 = st.columns([1, 2, 1])
