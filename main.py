@@ -1213,7 +1213,7 @@ def login_page() -> None:
                         if status == "pending_approval":
                             st.warning("⚠️ Your account is pending approval by an administrator.")
                         elif user and status == "approved":
-                            login_user(user)
+                            login_user(user, password)
                             st.success(f"Welcome back, {user.get('full_name', username)}! 👋")
                             navigate_to("dashboard")
                         else:
@@ -4876,7 +4876,7 @@ if __name__ == "__main__":
         print("❌ Admin user not found.")
     
     conn.close()
-    
+
     debug_print("🎬 Starting TenderAI application...")
     upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
     # ✅ Initialize once at startup
