@@ -1609,21 +1609,19 @@ def contact_page() -> None:
     
     debug_print("✅ Contact page render complete")
 
-
 def dashboard_page() -> None:
     """Main dashboard for authenticated users"""
     debug_print("📊 Rendering dashboard page")
+    debug_print("".join(traceback.format_stack()[-5:]))  # Show last 5 lines of stack
+
+    #ensure_admin_premium()
     
-    # Ensure admin has premium access (for testing)
-    ensure_admin_premium()
-    # ✅ Pre-compute safe display values BEFORE markdown
     full_name = st.session_state.get('full_name', 'User')
     company_name = st.session_state.get('company_name', 'N/A')
     plan = str(st.session_state.get('subscription_plan', 'free')).upper()
     sub_status = st.session_state.get('subscription_status')
     status_display = str(sub_status).title() if sub_status is not None else 'Unknown'
     
-    # Header with user info
     st.markdown(f"""
     <div class="main-header">
         <h1 style="margin: 0;">Welcome, {full_name}! 👋</h1>
@@ -1633,11 +1631,9 @@ def dashboard_page() -> None:
     </div>
     """, unsafe_allow_html=True)
     
-    # Fetch stats (consider caching for performance)
     stats = db.get_company_stats(st.session_state.company_id)
     sub = db.get_user_subscription(st.session_state.user_id)
     
-    # Metrics row
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("📈 Total Analyses", stats.get('total_analyses', 0))
@@ -1656,46 +1652,40 @@ def dashboard_page() -> None:
     st.markdown("### ⚡ Quick Actions")
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("🔍 Start New Analysis", use_container_width=True, type="primary"):
+        print("🔍 RENDERING DASHBOARD PAGE - START NEW ANALYSIS BUTTON")
+        if st.button("🔍 Start New Analysis", key="dashboard_start_new_analysis_btn", use_container_width=True, type="primary"):
             navigate_to("new_analysis")
     with col2:
-        if st.button("📜 View History", use_container_width=True):
+        if st.button("📜 View History", key="dashboard_view_history_btn", use_container_width=True):
             navigate_to("history")
     with col3:
-        if st.button("👤 My Profile", use_container_width=True):
+        if st.button("👤 My Profile", key="dashboard_my_profile_btn", use_container_width=True):
             navigate_to("profile")
     
     # Role-specific actions
     if st.session_state.user_role in ['admin', 'company_admin']:
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("👥 Manage Team", use_container_width=True):
+            if st.button("👥 Manage Team", key="dashboard_manage_team_btn", use_container_width=True):
                 navigate_to("user_management")
         with col2:
-            if st.button("💳 Subscription", use_container_width=True):
+            if st.button("💳 Subscription", key="dashboard_subscription_btn", use_container_width=True):
                 navigate_to("subscription")
     
-    # =============================================================================
-    # 🕐 RECENT ANALYSES SECTION (Tabular Format)
-    # =============================================================================
+    # Recent Analyses section
     st.markdown("### 🕐 Recent Analyses")
-
     try:
-        # Use the existing working method
         recent_df = db.get_user_analyses(
             user_id=st.session_state.user_id,
             company_id=st.session_state.company_id,
             role=st.session_state.user_role,
-            limit=5  # Get only 5 most recent
+            limit=5
         )
         
         if recent_df is not None and not recent_df.empty:
-            # Convert to list of dicts for safe iteration
             recent_records = recent_df.to_dict('records')
             
-            # Create table headers
             col1, col2, col3, col4, col5, col6 = st.columns([2.5, 2, 1.2, 1, 1.2, 0.8])
-            
             with col1:
                 st.markdown("**<span style='font-size:0.75rem;'>Tender Title</span>**", unsafe_allow_html=True)
             with col2:
@@ -1711,7 +1701,6 @@ def dashboard_page() -> None:
             
             st.markdown("---")
             
-            # Display rows
             for idx, analysis in enumerate(recent_records):
                 cols = st.columns([2.5, 2, 1.2, 1, 1.2, 0.8])
                 
@@ -1727,8 +1716,6 @@ def dashboard_page() -> None:
                     win_prob = analysis.get('success_probability', 0) or 0
                     win_pct = win_prob * 100 if win_prob <= 1 else win_prob
                     st.markdown(f"<span style='font-size:0.75rem;'>{win_pct:.1f}%</span>", unsafe_allow_html=True)
-                    
-                    # Mini progress bar
                     st.progress(min(win_pct / 100, 1.0), text="")
                 
                 with cols[3]:
@@ -1753,19 +1740,14 @@ def dashboard_page() -> None:
                 
                 st.markdown("---")
             
-            # View all link
-            if st.button("📊 View All Analyses →", use_container_width=True):
+            if st.button("📊 View All Analyses →", key="dash_view_all", use_container_width=True):
                 st.session_state.page = "history"
                 st.rerun()
-                
         else:
             st.info("📭 No analyses yet. Run your first analysis in Three-Tier Bid Optimization!")
-            
     except Exception as e:
         st.warning(f"Could not load recent analyses: {str(e)}")
-        # Fallback to simple display
         st.info("📭 Start your first analysis to see recent activity here!")
-
     
     debug_print("✅ Dashboard page render complete")
 
@@ -2860,34 +2842,45 @@ def tender_analysis_page() -> None:
         
         with col1:
             if st.button("📑 Generate PDF Report", use_container_width=True, type="secondary", key="gen_pdf_btn"):
+                # ✅ CRITICAL: Always get competitor bids from the analysis record (source of truth)
+                analysis_record = st.session_state.get('current_analysis_record', {})
+                competitor_bids = analysis_record.get('competitor_bids', [])
+                
+                # Fallback to current_competitor_bids if needed
+                if not competitor_bids:
+                    competitor_bids = st.session_state.get('current_competitor_bids', [])
+                
+                # Force sync to ensure consistency
+                st.session_state.current_competitor_bids = competitor_bids
+                
+                debug_print(f"📄 PDF generation using {len(competitor_bids)} competitor bids")
+                
                 user_info = {
                     'full_name': st.session_state.get('full_name', 'N/A'),
                     'company_name': st.session_state.get('company_name', 'N/A')
                 }
+                
                 analysis_record_for_report = {
-                    'tender_id': st.session_state.current_analysis_record.get('tender_id'),
-                    'tender_title': st.session_state.current_analysis_record.get('tender_title'),
-                    'procuring_entity': st.session_state.current_analysis_record.get('procuring_entity'),
-                    'official_estimate': st.session_state.current_analysis_record.get('official_estimate'),
-                    'division': st.session_state.current_analysis_record.get('division'),
-                    'district': st.session_state.current_analysis_record.get('district'),
-                    'thana': st.session_state.current_analysis_record.get('thana'),
-                    'procurement_type': st.session_state.current_analysis_record.get('procurement_type'),
-                    'submission_deadline': st.session_state.current_analysis_record.get('submission_deadline', 'N/A'),
-                    'risk_tolerance': st.session_state.current_analysis_record.get('risk_tolerance', 'moderate'),
-                    # ↓↓↓ CRITICAL: Explicitly include competitor bids ↓↓↓
-                    'competitor_bids': st.session_state.current_competitor_bids,  # ← USE THIS
-                    'current_competitor_bids': st.session_state.current_competitor_bids,  # ← AND THIS (for redundancy)
-                    'competitor_count': len(st.session_state.current_competitor_bids) if st.session_state.current_competitor_bids else 0
+                    'tender_id': analysis_record.get('tender_id'),
+                    'tender_title': analysis_record.get('tender_title'),
+                    'procuring_entity': analysis_record.get('procuring_entity'),
+                    'official_estimate': analysis_record.get('official_estimate'),
+                    'division': analysis_record.get('division'),
+                    'district': analysis_record.get('district'),
+                    'thana': analysis_record.get('thana'),
+                    'procurement_type': analysis_record.get('procurement_type'),
+                    'submission_deadline': analysis_record.get('submission_deadline', 'N/A'),
+                    'risk_tolerance': analysis_record.get('risk_tolerance', 'moderate'),
+                    'competitor_bids': competitor_bids,
+                    'current_competitor_bids': competitor_bids,
+                    'competitor_count': len(competitor_bids)
                 }
                 
-
-                # Generate PDF using unified report generator
                 pdf_buffer = generate_unified_report(
                     analysis_record=analysis_record_for_report,
-                    comparison=comparison,
+                    comparison=st.session_state.get('current_comparison', {}),
                     user_info=user_info,
-                    format='pdf'  # Return PDF buffer
+                    format='pdf'
                 )
                 
                 if pdf_buffer and pdf_buffer.getbuffer().nbytes > 0:
@@ -2895,10 +2888,11 @@ def tender_analysis_page() -> None:
                     filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                     st.session_state._pdf_buffer = pdf_buffer
                     st.session_state._pdf_filename = filename
-                    st.success("✅ PDF generated! Scroll down to download.")
+                    st.success(f"✅ PDF generated with {len(competitor_bids)} competitors! Scroll down to download.")
                     st.rerun()
                 else:
                     st.error("❌ PDF generation failed")
+
         
         with col2:
             # CSV Export
@@ -3797,7 +3791,7 @@ def tender_analysis_page_bak() -> None:
     )
     
     # Ensure admin has premium access
-    ensure_admin_premium()
+    # ensure_admin_premium()
     
     # 🔑 HYBRID SUBSCRIPTION CHECK
     sub = db.get_effective_subscription(
@@ -4659,7 +4653,6 @@ def _render_public_pages() -> None:
     handler = page_handlers.get(st.session_state.page, home_page)
     handler()
 
-
 def _render_authenticated_pages() -> None:
     """Render pages for authenticated users with lazy module imports"""
     
@@ -4701,27 +4694,6 @@ def _render_authenticated_pages() -> None:
         if DEBUG_MODE:
             with st.expander("🐛 Debug Traceback"):
                 st.code(traceback.format_exc(), language="python")
-
-
-
-    # Get handler with fallback to dashboard for unknown routes
-    handler = PAGE_HANDLERS.get(st.session_state.page, PAGE_HANDLERS[PageRoutes.DASHBOARD])
-    
-    try:
-        handler()
-    except ImportError as e:
-        debug_print(f"❌ Module import error for '{st.session_state.page}': {e}")
-        logger.error(f"Import failed: {st.session_state.page}", exc_info=True)
-        st.error(f"⚠️ Feature unavailable: {st.session_state.page.replace('_', ' ').title()}")
-        st.info("This feature may require a higher subscription plan or system configuration.")
-    except Exception as e:
-        debug_print(f"❌ Render error for '{st.session_state.page}': {e}")
-        logger.error(f"Page render failed: {st.session_state.page}", exc_info=True)
-        st.error("⚠️ Unable to load this page. Please try again or contact support.")
-        if DEBUG_MODE:
-            with st.expander("🐛 Debug Traceback"):
-                st.code(traceback.format_exc(), language="python")
-
 
 def _import_and_call(module_path: str, function_name: str, *args, **kwargs):
     """
@@ -4766,11 +4738,7 @@ def main() -> None:
             return
         except Exception as e:
             debug_print(f"Error restoring session: {e}")
-    
-    # =========================================================================
-    # INITIALIZE SESSION STATE (MUST BE CALLED)
-    # =========================================================================
-    initialize_session_state()  # ← ADD THIS LINE
+       
     
     # =========================================================================
     # HANDLE GOOGLE OAUTH CALLBACK
@@ -4869,6 +4837,16 @@ def debug_competitor_bids_state(location: str):
     if comp_bids:
         debug_print(f"  Sample: {comp_bids[0] if comp_bids else 'None'}")
 
+def upgrade_admin_once():
+    if st.session_state.get('_admin_upgraded', False):
+        return
+    if st.session_state.get('logged_in') and st.session_state.get('user_role') == 'admin':
+        sub = db.get_user_subscription(st.session_state.user_id)
+        if sub.get('plan') == 'free':
+            db.update_subscription(st.session_state.user_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
+            st.session_state.subscription_plan = 'professional'
+            st.session_state._admin_upgraded = True
+
 # =============================================================================
 # 🎬 APP LAUNCH (Final safety)
 # =============================================================================
@@ -4878,7 +4856,7 @@ if __name__ == "__main__":
     db = DatabaseManager()
     
     debug_print("🎬 Starting TenderAI application...")
-    
+    upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
     # ✅ Initialize once at startup
     initialize_session_state()
     
