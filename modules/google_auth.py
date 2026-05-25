@@ -30,6 +30,22 @@ def get_google_credentials():
 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET = get_google_credentials()
 
 def get_redirect_uri():
+    """Get the correct redirect URI dynamically"""
+    # Priority 1: From secrets (recommended)
+    try:
+        if "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]:
+            return st.secrets["auth"]["redirect_uri"]
+    except:
+        pass
+    
+    # Priority 2: Streamlit Cloud detection
+    if os.getenv("STREAMLIT_SHARE") or "streamlit.app" in os.getenv("STREAMLIT_SERVER_HEADLESS", ""):
+        return "https://itender-bd.streamlit.app/oauth2callback"
+    
+    # Priority 3: Local
+    return "http://localhost:8501/oauth2callback"
+
+def get_redirect_uri_bak():
     """Get the correct redirect URI for the current environment"""
     # Check if running on Streamlit Cloud
     if 'STREAMLIT_SERVER_PORT' in os.environ:
