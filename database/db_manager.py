@@ -351,73 +351,7 @@ class DatabaseManager:
             return cursor.rowcount > 0
         finally:
             conn.close()
-    def authenticate_user(self, username, password):
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Query only what we need
-            cursor.execute('''
-            SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active, 
-                   u.company_id, u.company_name, u.password, u.last_login, u.is_approved, u.account_type
-            FROM users u
-            LEFT JOIN companies c ON u.company_id = c.id
-            WHERE (u.username = ? OR u.email = ?)
-            ''', (username, username))
-            
-            user = cursor.fetchone()
-            
-            # 1. Check if user exists
-            if not user:
-                print(f"❌ User '{username}' NOT FOUND in database.")
-                conn.close()
-                return None, "invalid_credentials"
-
-            # 2. Check if active
-            is_active = user[5]
-            if not is_active:
-                print(f"⚠️ User '{username}' is INACTIVE.")
-                conn.close()
-                return None, "inactive"
-
-            # 3. Check password
-            stored_pass = user[8]  # Index 8 is password
-            print(f"🔍 Comparing passwords... Stored: '{stored_pass}' vs Input: '{password}'")
-            
-            password_match = False
-            if stored_pass and password:
-                # Check if it looks like a bcrypt hash
-                if str(stored_pass).startswith('$2b$') or str(stored_pass).startswith('$2y$'):
-                    import bcrypt
-                    password_match = bcrypt.checkpw(password.encode('utf-8'), str(stored_pass).encode('utf-8'))
-                else:
-                    # Plain text comparison
-                    password_match = (str(stored_pass).strip() == str(password).strip())
-            
-            if not password_match:
-                print(f"❌ Password MISMATCH.")
-                conn.close()
-                return None, "invalid_password"
-
-            # 4. Return user with status
-            is_approved = user[10]
-            status = "approved" if is_approved else "pending_approval"
-            
-            # Update last_login
-            try:
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', (now_str, user[0]))
-                conn.commit()
-            except Exception as e:
-                print(f"⚠️ Login timestamp update failed: {e}")
-
-            conn.close()
-            return user, status
-
-        except Exception as e:
-            logger.error(f"Authentication error: {e}", exc_info=True)
-            return None, "auth_error"
-            
+    
     def authenticate_user(self, username, password):
         """Improved authentication with clear error messages"""
         try:
