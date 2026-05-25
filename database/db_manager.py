@@ -385,6 +385,7 @@ class DatabaseManager:
                 try:
                     if str(stored_pass).startswith('$2b$') or str(stored_pass).startswith('$2y$'):
                         # bcrypt hash
+                        import bcrypt
                         password_match = bcrypt.checkpw(
                             password.encode('utf-8'), 
                             str(stored_pass).encode('utf-8')
@@ -414,6 +415,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Authentication error: {e}", exc_info=True)
             return None, "auth_error", "❌ System error during login. Please try again."
+
 
     
     def create_user(self, company_id, user_data, created_by):

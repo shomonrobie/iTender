@@ -12,36 +12,52 @@ def authenticate_user(username, password):
     """Authenticate user - returns user data and status"""
     return db.authenticate_user(username, password)
 
-def login_user(username, password):
-    """Login user and set session state"""
-    result = db.authenticate_user(username, password)
-    
-    # Check if result is a tuple with user data or a special status
-    if result is None:
+def login_user(user, password):
+    """Login user and set session state (user is a sqlite3.Row from authenticate_user)"""
+    if user is None:
         return False
     
-    # Handle different return types
-    if isinstance(result, tuple) and result:
-        user = result
-        # Check if it's a special status
-        if len(result) == 2 and result[1] == "pending_approval":
-            st.warning("Your account is pending approval. Please wait for admin approval.")
-            return False
-        
-        # Normal user login
+    # user is a sqlite3.Row; we can access by index
+    # Expected indices from the SELECT in authenticate_user:
+    # 0: id, 1: username, 2: email, 3: full_name, 4: role, 5: is_active,
+    # 6: company_id, 7: password, 8: last_login, 9: is_approved, 10: account_type
+    # BUT the query in authenticate_user has been updated; ensure indices match!
+    # Based on the second authenticate_user (the one you kept), the SELECT is:
+    # SELECT u.id, u.username, u.email, u.full_name, u.role, u.is_active,
+    #        u.company_id, u.password, u.last_login, u.is_approved, u.account_type
+    # So indices: 0=id,1=username,2=email,3=full_name,4=role,5=is_active,6=company_id,
+    #            7=password,8=last_login,9=is_approved,10=account_type
+
+    try:
         st.session_state.logged_in = True
         st.session_state.user_id = user[0]
         st.session_state.username = user[1]
         st.session_state.user_email = user[2]
         st.session_state.full_name = user[3]
         st.session_state.user_role = user[4]
-        st.session_state.company_id = user[5]
-        st.session_state.company_name = user[7]
-        st.session_state.subscription_plan = user[8] if len(user) > 8 and user[8] else 'free'
-        st.session_state.subscription_status = user[9] if len(user) > 9 and user[9] else 'active'
+        st.session_state.company_id = user[6]   # company_id is at index 6
+        st.session_state.account_type = user[10] if len(user) > 10 else "company"  # account_type
+        
+        # Fetch company name if company_id exists
+        if st.session_state.company_id:
+            company = db.get_company_by_id(st.session_state.company_id)
+            st.session_state.company_name = company.get("company_name", "N/A") if company else "N/A"
+        else:
+            st.session_state.company_name = "Individual"
+        
+        # Set subscription plan (you may want to fetch from subscription table)
+        # For now, default to professional for admin, else free
+        if st.session_state.user_role == 'admin':
+            st.session_state.subscription_plan = 'professional'
+        else:
+            st.session_state.subscription_plan = 'free'
+        st.session_state.subscription_status = 'active'
+        
         return True
-    
-    return False
+    except Exception as e:
+        print(f"Login error: {e}")
+        return False
+
 
 def logout_user():
     """Logout current user"""
