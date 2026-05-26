@@ -1214,7 +1214,9 @@ def login_page() -> None:
                             st.warning("⚠️ Your account is pending approval by an administrator.")
                         elif user and status == "approved":
                             login_user(user, password)
-                            st.success(f"Welcome back, {user.get('full_name', username)}! 👋")
+                            full_name = user[3] if len(user) > 3 else username
+                            st.success(f"Welcome back, {full_name}! 👋")
+
                             navigate_to("dashboard")
                         else:
                             st.error(message or "❌ Invalid credentials. Please try again.")
