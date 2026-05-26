@@ -4855,29 +4855,7 @@ def upgrade_admin_once():
 if __name__ == "__main__":
     # ✅ Ensure imports are available
     from database.db_manager import DatabaseManager
-    db = DatabaseManager()
-    import bcrypt
-    from database.db_manager import DatabaseManager
-    db = DatabaseManager()
-    
-    # Find the admin user (username = 'admin')
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, password FROM users WHERE username = 'admin'")
-    admin = cursor.fetchone()
-    
-    if admin:
-        user_id = admin[0]
-        new_password = "admin123"
-        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        
-        cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
-        conn.commit()
-        print(f"✅ Password for admin (ID: {user_id}) updated successfully.")
-    else:
-        print("❌ Admin user not found.")
-    
-    conn.close()
+    db = DatabaseManager()    
 
     debug_print("🎬 Starting TenderAI application...")
     upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
