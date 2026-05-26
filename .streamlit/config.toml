@@ -9,5 +9,6 @@ gatherUsageStats = false
 [runner]
 magicEnabled = true
 [logger]
+
 # Level of logging for Streamlit's internal logger: "error", "warning", "info", or "debug"
-level = "warning"
+level = "error"
