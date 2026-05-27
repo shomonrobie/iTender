@@ -447,6 +447,7 @@ def render_system_user_management():
             )
             
             if user_type == "Company User":
+                # Get all active companies
                 companies, _ = db.get_all_companies_filtered(status=1, limit=200, offset=0)
                 company_options = {c['company_name']: c['id'] for c in companies}
                 
@@ -463,16 +464,8 @@ def render_system_user_management():
                         options=["company_admin", "manager", "analyst", "viewer"],
                         key="company_role_add"
                     )
-                    
-                    role_descriptions = {
-                        "company_admin": "Full access to company: manage users, tenders, and settings",
-                        "manager": "Can manage tenders and create users",
-                        "analyst": "Can run analyses and view reports",
-                        "viewer": "Read-only access to company data"
-                    }
-                    st.caption(f"📌 {role_descriptions.get(role, '')}")
                 else:
-                    st.error("No companies found. Please create a company first.")
+                    st.error("No companies found")
                     company_id = None
                     role = "viewer"
             else:
@@ -482,30 +475,16 @@ def render_system_user_management():
                     options=["system_admin", "system_support", "system_auditor"],
                     key="system_role_add"
                 )
-                
-                role_descriptions = {
-                    "system_admin": "Full platform access: manage companies, users, roles, and all data",
-                    "system_support": "Can view all companies and provide support (no editing)",
-                    "system_auditor": "Read-only access across entire platform"
-                }
-                st.caption(f"📌 {role_descriptions.get(role, '')}")
             
-            submitted = st.form_submit_button("Create User", type="primary")                        
-
+            submitted = st.form_submit_button("Create User", type="primary")
+            
             if submitted:
-                # Validation
                 if not all([full_name, email, username]):
                     st.error("Please fill all required fields")
                 elif not generate_password and password != confirm_password:
                     st.error("Passwords do not match")
-                elif user_type == "Company User" and not company_id:
-                    st.error("Please select a company")
                 else:
-                    # Generate or use provided password
-                    if generate_password:
-                        final_password = db.generate_random_password()
-                    else:
-                        final_password = password
+                    final_password = db.generate_random_password() if generate_password else password
                     
                     user_data = {
                         'username': username.strip(),
@@ -516,32 +495,19 @@ def render_system_user_management():
                         'role': role
                     }
                     
-                    if user_type == "Company User":
+                    if user_type == "Company User" and company_id:
                         success, result = db.create_company_user(company_id, user_data, st.session_state.user_id)
-                        user_type_text = f"company user for '{selected_company}'"
                     else:
                         success, result = db.create_system_user(user_data, st.session_state.user_id)
-                        user_type_text = "system user"
                     
                     if success:
                         if generate_password:
-                            st.success(f"✅ User {full_name} created as {user_type_text}!\n\n**Password:** `{final_password}`")
+                            st.success(f"✅ User {full_name} created! Password: `{final_password}`")
                         else:
-                            st.success(f"✅ User {full_name} created as {user_type_text} successfully!")
-                        
-                        # Clear form data from session state
-                        st.session_state.pop('full_name', None)
-                        st.session_state.pop('email', None)
-                        st.session_state.pop('username', None)
-                        st.session_state.pop('phone', None)
-                        st.session_state.pop('password', None)
-                        st.session_state.pop('confirm_password', None)
-                        
-                        # Rerun to clear the form
+                            st.success(f"✅ User {full_name} created successfully!")
                         st.rerun()
                     else:
                         st.error(f"Failed: {result}")
-
     
     # ========== DISPLAY USERS ==========
     st.markdown("### 📋 Users")
@@ -553,103 +519,103 @@ def render_system_user_management():
         companies, _ = db.get_all_companies_filtered(status=None, limit=200, offset=0)
         
         if companies:
-            for company_idx, company in enumerate(companies):
-                try:
-                    company_users, company_total = db.get_all_users_filtered(
-                        company_id=company['id'],
-                        limit=100,
-                        offset=0
-                    )
+            for company in companies:
+                company_users, _ = db.get_all_users_filtered(
+                    company_id=company['id'],
+                    limit=100,
+                    offset=0
+                )
+                
+                if company_users:
+                    st.markdown(f"#### 🏢 {company['company_name']}")
                     
-                    if company_users:
-                        st.markdown(f"#### {company['company_name']} ({company_total} users)")
+                    for user in company_users:
+                        if not isinstance(user, dict):
+                            continue
                         
-                        for user_idx, user in enumerate(company_users):
-                            if not isinstance(user, dict):
-                                continue
+                        user_id = user.get('id')
+                        if not user_id:
+                            continue
+                        
+                        unique_base = f"comp_{company['id']}_user_{user_id}"
+                        
+                        with st.expander(f"👤 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').title()}"):
+                            col1, col2, col3 = st.columns([2, 1, 1])
                             
-                            user_id = user.get('id')
-                            if not user_id:
-                                continue
+                            with col1:
+                                new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"{unique_base}_name")
+                                new_email = st.text_input("Email", value=user.get('email', ''), key=f"{unique_base}_email")
+                                new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"{unique_base}_phone")
                             
-                            # Create unique key using company_id, user_id, and timestamp
-                            unique_base = f"comp_{company['id']}_user_{user_id}"
-                            
-                            with st.expander(f"👤 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').title()}"):
-                                col1, col2 = st.columns([2, 1])
+                            with col2:
+                                # Company selection dropdown for company users
+                                all_companies, _ = db.get_all_companies_filtered(status=1, limit=200, offset=0)
+                                company_options = {c['company_name']: c['id'] for c in all_companies}
+                                current_company_name = company.get('company_name', 'Unknown')
                                 
-                                with col1:
-                                    new_full_name = st.text_input(
-                                        "Full Name", 
-                                        value=user.get('full_name', ''), 
-                                        key=f"{unique_base}_name"
-                                    )
-                                    new_email = st.text_input(
-                                        "Email", 
-                                        value=user.get('email', ''), 
-                                        key=f"{unique_base}_email"
-                                    )
-                                    new_phone = st.text_input(
-                                        "Phone", 
-                                        value=user.get('phone', ''), 
-                                        key=f"{unique_base}_phone"
-                                    )
-                                    
-                                    # Role options based on user type
-                                    role_options = ["company_admin", "manager", "analyst", "viewer"]
-                                    current_role = user.get('role', 'viewer')
-                                    
-                                    try:
-                                        role_index = role_options.index(current_role) if current_role in role_options else 2
-                                    except ValueError:
-                                        role_index = 2
-                                    
-                                    new_role = st.selectbox(
-                                        "Role",
-                                        options=role_options,
-                                        index=role_index,
-                                        key=f"{unique_base}_role"
-                                    )
-                                    
-                                    new_active = st.checkbox(
-                                        "Active", 
-                                        value=user.get('is_active', 1) == 1, 
-                                        key=f"{unique_base}_active"
-                                    )
-                                    
-                                    if st.button("💾 Save Changes", key=f"{unique_base}_save"):
-                                        updates = {}
-                                        if new_full_name != user.get('full_name'):
-                                            updates['full_name'] = new_full_name
-                                        if new_email != user.get('email'):
-                                            updates['email'] = new_email
-                                        if new_phone != user.get('phone'):
-                                            updates['phone'] = new_phone
-                                        if new_role != user.get('role'):
-                                            updates['role'] = new_role
-                                        if new_active != (user.get('is_active', 1) == 1):
-                                            updates['is_active'] = 1 if new_active else 0
-                                        
-                                        if updates:
-                                            if db.update_user(user_id, updates):
-                                                st.success("User updated!")
-                                                st.rerun()
+                                new_company = st.selectbox(
+                                    "Company",
+                                    options=list(company_options.keys()),
+                                    index=list(company_options.keys()).index(current_company_name) if current_company_name in company_options else 0,
+                                    key=f"{unique_base}_company"
+                                )
+                                new_company_id = company_options.get(new_company, company['id'])
                                 
-                                with col2:
-                                    if st.button("🔑 Reset Password", key=f"{unique_base}_reset"):
-                                        success, new_pw = db.reset_user_password(user_id)
-                                        if success:
-                                            st.success(f"New password: `{new_pw}`")
+                                # Role options based on user type
+                                role_options = ["company_admin", "manager", "analyst", "viewer"]
+                                current_role = user.get('role', 'viewer')
+                                role_index = role_options.index(current_role) if current_role in role_options else 2
+                                
+                                new_role = st.selectbox(
+                                    "Role",
+                                    options=role_options,
+                                    index=role_index,
+                                    key=f"{unique_base}_role"
+                                )
+                            
+                            with col3:
+                                new_active = st.checkbox("Active", value=user.get('is_active', 1) == 1, key=f"{unique_base}_active")
+                                
+                                if st.button("💾 Save Changes", key=f"{unique_base}_save"):
+                                    updates = {}
+                                    if new_full_name != user.get('full_name'):
+                                        updates['full_name'] = new_full_name
+                                    if new_email != user.get('email'):
+                                        updates['email'] = new_email
+                                    if new_phone != user.get('phone'):
+                                        updates['phone'] = new_phone
+                                    if new_role != user.get('role'):
+                                        updates['role'] = new_role
+                                    if new_active != (user.get('is_active', 1) == 1):
+                                        updates['is_active'] = 1 if new_active else 0
                                     
-                                    if user_id != st.session_state.user_id:
-                                        if st.button("🗑️ Delete User", key=f"{unique_base}_delete", type="secondary"):
-                                            if db.delete_user(user_id):
-                                                st.success("User deleted")
-                                                st.rerun()
+                                    # Handle company change
+                                    if new_company_id != company['id']:
+                                        # Update user's company
+                                        updates['company_id'] = new_company_id
                                     
-                                    st.caption(f"Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
-                except Exception as e:
-                    st.warning(f"Could not load users for {company.get('company_name', 'Unknown')}: {e}")
+                                    if updates:
+                                        if db.update_user(user_id, updates):
+                                            st.success("User updated! Changes will appear after refresh.")
+                                            st.rerun()
+                                        else:
+                                            st.error("Update failed")
+                            
+                            # Action buttons below the edit form
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🔑 Reset Password", key=f"{unique_base}_reset"):
+                                    success, new_pw = db.reset_user_password(user_id)
+                                    if success:
+                                        st.success(f"New password: `{new_pw}`")
+                            with col2:
+                                if user_id != st.session_state.user_id:
+                                    if st.button("🗑️ Delete User", key=f"{unique_base}_delete", type="secondary"):
+                                        if db.delete_user(user_id):
+                                            st.success("User deleted")
+                                            st.rerun()
+                            
+                            st.caption(f"📅 Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
         else:
             st.info("No companies found")
     
@@ -662,7 +628,7 @@ def render_system_user_management():
             return
         
         if system_users:
-            for user_idx, user in enumerate(system_users):
+            for user in system_users:
                 if not isinstance(user, dict):
                     continue
                 
@@ -673,32 +639,17 @@ def render_system_user_management():
                 unique_base = f"sys_user_{user_id}"
                 
                 with st.expander(f"👑 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').replace('_', ' ').title()}"):
-                    col1, col2 = st.columns([2, 1])
+                    col1, col2, col3 = st.columns([2, 1, 1])
                     
                     with col1:
-                        new_full_name = st.text_input(
-                            "Full Name", 
-                            value=user.get('full_name', ''), 
-                            key=f"{unique_base}_name"
-                        )
-                        new_email = st.text_input(
-                            "Email", 
-                            value=user.get('email', ''), 
-                            key=f"{unique_base}_email"
-                        )
-                        new_phone = st.text_input(
-                            "Phone", 
-                            value=user.get('phone', ''), 
-                            key=f"{unique_base}_phone"
-                        )
-                        
+                        new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"{unique_base}_name")
+                        new_email = st.text_input("Email", value=user.get('email', ''), key=f"{unique_base}_email")
+                        new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"{unique_base}_phone")
+                    
+                    with col2:
                         role_options = ["system_admin", "system_support", "system_auditor"]
                         current_role = user.get('role', 'system_support')
-                        
-                        try:
-                            role_index = role_options.index(current_role) if current_role in role_options else 1
-                        except ValueError:
-                            role_index = 1
+                        role_index = role_options.index(current_role) if current_role in role_options else 1
                         
                         new_role = st.selectbox(
                             "Role",
@@ -706,11 +657,9 @@ def render_system_user_management():
                             index=role_index,
                             key=f"{unique_base}_role"
                         )
-                        new_active = st.checkbox(
-                            "Active", 
-                            value=user.get('is_active', 1) == 1, 
-                            key=f"{unique_base}_active"
-                        )
+                    
+                    with col3:
+                        new_active = st.checkbox("Active", value=user.get('is_active', 1) == 1, key=f"{unique_base}_active")
                         
                         if st.button("💾 Save Changes", key=f"{unique_base}_save"):
                             updates = {}
@@ -729,23 +678,27 @@ def render_system_user_management():
                                 if db.update_user(user_id, updates):
                                     st.success("User updated!")
                                     st.rerun()
+                                else:
+                                    st.error("Update failed")
                     
-                    with col2:
+                    # Action buttons
+                    col1, col2 = st.columns(2)
+                    with col1:
                         if st.button("🔑 Reset Password", key=f"{unique_base}_reset"):
                             success, new_pw = db.reset_user_password(user_id)
                             if success:
                                 st.success(f"New password: `{new_pw}`")
-                        
+                    with col2:
                         if user_id != st.session_state.user_id:
                             if st.button("🗑️ Delete User", key=f"{unique_base}_delete", type="secondary"):
                                 if db.delete_user(user_id):
                                     st.success("User deleted")
                                     st.rerun()
-                        
-                        st.caption(f"Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
+                    
+                    st.caption(f"📅 Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
         else:
             st.info("No system users found")
-
+            
 def render_system_user_management_bak():
     """Manage system-level users and company users (for system admin)"""
     st.markdown("### 👥 User Management")

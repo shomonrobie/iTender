@@ -481,11 +481,12 @@ class DatabaseManager:
                 ''', (
                     company_id, user_data['username'], hashed_pass, user_data['email'],
                     user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'user'),
-                    1, created_by, user_data.get('is_approved', False), user_data.get('account_type', 'company')
+                    1, created_by, 0,  # is_approved = 0 (pending)
+                    user_data.get('account_type', 'company')
                 ))
             user_id = cursor.lastrowid
             
-            # Create subscription record
+            # Create subscription record (pending approval)
             cursor.execute('''
             INSERT INTO subscriptions (user_id, plan, status, analyses_limit)
             VALUES (?, 'free', 'pending_approval', 0)
@@ -502,6 +503,7 @@ class DatabaseManager:
             return False, str(e)
         finally:
             conn.close()
+
 
     
     def create_company_bak(self, company_data):
@@ -1018,22 +1020,28 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('''
-        UPDATE users 
-        SET is_approved = 1, registration_complete = 1, approved_by = ?, approved_at = ?
-        WHERE id = ?
-        ''', (approved_by, datetime.now(), user_id))
-        
-        # Update subscription to active
-        cursor.execute('''
-        UPDATE subscriptions 
-        SET status = 'active', analyses_limit = 5
-        WHERE user_id = ?
-        ''', (user_id,))
-        
-        conn.commit()
-        conn.close()
-        return True
+        try:
+            cursor.execute('''
+            UPDATE users 
+            SET is_approved = 1, approved_by = ?, approved_at = ?
+            WHERE id = ?
+            ''', (approved_by, datetime.now(), user_id))
+            
+            # Update subscription to active
+            cursor.execute('''
+            UPDATE subscriptions 
+            SET status = 'active', analyses_limit = 5
+            WHERE user_id = ?
+            ''', (user_id,))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error approving user: {e}")
+            return False
+        finally:
+            conn.close()
+
 
 
     def reject_user(self, user_id, rejected_by):
@@ -2180,8 +2188,8 @@ class DatabaseManager:
         return result, total
 
     def update_user(self, user_id, updates):
-        """Update user fields (full_name, email, phone, role, is_active)"""
-        allowed_fields = ['full_name', 'email', 'phone', 'role', 'is_active']
+        """Update user fields including company_id"""
+        allowed_fields = ['full_name', 'email', 'phone', 'role', 'is_active', 'company_id']
         set_clause = []
         params = []
         for field, value in updates.items():
@@ -2910,14 +2918,17 @@ class DatabaseManager:
         """Get all pending user registrations across all companies (for system admin)"""
         conn = self.get_connection()
         cursor = conn.cursor()
+        
+        # Fix: Include users where is_approved = 0, regardless of registration_complete
         cursor.execute('''
             SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, 
-                u.created_at, u.created_by, c.company_name
+                u.created_at, u.created_by, c.company_name, u.is_approved, u.is_active
             FROM users u
             LEFT JOIN companies c ON u.company_id = c.id
-            WHERE u.is_approved = 0 AND u.registration_complete = 1 AND u.is_active = 1
+            WHERE u.is_approved = 0
             ORDER BY u.created_at ASC
         ''')
+        
         users = cursor.fetchall()
         conn.close()
         
@@ -2925,11 +2936,22 @@ class DatabaseManager:
         result = []
         for user in users:
             result.append({
-                'id': user[0], 'username': user[1], 'email': user[2], 'full_name': user[3],
-                'phone': user[4], 'role': user[5], 'created_at': user[6],
-                'created_by': user[7], 'company_name': user[8] if len(user) > 8 else 'N/A'
+                'id': user[0],
+                'username': user[1],
+                'email': user[2],
+                'full_name': user[3],
+                'phone': user[4] if len(user) > 4 else '',
+                'role': user[5] if len(user) > 5 else 'user',
+                'created_at': user[6] if len(user) > 6 else '',
+                'created_by': user[7] if len(user) > 7 else None,
+                'company_name': user[8] if len(user) > 8 else 'N/A',
+                'is_approved': user[9] if len(user) > 9 else 0,
+                'is_active': user[10] if len(user) > 10 else 1
             })
+        
+        print(f"🔍 Found {len(result)} pending users")  # Debug
         return result
+
     
     def migrate_company_isolation(self):
         """Ensure proper company isolation and add missing columns"""
