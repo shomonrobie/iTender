@@ -7,6 +7,7 @@ import sqlite3
 import hashlib
 import json
 from datetime import datetime, timedelta
+from unittest import result
 import pandas as pd
 import numpy as np
 import logging
@@ -14,6 +15,9 @@ import bcrypt
 import os
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Union  # ← Add this line
+import secrets
+import string
+
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +258,16 @@ class DatabaseManager:
         )
         ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT UNIQUE NOT NULL,
+                permissions TEXT,  -- JSON string of permissions
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+
         # Create indexes
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_company ON historical_tenders(company_id, procurement_type, award_date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_nppi_company ON company_nppi(company_id, procurement_type, calculation_date)')
@@ -299,6 +313,40 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?, ?, ?)
                 ''', (demo_company_id, user[0], hashed_pass, user[2], user[3], user[4]))
         
+        # Insert default role permissions if not present
+        default_permissions = {
+            'admin': {
+                'manage_users': True, 'manage_tenders': True, 'run_analysis': True,
+                'view_reports': True, 'export_data': True, 'change_plans': True,
+                'manage_team': True, 'delete_any': True
+            },
+            'company_admin': {
+                'manage_users': True, 'manage_tenders': True, 'run_analysis': True,
+                'view_reports': True, 'export_data': True, 'change_plans': True,
+                'manage_team': True, 'delete_any': False
+            },
+            'manager': {
+                'manage_users': False, 'manage_tenders': True, 'run_analysis': True,
+                'view_reports': True, 'export_data': True, 'change_plans': False,
+                'manage_team': False, 'delete_any': False
+            },
+            'analyst': {
+                'manage_users': False, 'manage_tenders': False, 'run_analysis': True,
+                'view_reports': True, 'export_data': False, 'change_plans': False,
+                'manage_team': False, 'delete_any': False
+            },
+            'viewer': {
+                'manage_users': False, 'manage_tenders': False, 'run_analysis': False,
+                'view_reports': True, 'export_data': False, 'change_plans': False,
+                'manage_team': False, 'delete_any': False
+            }
+        }
+        for role, perms in default_permissions.items():
+            import json
+            cursor.execute('''
+            INSERT OR IGNORE INTO role_permissions (role, permissions) VALUES (?, ?)
+            ''', (role, json.dumps(perms)))
+
         conn.commit()
         conn.close()
         print("Database initialized successfully")
@@ -456,7 +504,7 @@ class DatabaseManager:
             conn.close()
 
     
-    def create_company(self, company_data):
+    def create_company_bak(self, company_data):
         """Create a new company"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -477,6 +525,99 @@ class DatabaseManager:
     # ==================== USER MANAGEMENT METHODS ====================
     
     def get_all_users(self, company_id=None, role=None):
+        """Get all users as dictionaries"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = '''
+        SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
+            u.created_at, u.last_login, c.company_name, u.is_approved
+        FROM users u
+        JOIN companies c ON u.company_id = c.id
+        WHERE 1=1
+        '''
+        params = []
+        
+        if company_id:
+            query += " AND u.company_id = ?"
+            params.append(company_id)
+        if role:
+            query += " AND u.role = ?"
+            params.append(role)
+        
+        query += " ORDER BY u.created_at DESC"
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Convert to list of dictionaries
+        users = []
+        for row in rows:
+            users.append({
+                'id': row[0], 'username': row[1], 'email': row[2], 'full_name': row[3],
+                'phone': row[4], 'role': row[5], 'is_active': row[6],
+                'created_at': row[7], 'last_login': row[8], 'company_name': row[9],
+                'is_approved': row[10] if len(row) > 10 else 1
+            })
+        return users
+
+    def update_user_bak(self, user_id: int, updates: dict) -> bool:
+        """Update user fields (full_name, email, phone, role, is_active)"""
+        allowed_fields = ['full_name', 'email', 'phone', 'role', 'is_active']
+        set_clause = []
+        params = []
+        for field, value in updates.items():
+            if field in allowed_fields:
+                set_clause.append(f"{field} = ?")
+                params.append(value)
+        if not set_clause:
+            return False
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(set_clause)} WHERE id = ?"
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, params)
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Update user failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def reset_user_password_bak(self, user_id: int, new_password: str) -> bool:
+        """Reset user password (bcrypt hash)"""
+        import bcrypt
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Password reset failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def delete_user_bak(self, user_id: int) -> bool:
+        """Soft delete or hard delete? We'll hard delete for simplicity"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Delete user failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_all_users_bak(self, company_id=None, role=None):
         """Get all users with optional filters"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -922,8 +1063,66 @@ class DatabaseManager:
         if result:
             return result[0] == 1 and result[1] == 1
         return False
-
     def get_user_analyses(self, user_id, company_id, role, limit=50):
+        """Get user's tender analyses with role-based filtering"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Debug print
+        print(f"🔍 get_user_analyses called with: user_id={user_id}, company_id={company_id}, role={role}")
+        
+        # System admin can see all analyses across all companies
+        if role in ['admin', 'system_admin']:
+            cursor.execute('''
+                SELECT * FROM tender_analyses 
+                ORDER BY analysis_date DESC LIMIT ?
+            ''', (limit,))
+        # Company admin and manager can see all analyses for their company
+        elif role in ['company_admin', 'manager']:
+            cursor.execute('''
+                SELECT * FROM tender_analyses 
+                WHERE company_id = ? 
+                ORDER BY analysis_date DESC LIMIT ?
+            ''', (company_id, limit))
+        # Regular users can only see their own analyses
+        else:
+            cursor.execute('''
+                SELECT * FROM tender_analyses 
+                WHERE user_id = ? AND company_id = ?
+                ORDER BY analysis_date DESC LIMIT ?
+            ''', (user_id, company_id, limit))
+        
+        # Get column names
+        columns = [description[0] for description in cursor.description]
+        data = cursor.fetchall()
+        conn.close()
+        
+        print(f"🔍 Found {len(data)} analyses for role={role}, company_id={company_id}")
+        
+        if data:
+            df = pd.DataFrame(data, columns=columns)
+            
+            # Parse competitor_bids JSON if present
+            if 'competitor_bids' in df.columns:
+                import json
+                def parse_competitor_bids(value):
+                    if value is None:
+                        return []
+                    if isinstance(value, str):
+                        try:
+                            if value and value != 'null':
+                                return json.loads(value)
+                        except:
+                            pass
+                    return []
+                df['competitor_bids'] = df['competitor_bids'].apply(parse_competitor_bids)
+            
+            return df
+        return pd.DataFrame()
+
+
+
+    def get_user_analyses_bak(self, user_id, company_id, role, limit=50):
         """Get user's tender analyses with role-based filtering"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -1018,12 +1217,14 @@ class DatabaseManager:
         total_analyses = cursor.fetchone()[0]
         
         cursor.execute('''
-        SELECT COUNT(*) FROM tender_analyses 
-        WHERE company_id = ? AND bid_status = 'Won'
+            SELECT COUNT(*) FROM tender_analyses 
+            WHERE company_id = ? AND bid_status = 'Won'
         ''', (company_id,))
         won_tenders = cursor.fetchone()[0]
         
         conn.close()
+        
+        print(f"📊 Company {company_id} Stats: Users={total_users}, Analyses={total_analyses}, Wins={won_tenders}")
         
         return {
             'total_users': total_users,
@@ -1031,6 +1232,8 @@ class DatabaseManager:
             'won_tenders': won_tenders,
             'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
         }
+
+
     
     # ==================== CONTACT METHODS ====================
     
@@ -1927,6 +2130,1023 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting user by username: {e}")
             return None
+    def get_all_users_filtered_bak(self, company_id, search="", role="", status=None, limit=20, offset=0):
+        """Return filtered users list and total count"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
         
-    # Singleton instance
+        query = """
+            SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
+                u.created_at, u.last_login, c.company_name, u.is_approved
+            FROM users u
+            JOIN companies c ON u.company_id = c.id
+            WHERE u.company_id = ?
+        """
+
+        params = [company_id]
+        
+        if search:
+            query += " AND (u.username LIKE ? OR u.email LIKE ? OR u.full_name LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        if role:
+            query += " AND u.role = ?"
+            params.append(role)
+        if status is not None:
+            query += " AND u.is_active = ?"
+            params.append(status)
+        
+        # Count total
+        count_query = query.replace("SELECT u.id, u.username, ...", "SELECT COUNT(*)")
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+        
+        # Paginated results
+        query += " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cursor.execute(query, params)
+        users = cursor.fetchall()
+        conn.close()
+        
+        # Convert to list of dicts for easier handling
+        result = []
+        for row in users:
+            result.append({
+                'id': row[0], 'username': row[1], 'email': row[2], 'full_name': row[3],
+                'phone': row[4], 'role': row[5], 'is_active': row[6],
+                'created_at': row[7], 'last_login': row[8], 'company_name': row[9],
+                'is_approved': row[10] if len(row) > 10 else 1
+            })
+
+        return result, total
+
+    def update_user(self, user_id, updates):
+        """Update user fields (full_name, email, phone, role, is_active)"""
+        allowed_fields = ['full_name', 'email', 'phone', 'role', 'is_active']
+        set_clause = []
+        params = []
+        for field, value in updates.items():
+            if field in allowed_fields:
+                set_clause.append(f"{field} = ?")
+                params.append(value)
+        if not set_clause:
+            return False
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(set_clause)} WHERE id = ?"
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, params)
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Update user failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def generate_random_password(self, length=12):
+        """Generate a secure random password"""
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        return password
+
+    def reset_user_password(self, user_id, new_password=None):
+        """Reset user password. If new_password not provided, generate random."""
+        if not new_password:
+            new_password = self.generate_random_password()
+        import bcrypt
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
+            conn.commit()
+            return True, new_password
+        except Exception as e:
+            logger.error(f"Password reset failed: {e}")
+            return False, None
+        finally:
+            conn.close()
+
+    def delete_user(self, user_id):
+        """Hard delete user (only allowed for non-admin users)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # First check if user is admin - prevent deletion of admin
+            cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+            role = cursor.fetchone()
+            if role and role[0] == 'admin':
+                conn.close()
+                return False
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            cursor.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Delete user failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_role_permissions(self, role):
+        """Get permissions for a given role as dict"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT permissions FROM role_permissions WHERE role = ?", (role,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return json.loads(row[0])
+        return {}
+
+    def get_all_roles(self):
+        """Get all defined roles with their permissions"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if table exists first
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='role_permissions'")
+            if not cursor.fetchone():
+                # Table doesn't exist - create it
+                self._create_role_permissions_table()
+            
+            cursor.execute("SELECT role, permissions FROM role_permissions ORDER BY role")
+            rows = cursor.fetchall()
+            conn.close()
+            roles = []
+            for row in rows:
+                try:
+                    perms = json.loads(row[1]) if row[1] else {}
+                except:
+                    perms = {}
+                roles.append({
+                    'role': row[0],
+                    'permissions': perms
+                })
+            return roles
+        except Exception as e:
+            logger.error(f"Error getting roles: {e}")
+            conn.close()
+            return []
+
+    def update_role_permissions(self, role, permissions):
+        """Update permissions for a role (permissions is dict)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                UPDATE role_permissions SET permissions = ?, updated_at = ?
+                WHERE role = ?
+            ''', (json.dumps(permissions), datetime.now(), role))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Update role permissions failed: {e}")
+            return False
+        finally:
+            conn.close()
+      # ==================== COMPANY CRUD OPERATIONS ====================
+    
+    def get_all_companies_filtered(self, search="", status=None, limit=20, offset=0):
+        """Get all companies with pagination and filtering"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT id, company_name, email, phone, division, district, 
+                   address, registration_number, vat_number, created_at, is_active
+            FROM companies
+            WHERE 1=1
+        """
+        params = []
+        
+        if search:
+            query += " AND (company_name LIKE ? OR email LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+        if status is not None:
+            query += " AND is_active = ?"
+            params.append(status)
+        
+        # Count total
+        count_query = query.replace("SELECT id, company_name, ...", "SELECT COUNT(*)")
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+        
+        # Paginated results
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        companies = []
+        for row in rows:
+            companies.append({
+                'id': row[0], 'company_name': row[1], 'email': row[2],
+                'phone': row[3], 'division': row[4], 'district': row[5],
+                'address': row[6], 'registration_number': row[7],
+                'vat_number': row[8], 'created_at': row[9], 'is_active': row[10]
+            })
+        return companies, total
+
+    def create_company(self, company_data):
+        """Create a new company with full details"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO companies (
+                    company_name, email, phone, division, district, 
+                    address, registration_number, vat_number, website, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                company_data['company_name'],
+                company_data.get('email', ''),
+                company_data.get('phone', ''),
+                company_data.get('division', ''),
+                company_data.get('district', ''),
+                company_data.get('address', ''),
+                company_data.get('registration_number', ''),
+                company_data.get('vat_number', ''),
+                company_data.get('website', ''),
+                1
+            ))
+            company_id = cursor.lastrowid
+            conn.commit()
+            return True, company_id
+        except sqlite3.IntegrityError as e:
+            return False, f"Company name already exists: {e}"
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def update_company(self, company_id, updates):
+        """Update company information"""
+        allowed_fields = ['company_name', 'email', 'phone', 'division', 'district', 
+                         'address', 'registration_number', 'vat_number', 'website', 'is_active']
+        set_clause = []
+        params = []
+        for field, value in updates.items():
+            if field in allowed_fields:
+                set_clause.append(f"{field} = ?")
+                params.append(value)
+        if not set_clause:
+            return False
+        params.append(company_id)
+        query = f"UPDATE companies SET {', '.join(set_clause)} WHERE id = ?"
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, params)
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Update company failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def delete_company(self, company_id):
+        """Soft delete a company (mark inactive)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # First, deactivate all users in this company
+            cursor.execute("UPDATE users SET is_active = 0 WHERE company_id = ?", (company_id,))
+            # Then deactivate the company
+            cursor.execute("UPDATE companies SET is_active = 0 WHERE id = ?", (company_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Delete company failed: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_company_by_id(self, company_id):
+        """Get company by ID as dictionary"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM companies WHERE id = ?", (company_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+
+    # ==================== SYSTEM USER MANAGEMENT ====================
+    
+    def get_system_users(self):
+        """Get all system-level users (company_id IS NULL)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, username, email, full_name, phone, role, is_active, 
+                   created_at, last_login
+            FROM users
+            WHERE company_id IS NULL
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        users = []
+        for row in rows:
+            users.append({
+                'id': row[0], 'username': row[1], 'email': row[2], 'full_name': row[3],
+                'phone': row[4], 'role': row[5], 'is_active': row[6],
+                'created_at': row[7], 'last_login': row[8]
+            })
+        return users
+
+    def create_system_user(self, user_data, created_by):
+        """Create a system-level user (no company)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        hashed_pass = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        try:
+            cursor.execute('''
+                INSERT INTO users (
+                    company_id, username, password, email, full_name, phone, role,
+                    is_active, created_by, is_approved
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                None, user_data['username'], hashed_pass, user_data['email'],
+                user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'viewer'),
+                1, created_by, 1
+            ))
+            user_id = cursor.lastrowid
+            
+            # Create subscription record
+            cursor.execute('''
+            INSERT INTO subscriptions (user_id, plan, status, analyses_limit)
+            VALUES (?, ?, ?, ?)
+            ''', (user_id, 'professional', 'active', -1))
+            
+            conn.commit()
+            return True, user_id
+        except sqlite3.IntegrityError as e:
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def get_company_users(self, company_id):
+        """Get all users belonging to a specific company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, username, email, full_name, phone, role, is_active, 
+                   created_at, last_login
+            FROM users
+            WHERE company_id = ?
+            ORDER BY created_at DESC
+        """, (company_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        users = []
+        for row in rows:
+            users.append({
+                'id': row[0], 'username': row[1], 'email': row[2], 'full_name': row[3],
+                'phone': row[4], 'role': row[5], 'is_active': row[6],
+                'created_at': row[7], 'last_login': row[8]
+            })
+        return users
+
+    # ==================== ENHANCED GET_ALL_USERS_FILTERED ====================
+    
+    def get_all_users_filtered(self, company_id=None, search="", role="", status=None, limit=20, offset=0):
+        """Get users filtered by company, search, role, status"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Build base query
+        if company_id == -1:
+            # Special case: get system users only (company_id IS NULL)
+            query = """
+                SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
+                    u.created_at, u.last_login, NULL as company_name, u.is_approved
+                FROM users u
+                WHERE u.company_id IS NULL
+            """
+            params = []
+        elif company_id and company_id > 0:
+            # Get users for a specific company
+            query = """
+                SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
+                    u.created_at, u.last_login, c.company_name, u.is_approved
+                FROM users u
+                LEFT JOIN companies c ON u.company_id = c.id
+                WHERE u.company_id = ?
+            """
+            params = [company_id]
+        else:
+            # Get all users (including system users) - for system admin
+            query = """
+                SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
+                    u.created_at, u.last_login, c.company_name, u.is_approved
+                FROM users u
+                LEFT JOIN companies c ON u.company_id = c.id
+                WHERE 1=1
+            """
+            params = []
+        
+        # Add search filter
+        if search:
+            query += " AND (u.username LIKE ? OR u.email LIKE ? OR u.full_name LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+        
+        # Add role filter
+        if role:
+            query += " AND u.role = ?"
+            params.append(role)
+        
+        # Add status filter
+        if status is not None:
+            query += " AND u.is_active = ?"
+            params.append(status)
+        
+        # Create count query (remove SELECT part and ORDER BY, LIMIT, OFFSET)
+        count_query = query
+        # Remove the SELECT part for count
+        if "SELECT u.id" in count_query:
+            count_query = count_query.replace(
+                "SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, u.created_at, u.last_login, c.company_name, u.is_approved",
+                "SELECT COUNT(*)"
+            )
+        
+        # Execute count query
+        try:
+            cursor.execute(count_query, params)
+            count_result = cursor.fetchone()
+            total = count_result[0] if count_result else 0
+        except Exception as e:
+            print(f"Count query error: {e}")
+            total = 0
+        
+        # Add pagination
+        query += " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        # Execute main query
+        try:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        except Exception as e:
+            print(f"Main query error: {e}")
+            rows = []
+        
+        conn.close()
+        
+        # Convert to list of dicts
+        users = []
+        for row in rows:
+            users.append({
+                'id': row[0],
+                'username': row[1],
+                'email': row[2],
+                'full_name': row[3],
+                'phone': row[4] if len(row) > 4 else '',
+                'role': row[5] if len(row) > 5 else 'viewer',
+                'is_active': row[6] if len(row) > 6 else 1,
+                'created_at': row[7] if len(row) > 7 else None,
+                'last_login': row[8] if len(row) > 8 else None,
+                'company_name': row[9] if len(row) > 9 else None,
+                'is_approved': row[10] if len(row) > 10 else 1
+            })
+        
+        return users, total
+
+    def create_company_user_bak(self, company_id, user_data, created_by):
+        """Create a company-level user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        hashed_pass = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        try:
+            cursor.execute('''
+                INSERT INTO users (
+                    company_id, username, password, email, full_name, phone, role,
+                    is_active, created_by, is_approved
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                company_id, user_data['username'], hashed_pass, user_data['email'],
+                user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'viewer'),
+                1, created_by, 1
+            ))
+            user_id = cursor.lastrowid
+            
+            # Create subscription record
+            cursor.execute('''
+            INSERT INTO subscriptions (user_id, plan, status, analyses_limit)
+            VALUES (?, ?, ?, ?)
+            ''', (user_id, 'free', 'active', 5))
+            
+            conn.commit()
+            return True, user_id
+        except sqlite3.IntegrityError as e:
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def get_company_stats_by_id(self, company_id):
+        """Get statistics for a specific company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
+        total_analyses = cursor.fetchone()[0]
+        
+        cursor.execute('''
+        SELECT COUNT(*) FROM tender_analyses 
+        WHERE company_id = ? AND bid_status = 'Won'
+        ''', (company_id,))
+        won_tenders = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_users': total_users,
+            'total_analyses': total_analyses,
+            'won_tenders': won_tenders,
+            'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
+        }
+    def get_company_stats(self, company_id):
+        """Get company statistics including users and analyses"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
+        total_analyses = cursor.fetchone()[0]
+        
+        cursor.execute('''
+            SELECT COUNT(*) FROM tender_analyses 
+            WHERE company_id = ? AND bid_status = 'Won'
+        ''', (company_id,))
+        won_tenders = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_users': total_users,
+            'total_analyses': total_analyses,
+            'won_tenders': won_tenders,
+            'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
+        }
+
+    def get_tender_analyses_by_company(self, company_id, tender_id=None):
+        """Get all analyses for a company, optionally for a specific tender"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if tender_id:
+            cursor.execute('''
+                SELECT id, tender_title, recommended_bid, success_probability, 
+                    risk_level, analysis_date, user_id
+                FROM tender_analyses
+                WHERE company_id = ? AND tender_id = ?
+                ORDER BY analysis_date DESC
+            ''', (company_id, tender_id))
+        else:
+            cursor.execute('''
+                SELECT id, tender_id, tender_title, recommended_bid, success_probability,
+                    risk_level, analysis_date
+                FROM tender_analyses
+                WHERE company_id = ?
+                ORDER BY analysis_date DESC
+                LIMIT 20
+            ''', (company_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        analyses = []
+        for row in rows:
+            analyses.append({
+                'id': row[0],
+                'tender_title': row[1],
+                'recommended_bid': row[2],
+                'win_probability': f"{row[3]*100:.0f}%" if row[3] else 'N/A',
+                'risk_level': row[4],
+                'date': row[5][:16] if row[5] else 'N/A'
+            })
+        return analyses
+
+    def create_company_user(self, company_id, user_data, created_by):
+        """Create a user under a specific company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        hashed_pass = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        try:
+            cursor.execute('''
+                INSERT INTO users (
+                    company_id, username, password, email, full_name, phone, role,
+                    is_active, created_by, is_approved
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                company_id, user_data['username'], hashed_pass, user_data['email'],
+                user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'viewer'),
+                1, created_by, 1
+            ))
+            user_id = cursor.lastrowid
+            
+            # Create subscription record
+            cursor.execute('''
+                INSERT INTO subscriptions (user_id, plan, status, analyses_limit)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, 'free', 'active', 5))
+            
+            conn.commit()
+            return True, user_id
+        except sqlite3.IntegrityError as e:
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def init_role_permissions(self):
+        """Initialize or update role permissions"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Define role hierarchy and permissions
+        role_permissions_config = {
+            # System-level roles (company_id = NULL)
+            'system_admin': {
+                'level': 100,
+                'can_manage_all_companies': True,
+                'can_create_company': True,
+                'can_delete_company': True,
+                'can_manage_system_users': True,
+                'can_view_all_analyses': True,
+                'can_manage_subscriptions': True,
+                'can_manage_roles': True,
+                'can_view_system_logs': True,
+                'description': 'Full platform access'
+            },
+            'system_support': {
+                'level': 80,
+                'can_manage_all_companies': True,
+                'can_create_company': False,
+                'can_delete_company': False,
+                'can_manage_system_users': False,
+                'can_view_all_analyses': True,
+                'can_manage_subscriptions': False,
+                'can_manage_roles': False,
+                'can_view_system_logs': True,
+                'description': 'Can view all companies, support access'
+            },
+            'system_auditor': {
+                'level': 70,
+                'can_manage_all_companies': False,
+                'can_create_company': False,
+                'can_delete_company': False,
+                'can_manage_system_users': False,
+                'can_view_all_analyses': True,
+                'can_manage_subscriptions': False,
+                'can_manage_roles': False,
+                'can_view_system_logs': True,
+                'description': 'Read-only across platform'
+            },
+            # Company-level roles (has company_id)
+            'company_admin': {
+                'level': 50,
+                'can_manage_company_users': True,
+                'can_create_user': True,
+                'can_delete_user': True,
+                'can_manage_tenders': True,
+                'can_view_company_analyses': True,
+                'can_manage_company_subscription': True,
+                'can_edit_company_settings': True,
+                'description': 'Full company management'
+            },
+            'company_manager': {
+                'level': 40,
+                'can_manage_company_users': False,
+                'can_create_user': True,
+                'can_delete_user': False,
+                'can_manage_tenders': True,
+                'can_view_company_analyses': True,
+                'can_manage_company_subscription': False,
+                'can_edit_company_settings': False,
+                'description': 'Can manage tenders and create users'
+            },
+            'analyst': {
+                'level': 30,
+                'can_manage_company_users': False,
+                'can_create_user': False,
+                'can_delete_user': False,
+                'can_manage_tenders': True,
+                'can_view_company_analyses': True,
+                'can_manage_company_subscription': False,
+                'can_edit_company_settings': False,
+                'description': 'Can run analyses and view reports'
+            },
+            'viewer': {
+                'level': 10,
+                'can_manage_company_users': False,
+                'can_create_user': False,
+                'can_delete_user': False,
+                'can_manage_tenders': False,
+                'can_view_company_analyses': True,
+                'can_manage_company_subscription': False,
+                'can_edit_company_settings': False,
+                'description': 'Read-only access'
+            }
+        }
+        
+        for role, perms in role_permissions_config.items():
+            cursor.execute('''
+                INSERT OR REPLACE INTO role_permissions (role, permissions, updated_at)
+                VALUES (?, ?, ?)
+            ''', (role, json.dumps(perms), datetime.now()))
+        
+        conn.commit()
+        conn.close()
+        print("✅ Role permissions initialized")
+    def migrate_user_columns(self):
+        """Add missing columns to users table for system users"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(users)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Columns to add if missing
+        columns_to_add = {
+            'account_type': "TEXT DEFAULT 'company'",
+            'is_approved': "BOOLEAN DEFAULT 1",
+            'registration_complete': "BOOLEAN DEFAULT 1",
+            'approved_by': "INTEGER",
+            'approved_at': "TIMESTAMP",
+            'auth_provider': "TEXT DEFAULT 'email'",
+            'email_verified': "BOOLEAN DEFAULT 1",
+            'verification_token': "TEXT",
+            'reset_token': "TEXT",
+            'reset_token_expires': "TIMESTAMP"
+        }
+        
+        for col_name, col_type in columns_to_add.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added column: {col_name}")
+                except Exception as e:
+                    print(f"⚠️ Could not add {col_name}: {e}")
+        
+        conn.commit()
+        conn.close() 
+    def get_all_pending_users(self):
+        """Get all pending user registrations across all companies (for system admin)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, 
+                u.created_at, u.created_by, c.company_name
+            FROM users u
+            LEFT JOIN companies c ON u.company_id = c.id
+            WHERE u.is_approved = 0 AND u.registration_complete = 1 AND u.is_active = 1
+            ORDER BY u.created_at ASC
+        ''')
+        users = cursor.fetchall()
+        conn.close()
+        
+        # Convert to list of dicts
+        result = []
+        for user in users:
+            result.append({
+                'id': user[0], 'username': user[1], 'email': user[2], 'full_name': user[3],
+                'phone': user[4], 'role': user[5], 'created_at': user[6],
+                'created_by': user[7], 'company_name': user[8] if len(user) > 8 else 'N/A'
+            })
+        return result
+    
+    def migrate_company_isolation(self):
+        """Ensure proper company isolation and add missing columns"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get existing columns in tender_analyses
+        cursor.execute("PRAGMA table_info(tender_analyses)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Add company_id to tender_analyses if missing
+        if 'company_id' not in existing_columns:
+            try:
+                cursor.execute("ALTER TABLE tender_analyses ADD COLUMN company_id INTEGER REFERENCES companies(id)")
+                print("✅ Added company_id to tender_analyses")
+            except Exception as e:
+                print(f"⚠️ Could not add company_id to tender_analyses: {e}")
+        
+        # Get existing columns in users
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Add is_company_admin flag to users if missing
+        if 'is_company_admin' not in user_columns:
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN is_company_admin BOOLEAN DEFAULT 0")
+                print("✅ Added is_company_admin to users")
+            except Exception as e:
+                print(f"⚠️ Could not add is_company_admin: {e}")
+        
+        # Add company_admin_approved_by if missing
+        if 'company_admin_approved_by' not in user_columns:
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN company_admin_approved_by INTEGER")
+                print("✅ Added company_admin_approved_by to users")
+            except Exception as e:
+                print(f"⚠️ Could not add company_admin_approved_by: {e}")
+        
+        # Add company_admin_approved_at if missing
+        if 'company_admin_approved_at' not in user_columns:
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN company_admin_approved_at TIMESTAMP")
+                print("✅ Added company_admin_approved_at to users")
+            except Exception as e:
+                print(f"⚠️ Could not add company_admin_approved_at: {e}")
+        
+        # Create indexes for faster company-based queries
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_analyses_company ON tender_analyses(company_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id)")
+            print("✅ Created company isolation indexes")
+        except Exception as e:
+            print(f"⚠️ Could not create indexes: {e}")
+        
+        conn.commit()
+        conn.close()
+        print("✅ Company isolation migration completed")
+
+    def get_company_subscription(self, company_id):
+        """Get subscription details for a company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Check if company has a direct subscription
+        cursor.execute('''
+            SELECT id, plan, status, start_date, end_date, analyses_used, analyses_limit,
+                payment_method, transaction_id, updated_at
+            FROM subscriptions 
+            WHERE company_id = ? AND company_id IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+        ''', (company_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'id': result[0],
+                'plan': result[1],
+                'status': result[2],
+                'start_date': result[3],
+                'end_date': result[4],
+                'analyses_used': result[5] or 0,
+                'analyses_limit': result[6] or 5,
+                'payment_method': result[7],
+                'transaction_id': result[8],
+                'updated_at': result[9]
+            }
+        
+        # Return default if no subscription exists
+        return {
+            'plan': 'free',
+            'status': 'active',
+            'analyses_used': 0,
+            'analyses_limit': 5,
+            'start_date': datetime.now().date(),
+            'end_date': datetime.now().date() + timedelta(days=30)
+        }
+
+    def update_company_subscription(self, company_id, plan, duration='monthly', payment_method='admin', transaction_id=None):
+        """Update or create subscription for a company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        start_date = datetime.now().date()
+        
+        # Plan limits and pricing
+        plan_limits = {
+            'free': {'limit': 5, 'price': 0},
+            'basic': {'limit': 30, 'price': 4999},
+            'professional': {'limit': -1, 'price': 14999},
+            'enterprise': {'limit': -1, 'price': 49999}
+        }
+        
+        if duration == 'monthly':
+            end_date = start_date + timedelta(days=30)
+        else:
+            end_date = start_date + timedelta(days=365)
+        
+        # Check if subscription exists
+        cursor.execute('SELECT id FROM subscriptions WHERE company_id = ? AND company_id IS NOT NULL', (company_id,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            cursor.execute('''
+                UPDATE subscriptions 
+                SET plan = ?, status = 'active', start_date = ?, end_date = ?, 
+                    analyses_limit = ?, payment_method = ?, transaction_id = ?, updated_at = ?
+                WHERE company_id = ?
+            ''', (plan, start_date, end_date, plan_limits[plan]['limit'], 
+                payment_method, transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}", 
+                datetime.now(), company_id))
+        else:
+            cursor.execute('''
+                INSERT INTO subscriptions (company_id, plan, status, start_date, end_date, 
+                                        analyses_limit, payment_method, transaction_id)
+                VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+            ''', (company_id, plan, start_date, end_date, plan_limits[plan]['limit'], 
+                payment_method, transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}"))
+        
+        conn.commit()
+        conn.close()
+        return True
+    def migrate_subscriptions_table(self):
+        """Add missing columns to subscriptions table"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(subscriptions)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Add created_at if missing (without default first)
+        if 'created_at' not in existing_columns:
+            try:
+                cursor.execute("ALTER TABLE subscriptions ADD COLUMN created_at TIMESTAMP")
+                # Set default value for existing rows
+                cursor.execute("UPDATE subscriptions SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+                print("✅ Added created_at to subscriptions")
+            except Exception as e:
+                print(f"⚠️ Could not add created_at: {e}")
+        
+        # Add company_id if missing
+        if 'company_id' not in existing_columns:
+            try:
+                cursor.execute("ALTER TABLE subscriptions ADD COLUMN company_id INTEGER REFERENCES companies(id)")
+                print("✅ Added company_id to subscriptions")
+            except Exception as e:
+                print(f"⚠️ Could not add company_id: {e}")
+        
+        # Add updated_at if missing (without default first)
+        if 'updated_at' not in existing_columns:
+            try:
+                cursor.execute("ALTER TABLE subscriptions ADD COLUMN updated_at TIMESTAMP")
+                # Set default value for existing rows
+                cursor.execute("UPDATE subscriptions SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL")
+                print("✅ Added updated_at to subscriptions")
+            except Exception as e:
+                print(f"⚠️ Could not add updated_at: {e}")
+        
+        conn.commit()
+        conn.close()
+        print("✅ Subscriptions table migration completed")
+    
+    def migrate_tender_analyses_table(self):
+        """Add missing columns to tender_analyses table"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get existing columns
+        cursor.execute("PRAGMA table_info(tender_analyses)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Define missing columns to add
+        columns_to_add = {
+            'district': "TEXT",
+            'thana': "TEXT",
+            'risk_strategy': "TEXT",
+            'confidence_score': "REAL DEFAULT 0.70",
+            'expected_profit': "REAL DEFAULT 0",
+            'expected_value': "REAL DEFAULT 0",
+            'competitor_bids': "TEXT",  # JSON string
+            'slt_threshold': "REAL DEFAULT 0",
+            'nppi_factor': "REAL DEFAULT 0.92",
+            'weighted_average': "REAL DEFAULT 0"
+        }
+        
+        for col_name, col_type in columns_to_add.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE tender_analyses ADD COLUMN {col_name} {col_type}")
+                    print(f"✅ Added column: {col_name}")
+                except Exception as e:
+                    print(f"⚠️ Could not add {col_name}: {e}")
+        
+        conn.commit()
+        conn.close()
+        print("✅ Tender analyses table migration completed")    
+        # Singleton instance
 db = DatabaseManager()

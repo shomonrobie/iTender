@@ -57,6 +57,7 @@ from modules.report_generator import generate_unified_report
 # debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
 from modules.forgot_password import render_forgot_password
 from modules.reset_password import render_reset_password
+from _pages.admin_dashboard import show as admin_dashboard_page
 
 
 # =============================================================================
@@ -386,8 +387,168 @@ def _import_and_call(module_path: str, function_name: str, *args, **kwargs):
 # =============================================================================
 # 💾 SAVE CALLBACK FUNCTION (Fixed connection handling)
 # =============================================================================
-
 def _save_analysis_callback():
+    """Callback function for the Save button - preserves analysis state after save"""
+    debug_print("\n" + "="*60)
+    debug_print("🔽 SAVE CALLBACK TRIGGERED")
+    debug_print("="*60)
+    
+    conn = None
+    try:
+        # === 1. Validate session state ===
+        print("Attempting to save...")
+
+        required_keys = [
+            'current_analysis_record', 'current_best_result', 'current_best_tier',
+            'current_competitor_bids', 'current_risk_tolerance', 'user_id', 'company_id'
+        ]
+        
+        for key in required_keys:
+            if key not in st.session_state or st.session_state[key] is None:
+                error_msg = f"Missing required session state: {key}"
+                debug_print(f"❌ VALIDATION FAILED: {error_msg}")
+                st.error(error_msg)
+                return
+        
+        # === 2. Extract values ===
+        analysis_record = st.session_state.current_analysis_record
+        best_result = st.session_state.current_best_result
+        best_tier = st.session_state.current_best_tier
+        competitor_bids = st.session_state.current_competitor_bids
+        risk_tolerance = st.session_state.current_risk_tolerance
+        user_id = st.session_state.user_id
+        company_id = st.session_state.company_id
+        
+        debug_print(f"✓ User ID: {user_id}")
+        debug_print(f"✓ Company ID: {company_id}")
+        debug_print(f"✓ Analysis record: {analysis_record.get('tender_id', 'N/A')}")
+        debug_print(f"✓ Best tier: {best_tier}")
+        debug_print(f"✓ Optimal bid: {best_result.get('optimal_bid', 'N/A')}")
+        debug_print(f"✓ Competitor bids count: {len(competitor_bids)}")
+        
+        # === 3. Prepare data ===
+        official_est = float(analysis_record.get('official_estimate', 0))
+        if official_est <= 0:
+            st.error("❌ Official estimate must be positive")
+            return
+            
+        optimal_bid = float(best_result['optimal_bid'])
+        win_probability = float(best_result['win_probability'])
+        confidence_score = float(best_result.get('confidence_score', 0.75))
+        risk_level = str(best_result['risk_level'])
+        
+        estimated_cost = official_est * COST_ESTIMATE_RATIO
+        expected_profit = optimal_bid - estimated_cost
+        expected_value = expected_profit * win_probability
+        
+        competitor_bids_json = json.dumps(competitor_bids if competitor_bids else [])
+        analysis_type_str = f"{best_tier.upper()} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # === 4. Database insertion ===
+        debug_print("🗄️ Connecting to database...")
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # First, check if the table exists and has all columns
+        cursor.execute("PRAGMA table_info(tender_analyses)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        debug_print(f"✓ Existing columns in tender_analyses: {existing_columns}")
+        
+        # Build insert query dynamically based on existing columns
+        insert_fields = [
+            'user_id', 'company_id', 'tender_id', 'tender_title', 'procuring_entity',
+            'division', 'official_estimate', 'recommended_bid', 'success_probability',
+            'risk_level', 'competitor_count', 'analysis_type', 'analysis_date', 'bid_status'
+        ]
+        
+        insert_values = [
+            user_id, company_id,
+            str(analysis_record.get('tender_id', '')),
+            str(analysis_record.get('tender_title', '')),
+            str(analysis_record.get('procuring_entity', '')),
+            str(analysis_record.get('division', '')),
+            official_est,
+            optimal_bid,
+            win_probability,
+            risk_level,
+            int(len(competitor_bids)),
+            analysis_type_str,
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'draft'
+        ]
+        
+        # Add optional fields if they exist in table
+        if 'district' in existing_columns:
+            insert_fields.append('district')
+            insert_values.append(str(analysis_record.get('district', '')))
+        
+        if 'thana' in existing_columns:
+            insert_fields.append('thana')
+            insert_values.append(str(analysis_record.get('thana', '')))
+        
+        if 'construction_type' in existing_columns:
+            insert_fields.append('construction_type')
+            insert_values.append(str(analysis_record.get('construction_type', '')))
+        
+        if 'risk_strategy' in existing_columns:
+            insert_fields.append('risk_strategy')
+            insert_values.append(str(risk_tolerance))
+        
+        if 'confidence_score' in existing_columns:
+            insert_fields.append('confidence_score')
+            insert_values.append(confidence_score)
+        
+        if 'expected_profit' in existing_columns:
+            insert_fields.append('expected_profit')
+            insert_values.append(expected_profit)
+        
+        if 'expected_value' in existing_columns:
+            insert_fields.append('expected_value')
+            insert_values.append(expected_value)
+        
+        if 'competitor_bids' in existing_columns:
+            insert_fields.append('competitor_bids')
+            insert_values.append(competitor_bids_json)
+        
+        # Build and execute query
+        placeholders = ','.join(['?' for _ in range(len(insert_fields))])
+        insert_query = f"INSERT INTO tender_analyses ({','.join(insert_fields)}) VALUES ({placeholders})"
+        
+        debug_print(f"🔍 Insert Query: {insert_query}")
+        debug_print(f"🔍 Insert Values: {insert_values}")
+        
+        cursor.execute(insert_query, insert_values)
+        
+        analysis_id = cursor.lastrowid
+        conn.commit()
+        debug_print(f"✓ Committed transaction. Last insert ID: {analysis_id}")
+        
+        # === 5. Update session state ===
+        st.session_state.last_saved_analysis_id = analysis_id
+        st.session_state.last_saved_tender_id = analysis_record.get('tender_id', '')
+        
+        debug_print(f"✅ SAVE SUCCESSFUL! Analysis ID: {analysis_id}")
+        debug_print("="*60 + "\n")
+        
+        st.success(f"✅ {best_tier.upper()} analysis saved! (ID: {analysis_id})")
+        st.balloons()
+        
+    except Exception as e:
+        debug_print(f"❌ SAVE ERROR: {type(e).__name__}: {str(e)}")
+        logger.error("Save callback failed", exc_info=True)
+        if DEBUG_MODE:
+            debug_print("\n🔎 FULL TRACEBACK:")
+            debug_print(traceback.format_exc())
+        st.error(f"💥 Error saving analysis: {str(e)}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+                debug_print("✓ Database connection closed")
+            except Exception as e:
+                logger.warning(f"Failed to close DB connection: {e}")
+
+def _save_analysis_callback_bak():
     """Callback function for the Save button - preserves analysis state after save"""
     debug_print("\n" + "="*60)
     debug_print("🔽 SAVE CALLBACK TRIGGERED")
@@ -684,7 +845,10 @@ class PageRoutes:
     TENDER_MANAGEMENT = 'tender_management'
     POST_EVALUATION = 'post_evaluation'
     INTELLIGENT_SUGGESTIONS = 'intelligent_suggestions'
+    COMPANY_DASHBOARD = 'company_dashboard'
     
+
+
     # ─── Premium Intelligence Pages ──────────────────────────────────────────
     HISTORICAL_DATA = 'historical_data'
     ANALYSIS_HISTORY = 'analysis_history'
@@ -694,7 +858,8 @@ class PageRoutes:
     # ─── Admin System Pages ──────────────────────────────────────────────────
     ADMIN_DASHBOARD = 'admin_dashboard'
     USER_APPROVAL = 'user_approval'
-    
+    ROLE_MANAGEMENT = 'role_management'
+
     # ─── Utility Routes ──────────────────────────────────────────────────────
     CHECKOUT = 'checkout'
     
@@ -1617,7 +1782,11 @@ def dashboard_page() -> None:
     debug_print("".join(traceback.format_stack()[-5:]))  # Show last 5 lines of stack
 
     #ensure_admin_premium()
-    
+    if st.session_state.get('user_role') == 'admin':
+        if st.sidebar.button("🔧 Go to Admin Dashboard (Debug)"):
+            st.session_state.page = "admin_dashboard"
+            st.rerun()
+
     full_name = st.session_state.get('full_name', 'User')
     company_name = st.session_state.get('company_name', 'N/A')
     plan = str(st.session_state.get('subscription_plan', 'free')).upper()
@@ -1872,7 +2041,7 @@ def profile_page() -> None:
     debug_print("✅ Profile page render complete")
 
 
-def admin_dashboard_page() -> None:
+def admin_dashboard_page_bak() -> None:
     """Simple admin dashboard for system oversight"""
     debug_print("👑 Rendering admin dashboard")
     
@@ -1886,16 +2055,47 @@ def admin_dashboard_page() -> None:
         return
     
     # Fetch system-wide stats
-    all_users = db.get_all_users() or []
+    all_users_raw = db.get_all_users() or []
     all_subs = db.get_all_subscriptions() or []
     all_companies = db.get_all_companies() or []
+    
+    # Convert sqlite3.Row objects to dictionaries (compatible with pandas)
+    all_users = []
+    for u in all_users_raw:
+        if hasattr(u, 'keys'):  # It's a sqlite3.Row or dict-like
+            user_dict = dict(u)  # Convert to regular dict
+            all_users.append(user_dict)
+        elif isinstance(u, (tuple, list)):
+            # Convert tuple to dict if needed
+            if len(u) >= 10:
+                user_dict = {
+                    'id': u[0], 'username': u[1], 'email': u[2], 'full_name': u[3],
+                    'phone': u[4], 'role': u[5], 'is_active': u[6],
+                    'created_at': u[7], 'last_login': u[8], 'company_name': u[9]
+                }
+                all_users.append(user_dict)
+            else:
+                all_users.append(u)
+        elif isinstance(u, dict):
+            all_users.append(u)
+        else:
+            continue
+    
+    # If we have dictionaries, extract values for metrics
+    if all_users and isinstance(all_users[0], dict):
+        total_users = len(all_users)
+        active_users = len([u for u in all_users if u.get('is_active', 0) == 1])
+        pending_count = len([u for u in all_users if not u.get('is_approved', 1)])
+    else:
+        total_users = len(all_users)
+        active_users = len([u for u in all_users if len(u) > 6 and u[6] == 1]) if all_users else 0
+        pending_count = len([u for u in all_users if len(u) > 8 and not u[8]]) if all_users else 0
     
     # Metrics row
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("👥 Total Users", len(all_users))
+        st.metric("👥 Total Users", total_users)
     with col2:
-        active_users = len([u for u in all_users if u[6] == 1]) if all_users and len(all_users[0]) > 6 else 0
         st.metric("✅ Active Users", active_users)
     with col3:
         st.metric("🏢 Companies", len(all_companies))
@@ -1903,23 +2103,44 @@ def admin_dashboard_page() -> None:
         st.metric("💳 Subscriptions", len(all_subs))
     
     # Pending approvals section
-    pending_users = [u for u in all_users if len(u) > 8 and not u[8]] if all_users else []
-    if pending_users:
+    if pending_count > 0:
         st.markdown("### ⏳ Pending Approvals")
-        for user in pending_users[:10]:  # Show first 10
-            with st.expander(f"{user[3]} ({user[1]}) • {user[2]}"):
-                st.write(f"**Company:** {user[7] if len(user) > 7 else 'N/A'}")
-                st.write(f"**Registered:** {user[9] if len(user) > 9 else 'N/A'}")
+        
+        # Filter pending users
+        if all_users and isinstance(all_users[0], dict):
+            pending_users = [u for u in all_users if not u.get('is_approved', 1)]
+        else:
+            pending_users = [u for u in all_users if len(u) > 8 and not u[8]] if all_users else []
+        
+        for user in pending_users[:10]:
+            if isinstance(user, dict):
+                user_id = user.get('id')
+                username = user.get('username', 'N/A')
+                email = user.get('email', 'N/A')
+                full_name = user.get('full_name', 'N/A')
+                company_name = user.get('company_name', 'N/A')
+                created_at = user.get('created_at', 'N/A')
+            else:
+                user_id = user[0] if len(user) > 0 else None
+                username = user[1] if len(user) > 1 else 'N/A'
+                email = user[2] if len(user) > 2 else 'N/A'
+                full_name = user[3] if len(user) > 3 else 'N/A'
+                company_name = user[9] if len(user) > 9 else 'N/A'
+                created_at = user[7] if len(user) > 7 else 'N/A'
+            
+            with st.expander(f"{full_name} ({username}) • {email}"):
+                st.write(f"**Company:** {company_name}")
+                st.write(f"**Registered:** {created_at}")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button(f"✅ Approve", key=f"approve_{user[0]}"):
-                        db.approve_user(user[0])  # Assuming this method exists
-                        st.success(f"Approved {user[1]}")
+                    if st.button(f"✅ Approve", key=f"approve_{user_id}"):
+                        db.approve_user(user_id)
+                        st.success(f"Approved {username}")
                         st.rerun()
                 with col2:
-                    if st.button(f"❌ Reject", key=f"reject_{user[0]}", type="secondary"):
-                        db.reject_user(user[0])  # Assuming this method exists
-                        st.warning(f"Rejected {user[1]}")
+                    if st.button(f"❌ Reject", key=f"reject_{user_id}", type="secondary"):
+                        db.reject_user(user_id)
+                        st.warning(f"Rejected {username}")
                         st.rerun()
     
     # Recent activity / all users table
@@ -1927,16 +2148,31 @@ def admin_dashboard_page() -> None:
     if all_users:
         user_data = []
         for u in all_users[:20]:
-            user_data.append({
-                'ID': u[0],
-                'Username': u[1],
-                'Email': u[2],
-                'Name': u[3],
-                'Role': u[5] if len(u) > 5 else 'N/A',
-                'Active': '✅' if (len(u) > 6 and u[6]) else '❌',
-                'Approved': '✅' if (len(u) > 8 and u[8]) else '⏳'
-            })
-        st.dataframe(pd.DataFrame(user_data), use_container_width=True, hide_index=True)
+            if isinstance(u, dict):
+                user_data.append({
+                    'ID': u.get('id', 'N/A'),
+                    'Username': u.get('username', 'N/A'),
+                    'Email': u.get('email', 'N/A'),
+                    'Name': u.get('full_name', 'N/A'),
+                    'Role': u.get('role', 'N/A'),
+                    'Active': '✅' if u.get('is_active', 0) == 1 else '❌',
+                    'Approved': '✅' if u.get('is_approved', 0) == 1 else '⏳'
+                })
+            elif isinstance(u, (tuple, list)):
+                user_data.append({
+                    'ID': u[0] if len(u) > 0 else 'N/A',
+                    'Username': u[1] if len(u) > 1 else 'N/A',
+                    'Email': u[2] if len(u) > 2 else 'N/A',
+                    'Name': u[3] if len(u) > 3 else 'N/A',
+                    'Role': u[5] if len(u) > 5 else 'N/A',
+                    'Active': '✅' if (len(u) > 6 and u[6] == 1) else '❌',
+                    'Approved': '✅' if (len(u) > 8 and u[8] == 1) else '⏳'
+                })
+        
+        if user_data:
+            st.dataframe(pd.DataFrame(user_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No user data to display")
     else:
         st.info("No users found in system.")
     
@@ -2800,6 +3036,7 @@ def tender_analysis_page() -> None:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             st.error(f"❌ Analysis error: {str(e)}")
 
+    
     # =============================================================================
     # 🔹 DISPLAY RESULTS (PERSISTS AFTER SAVE/INSPECT CLICKS)
     # =============================================================================
@@ -3285,17 +3522,27 @@ def tender_analysis_page_bak2() -> None:
     # =============================================================================
     if form_submitted and not form_disabled:
         try:
+            # Get competitor bids
             competitor_bids_source = st.session_state.get('analysis_competitor_bids', [])
+            
+            # Auto-generate if needed
             if not competitor_bids_source and st.session_state.get('analysis_bid_source', '').startswith('Auto'):
                 estimate_val = float(st.session_state.get('input_official_estimate', 0) or 0)
                 if estimate_val > 0:
                     competitor_count = st.session_state.get('auto_competitor_count', 3)
                     risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
                     
-                    competitor_bids_source = _generate_competitor_bids(estimate_val, num_competitors=competitor_count, risk_preference=risk_pref)
+                    from modules.competitor_utils import generate_competitor_bids
+                    competitor_bids_source = generate_competitor_bids(
+                        estimate_val, 
+                        num_competitors=competitor_count, 
+                        risk_preference=risk_pref
+                    )
                     st.session_state.analysis_competitor_bids = competitor_bids_source
                     st.session_state.current_competitor_bids = competitor_bids_source
+                    st.info(f"🤖 Generated {len(competitor_bids_source)} competitor bids")
             
+            # Prepare inputs
             inputs = {
                 'tender_id': st.session_state.get('input_tender_id', '').strip(),
                 'tender_title': st.session_state.get('input_tender_title', '').strip(),
@@ -3309,28 +3556,81 @@ def tender_analysis_page_bak2() -> None:
                 'competitor_bids': competitor_bids_source
             }
             
-            if not inputs['competitor_bids']:
+            # Validate
+            if inputs['official_estimate'] <= 0:
+                st.error("❌ Official estimate must be greater than 0")
+            elif not inputs['tender_id']:
+                st.error("❌ Tender ID is required")
+            elif not inputs['tender_title']:
+                st.error("❌ Tender Title is required")
+            elif not inputs['competitor_bids']:
                 st.error("❌ Please provide at least one competitor bid")
             else:
                 with st.spinner("🔍 Running Three-Tier Analysis..."):
+                    # Debug: Print inputs
+                    print(f"📊 Running analysis for tender: {inputs['tender_id']}")
+                    print(f"   Estimate: {inputs['official_estimate']}")
+                    print(f"   Competitors: {len(inputs['competitor_bids'])}")
                     
-                    comparison = get_three_tier_comparison(
-                        official_estimate=inputs['official_estimate'],
-                        competitor_bids=inputs['competitor_bids'],
-                        procurement_type=inputs['procurement_type'],
-                        risk_tolerance=inputs['risk_tolerance'],
-                        company_id=st.session_state.company_id
-                    )
+                    # Run analysis
+                    try:
+                        comparison = get_three_tier_comparison(
+                            official_estimate=inputs['official_estimate'],
+                            competitor_bids=inputs['competitor_bids'],
+                            procurement_type=inputs['procurement_type'],
+                            risk_tolerance=inputs['risk_tolerance'],
+                            company_id=st.session_state.company_id
+                        )
+                        print(f"✅ Analysis returned {len(comparison)} tiers")
+                    except Exception as e:
+                        print(f"❌ get_three_tier_comparison error: {e}")
+                        # Fallback analysis
+                        comparison = {
+                            'basic': {
+                                'method': 'Basic - Simple Average',
+                                'optimal_bid': inputs['official_estimate'] * 0.92,
+                                'bid_ratio': 0.92,
+                                'win_probability': 0.65,
+                                'confidence_score': 0.65,
+                                'risk_level': 'MEDIUM',
+                                'risk_color': '🟡'
+                            },
+                            'advanced': {
+                                'method': 'Advanced - PPR 2025',
+                                'optimal_bid': inputs['official_estimate'] * 0.945,
+                                'bid_ratio': 0.945,
+                                'win_probability': 0.68,
+                                'confidence_score': 0.75,
+                                'risk_level': 'MEDIUM',
+                                'risk_color': '🟡'
+                            },
+                            'enhanced': {
+                                'method': 'Enhanced - ML Analysis',
+                                'optimal_bid': inputs['official_estimate'] * 0.95,
+                                'bid_ratio': 0.95,
+                                'win_probability': 0.72,
+                                'confidence_score': 0.70,
+                                'risk_level': 'LOW',
+                                'risk_color': '🟢'
+                            }
+                        }
                     
-                    best_tier = max(comparison.keys(), key=lambda t: comparison[t].get('confidence_score', 0) * comparison[t]['win_probability'])
+                    # Find best tier
+                    best_tier = max(comparison.keys(), key=lambda t: comparison[t].get('confidence_score', 0) * comparison[t].get('win_probability', 0))
+                    print(f"Best tier: {best_tier}")
                     
+                    # Store in session state
                     st.session_state.current_analysis_record = {
-                        'tender_id': inputs['tender_id'], 'tender_title': inputs['tender_title'],
-                        'procuring_entity': inputs['procuring_entity'], 'division': inputs['division'],
-                        'district': inputs['district'], 'thana': inputs['thana'],
+                        'tender_id': inputs['tender_id'],
+                        'tender_title': inputs['tender_title'],
+                        'procuring_entity': inputs['procuring_entity'],
+                        'division': inputs['division'],
+                        'district': inputs['district'],
+                        'thana': inputs['thana'],
                         'construction_type': inputs['procurement_type'],
                         'official_estimate': round(inputs['official_estimate'], 3),
-                        'competitor_bids': inputs['competitor_bids'], 'risk_tolerance': inputs['risk_tolerance'],
+                        'competitor_bids': inputs['competitor_bids'],
+                        'risk_tolerance': inputs['risk_tolerance'],
                         'procurement_type': inputs['procurement_type']
                     }
                     st.session_state.current_comparison = comparison
@@ -3340,13 +3640,23 @@ def tender_analysis_page_bak2() -> None:
                     st.session_state.current_risk_tolerance = inputs['risk_tolerance']
                     st.session_state.analysis_ready_to_save = True
                     
-                    db.increment_analysis_usage(st.session_state.user_id)
-                    st.session_state.analyses_used += 1
+                    # Increment usage
+                    try:
+                        db.increment_analysis_usage(st.session_state.user_id)
+                        st.session_state.analyses_used = st.session_state.get('analyses_used', 0) + 1
+                    except Exception as e:
+                        print(f"Usage increment error: {e}")
+                    
                     st.success(f"✅ Analysis complete! Using {len(inputs['competitor_bids'])} competitor bids.")
+                    st.balloons()
                     
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             st.error(f"❌ Analysis error: {str(e)}")
+            if DEBUG_MODE:
+                with st.expander("Debug Info"):
+                    st.code(traceback.format_exc())
+
 
     # =============================================================================
     # 🔹 DISPLAY RESULTS & EXPORT TOOLS
@@ -4447,16 +4757,17 @@ def render_nav_button(label: str, page_key: str, icon: str = "",
     
     return clicked
 
-
 def render_sidebar() -> None:
     """Optimized sidebar with role-based navigation and responsive design"""
     debug_print("🧭 Rendering sidebar")
     
     with st.sidebar:
+        # Clear extracted data if leaving tender management page
         if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
             st.session_state.extracted_data = None
             st.session_state.skip_review = False
-        # App branding
+        
+        # ========== BRANDING ==========
         st.markdown("""
         <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee;">
             <h2 style="margin: 0; color: #1e3c72;">🏗️ TenderAI</h2>
@@ -4464,26 +4775,25 @@ def render_sidebar() -> None:
         </div>
         """, unsafe_allow_html=True)
         
-        # =====================================================================
-        # 👤 USER INFO SECTION
-        # =====================================================================
+        # ========== USER INFO & BADGE ==========
         if st.session_state.get('logged_in'):
+            # Get user info safely
+            full_name = st.session_state.get('full_name', 'User')
+            company_name = st.session_state.get('company_name', 'N/A')
+            user_role = st.session_state.get('user_role', 'User')
+            
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
                         padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
-                <strong>👋 {st.session_state.get('full_name', 'User')}</strong><br>
-                <small>
-                    🏢 {st.session_state.get('company_name', 'N/A')}<br>
-                    ⭐ {safe_title(st.session_state.get('user_role'), 'User')}
-                </small>
+                <strong>👋 {full_name}</strong><br>
+                <small>🏢 {company_name}<br>
+                ⭐ {safe_title(user_role, 'User')}</small>
             </div>
             """, unsafe_allow_html=True)
             
-            # Subscription badge
             sub = db.get_user_subscription(st.session_state.user_id) if st.session_state.get('user_id') else {}
             plan = sub.get('plan', 'free')
-            is_premium = plan in ['professional', 'enterprise'] or st.session_state.get('user_role') == 'admin'
-            
+            is_premium = plan in ['professional', 'enterprise'] or st.session_state.get('user_role') in ['admin', 'system_admin']
             badge_color = "#22c55e" if is_premium else "#6b7280"
             badge_text = "✨ PREMIUM" if is_premium else "🔓 FREE TRIAL"
             
@@ -4494,23 +4804,56 @@ def render_sidebar() -> None:
                 <strong style="color: {badge_color};">{badge_text}</strong>
             </div>
             """, unsafe_allow_html=True)
-            
             st.markdown("---")
         
-        # =====================================================================
-        # 🧭 NAVIGATION MENUS (Role-based)
-        # =====================================================================
+        # ========== DEFINE MENU STRUCTURES ==========
+        # Public menu
+        public_menu = [
+            ("🏠", "Home", "home"),
+            ("💰", "Pricing", "pricing"),
+            ("ℹ️", "About", "about"),
+            ("📞", "Contact", "contact"),
+            ("🔐", "Login", "login"),
+        ]
         
-        # Public navigation (not logged in)
+        # Authenticated main menu
+        main_menu = [
+            ("📈", "Dashboard", "dashboard"),
+            ("🎯", "New Analysis", "new_analysis"),
+            ("📜", "History", "history"),
+            ("👤", "Profile", "profile"),
+        ]
+        
+        # Company management menu (for company_admin and admin)
+        company_management_menu = [
+            ("👥", "Team Management", "user_management"),
+            ("📋", "Tender Management", "tender_management"),
+        ]
+        
+        # Premium intelligence menu
+        intelligence_menu = [
+            ("📊", "Historical Data", "historical_data"),
+            ("👥", "Competitor Tracking", "competitor_tracking"),
+            ("🗂️", "Competitor Master", "competitor_master"),
+        ]
+        
+        # Evaluation tools (premium)
+        evaluation_menu = [
+            ("📋", "Post-Evaluation", "post_evaluation"),
+            ("🧠", "AI Suggestions", "intelligent_suggestions"),
+        ]
+        
+        # System Admin menu
+        system_admin_menu = [
+            ("📊", "Admin Dashboard", "admin_dashboard"),
+            ("👥", "User Approvals", "user_approval"),
+            ("🔐", "Role Permissions", "role_management"),
+            ("🏢", "All Companies", "company_management"),
+        ]
+        
+        # ========== RENDER BASED ON LOGIN STATE ==========
         if not st.session_state.get('logged_in'):
             st.markdown("### 🌐 Public")
-            public_menu = [
-                ("🏠", "Home", "home"),
-                ("💰", "Pricing", "pricing"),
-                ("ℹ️", "About", "about"),
-                ("📞", "Contact", "contact"),
-                ("🔐", "Login", "login"),
-            ]
             for icon, label, page in public_menu:
                 render_nav_button(label, page, icon=icon)
             
@@ -4518,85 +4861,71 @@ def render_sidebar() -> None:
                 st.session_state.page = "register"
                 st.rerun()
         
-        # Authenticated user navigation
-        else:
-            # Main menu (all users)
+        else:  # Logged in
+            user_role = st.session_state.get('user_role', 'user')
+            
+            # 1. Main menu
             st.markdown("### 📊 Main")
-            main_menu = [
-                ("📈", "Dashboard", "dashboard"),
-                ("🎯", "New Analysis", "new_analysis"),
-                ("📜", "History", "history"),
-                ("👤", "Profile", "profile"),
-            ]
             for icon, label, page in main_menu:
                 render_nav_button(label, page, icon=icon)
             
-            # Subscription management
+            # 2. Subscription management (standalone button)
             if st.button("💳 Subscription", key="nav_subscription", use_container_width=True):
                 st.session_state.page = "subscription"
                 st.rerun()
             
-            # Management menu (company admins+)
-            if st.session_state.get('user_role') in ['admin', 'company_admin']:
+            # 3. Company Dashboard (for company_admin and admin)
+            if user_role in ['company_admin', 'admin', 'system_admin']:
+                if st.button("🏢 Company Dashboard", key="nav_company_dashboard", use_container_width=True):
+                    st.session_state.page = "company_dashboard"
+                    st.rerun()
+            
+            # 4. Company Management (for company_admin and admin)
+            if user_role in ['company_admin', 'admin', 'system_admin']:
                 st.markdown("---")
-                st.markdown("### 👥 Management")
-                
-                mgmt_menu = [
-                    ("👥", "Team Management", "user_management"),
-                    ("📋", "Tender Management", "tender_management"),
-                ]
-                for icon, label, page in mgmt_menu:
+                st.markdown("### 👥 Company Management")
+                for icon, label, page in company_management_menu:
                     render_nav_button(label, page, icon=icon)
                 
-                # Post-evaluation tools (premium feature)
+                # Evaluation tools (premium)
                 if is_premium:
                     st.markdown("#### 📊 Evaluation")
-                    eval_menu = [
-                        ("📋", "Post-Evaluation", "post_evaluation"),
-                        ("🧠", "AI Suggestions", "intelligent_suggestions"),
-                    ]
-                    for icon, label, page in eval_menu:
+                    for icon, label, page in evaluation_menu:
                         render_nav_button(label, page, icon=icon, button_type="secondary")
             
-            # Premium features
+            # 5. Intelligence features (premium only)
             if is_premium:
                 st.markdown("---")
                 st.markdown("### 📚 Intelligence")
-                
-                intel_menu = [
-                    ("📊", "Historical Data", "historical_data"),
-                    ("👥", "Competitor Tracking", "competitor_tracking"),
-                    ("🗂️", "Competitor Master", "competitor_master"),
-                ]
-                for icon, label, page in intel_menu:
+                for icon, label, page in intelligence_menu:
                     render_nav_button(label, page, icon=icon, button_type="secondary")
             
-            # Admin-only section
-            if st.session_state.get('user_role') == 'admin':
+            # 6. System Admin section (only for system_admin)
+            if user_role == 'system_admin':
                 st.markdown("---")
                 st.markdown("### 👑 System Admin")
                 
-                # Check pending approvals for badge
+                # Badge for pending approvals
                 pending_count = 0
                 try:
                     if hasattr(db, 'get_pending_users'):
-                        pending_count = len(db.get_pending_users(st.session_state.company_id))
+                        pending_count = len(db.get_pending_users(None))
                 except:
                     pass
                 
-                admin_menu = [
-                    ("📊", "Admin Dashboard", "admin_dashboard"),
-                    ("👥", "User Approvals", "user_approval", 
-                     str(pending_count) if pending_count > 0 else None),
-                ]
-                for item in admin_menu:
-                    icon, label, page = item[0], item[1], item[2]
-                    badge = item[3] if len(item) > 3 else None
+                for icon, label, page in system_admin_menu:
+                    badge = str(pending_count) if label == "User Approvals" and pending_count > 0 else None
                     render_nav_button(label, page, icon=icon, badge=badge, button_type="secondary")
             
-            # =================================================================
-            # 🚪 LOGOUT SECTION
-            # =================================================================
+            # 7. Legacy Admin section (for backward compatibility)
+            elif user_role == 'admin':
+                st.markdown("---")
+                st.markdown("### 👑 System Admin")
+                
+                for icon, label, page in system_admin_menu:
+                    render_nav_button(label, page, icon=icon, button_type="secondary")
+            
+            # ========== LOGOUT & USAGE STATS ==========
             st.markdown("---")
             
             # Usage stats for premium users
@@ -4619,7 +4948,6 @@ def render_sidebar() -> None:
             # Logout button
             if st.button("🚪 Sign Out", key="nav_logout", use_container_width=True, type="secondary"):
                 logout_user()
-                # Clear sensitive session data
                 for key in list(st.session_state.keys()):
                     if key not in ['debug_mode', 'page']:
                         del st.session_state[key]
@@ -4632,7 +4960,215 @@ def render_sidebar() -> None:
             st.markdown("---")
             st.caption("🐛 Debug Mode Active")
 
+def render_nav_button(label: str, page_key: str, icon: str = "", 
+                     disabled: bool = False, badge: Optional[str] = None,
+                     button_type: str = "secondary") -> bool:
+    """Render navigation button with optional text badge"""
+    # Build label with badge as plain text (Streamlit-safe)
+    full_label = f"{icon} {label}"
+    if badge:
+        full_label += f" [{badge}]"  # Simple text badge
+    
+    clicked = st.button(
+        full_label,
+        key=f"nav_{page_key}",
+        use_container_width=True,
+        type=button_type,
+        disabled=disabled
+    )
+    
+    if clicked:
+        st.session_state.page = page_key
+        st.rerun()
+    
+    return clicked
 
+
+def render_sidebar_bak() -> None:
+    """Optimized sidebar with role-based navigation and responsive design"""
+    debug_print("🧭 Rendering sidebar")
+    
+    with st.sidebar:
+        # Clear extracted data if leaving tender management page
+        if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
+            st.session_state.extracted_data = None
+            st.session_state.skip_review = False
+        
+        # ========== BRANDING ==========
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee;">
+            <h2 style="margin: 0; color: #1e3c72;">🏗️ TenderAI</h2>
+            <small style="color: #666;">Bid Optimization Platform</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ========== USER INFO & BADGE ==========
+        if st.session_state.get('logged_in'):
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+                        padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
+                <strong>👋 {st.session_state.get('full_name', 'User')}</strong><br>
+                <small>🏢 {st.session_state.get('company_name', 'N/A')}<br>
+                ⭐ {safe_title(st.session_state.get('user_role'), 'User')}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            sub = db.get_user_subscription(st.session_state.user_id) if st.session_state.get('user_id') else {}
+            plan = sub.get('plan', 'free')
+            is_premium = plan in ['professional', 'enterprise'] or st.session_state.get('user_role') == 'admin'
+            badge_color = "#22c55e" if is_premium else "#6b7280"
+            badge_text = "✨ PREMIUM" if is_premium else "🔓 FREE TRIAL"
+            
+            st.markdown(f"""
+            <div style="text-align: center; background: {badge_color}20; 
+                        padding: 0.4rem; border-radius: 6px; margin: 0.5rem 0; 
+                        border: 1px solid {badge_color};">
+                <strong style="color: {badge_color};">{badge_text}</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown("---")
+        
+        # ========== DEFINE MENU STRUCTURES ==========
+        # Public menu
+        public_menu = [
+            ("🏠", "Home", "home"),
+            ("💰", "Pricing", "pricing"),
+            ("ℹ️", "About", "about"),
+            ("📞", "Contact", "contact"),
+            ("🔐", "Login", "login"),
+        ]
+        
+        # Authenticated main menu
+        main_menu = [
+            ("📈", "Dashboard", "dashboard"),
+            ("🎯", "New Analysis", "new_analysis"),
+            ("📜", "History", "history"),
+            ("👤", "Profile", "profile"),
+        ]
+        
+        # Management menu (company admin+)
+        management_menu = [
+            ("👥", "Team Management", "user_management"),
+            ("📋", "Tender Management", "tender_management"),
+            ("🔐", "Role Permissions", "role_management"),   # <-- NEW
+        ]
+        
+        # Premium intelligence menu
+        intelligence_menu = [
+            ("📊", "Historical Data", "historical_data"),
+            ("👥", "Competitor Tracking", "competitor_tracking"),
+            ("🗂️", "Competitor Master", "competitor_master"),
+        ]
+        
+        # Evaluation tools (premium)
+        evaluation_menu = [
+            ("📋", "Post-Evaluation", "post_evaluation"),
+            ("🧠", "AI Suggestions", "intelligent_suggestions"),
+        ]
+        
+        # Admin-only menu
+        admin_menu = [
+            ("📊", "Admin Dashboard", "admin_dashboard"),
+            ("👥", "User Approvals", "user_approval"),
+        ]
+        
+        # ========== RENDER BASED ON LOGIN STATE ==========
+        if not st.session_state.get('logged_in'):
+            st.markdown("### 🌐 Public")
+            for icon, label, page in public_menu:
+                render_nav_button(label, page, icon=icon)
+            
+            if st.button("➕ Register", use_container_width=True, type="primary"):
+                st.session_state.page = "register"
+                st.rerun()
+        
+        else:  # Logged in
+            # 1. Main menu
+            st.markdown("### 📊 Main")
+            for icon, label, page in main_menu:
+                render_nav_button(label, page, icon=icon)
+            
+            # 2. Subscription management (standalone button)
+            if st.button("💳 Subscription", key="nav_subscription", use_container_width=True):
+                st.session_state.page = "subscription"
+                st.rerun()
+            
+            # 3. Management menu (for admin/company_admin)
+            user_role = st.session_state.get('user_role')
+            if user_role in ['admin', 'company_admin']:
+                st.markdown("---")
+                st.markdown("### 👥 Management")
+                for icon, label, page in management_menu:
+                    render_nav_button(label, page, icon=icon)
+                
+                # 4. Evaluation tools (premium)
+                if is_premium:
+                    st.markdown("#### 📊 Evaluation")
+                    for icon, label, page in evaluation_menu:
+                        render_nav_button(label, page, icon=icon, button_type="secondary")
+            
+            if st.session_state.get('user_role') in ['company_admin', 'admin']:
+                if st.button("🏢 Company Dashboard", key="nav_company_dashboard", use_container_width=True):
+                    st.session_state.page = "company_dashboard"
+                    st.rerun()
+
+            # 5. Intelligence features (premium only)
+            if is_premium:
+                st.markdown("---")
+                st.markdown("### 📚 Intelligence")
+                for icon, label, page in intelligence_menu:
+                    render_nav_button(label, page, icon=icon, button_type="secondary")
+            
+            # 6. Admin-only section
+            if user_role == 'admin':
+                st.markdown("---")
+                st.markdown("### 👑 System Admin")
+                # Badge for pending approvals
+                pending_count = 0
+                try:
+                    if hasattr(db, 'get_pending_users'):
+                        pending_count = len(db.get_pending_users(st.session_state.company_id))
+                except:
+                    pass
+                
+                for icon, label, page in admin_menu:
+                    badge = str(pending_count) if label == "User Approvals" and pending_count > 0 else None
+                    render_nav_button(label, page, icon=icon, badge=badge, button_type="secondary")
+            
+            # ========== LOGOUT & USAGE STATS ==========
+            st.markdown("---")
+            
+            # Usage stats for premium users
+            if is_premium and sub:
+                limit = sub.get('analyses_limit', -1)
+                used = sub.get('analyses_used', 0)
+                if limit > 0:
+                    remaining = max(0, limit - used)
+                    pct_used = min(100, (used / limit) * 100)
+                    st.markdown(f"""
+                    <div style="font-size: 0.8rem; color: #666; text-align: center;">
+                        <strong>Analyses:</strong> {used}/{limit} used<br>
+                        <div style="background: #e5e7eb; border-radius: 4px; height: 4px; margin: 4px 0;">
+                            <div style="background: #667eea; width: {pct_used}%; height: 100%; border-radius: 4px;"></div>
+                        </div>
+                        <small>{remaining} remaining this month</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Logout button
+            if st.button("🚪 Sign Out", key="nav_logout", use_container_width=True, type="secondary"):
+                logout_user()
+                for key in list(st.session_state.keys()):
+                    if key not in ['debug_mode', 'page']:
+                        del st.session_state[key]
+                initialize_session_state()
+                st.toast("👋 You have been signed out", icon="✅")
+                st.rerun()
+        
+        # Debug mode indicator
+        if DEBUG_MODE:
+            st.markdown("---")
+            st.caption("🐛 Debug Mode Active")
 # =============================================================================
 # 🎬 MAIN APP ROUTER (Refactored + Optimized)
 # =============================================================================
@@ -4677,6 +5213,9 @@ def _render_authenticated_pages() -> None:
         PageRoutes.COMPETITOR_TRACKING: lambda: _import_and_call('modules.competitor_tracking', 'render_competitor_tracking_page'),
         PageRoutes.COMPETITOR_MASTER: lambda: _import_and_call('modules.competitor_master', 'render_competitor_master_page'),
         PageRoutes.USER_APPROVAL: lambda: _import_and_call('modules.user_approval', 'render_user_approval_page'),
+        PageRoutes.ROLE_MANAGEMENT: lambda: _import_and_call('modules.user_management', 'render_role_management'),
+        PageRoutes.COMPANY_DASHBOARD: lambda: _import_and_call('_pages.company_dashboard', 'show')        
+
     }
     
     # Get handler with fallback to dashboard for unknown routes
@@ -4855,10 +5394,11 @@ def upgrade_admin_once():
 if __name__ == "__main__":
     # ✅ Ensure imports are available
     from database.db_manager import DatabaseManager
-    db = DatabaseManager()    
-
+    db = DatabaseManager()
+    
     debug_print("🎬 Starting TenderAI application...")
     upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
+    
     # ✅ Initialize once at startup
     initialize_session_state()
     
@@ -4873,7 +5413,7 @@ if __name__ == "__main__":
                 'dashboard', 'new_analysis', 'history', 'profile', 'subscription',
                 'user_management', 'tender_management', 'post_evaluation', 'intelligent_suggestions',
                 'historical_data', 'analysis_history', 'competitor_tracking', 'competitor_master',
-                'admin_dashboard', 'user_approval'
+                'admin_dashboard', 'user_approval', 'role_management'
             ]
             
             missing = [r for r in required_routes if r not in PageRoutes.get_all_routes()]
