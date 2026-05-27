@@ -58,6 +58,7 @@ from modules.report_generator import generate_unified_report
 from modules.forgot_password import render_forgot_password
 from modules.reset_password import render_reset_password
 from _pages.admin_dashboard import show as admin_dashboard_page
+from _pages.landing_page import show_landing_page
 
 
 # =============================================================================
@@ -2996,7 +2997,7 @@ def tender_analysis_page() -> None:
             else:
                 # 2. Run Analysis
                 with st.spinner("🔍 Running Three-Tier Analysis..."):
-                    from modules.advanced_bid_optimizer import get_three_tier_comparison
+                    #from modules.advanced_bid_optimizer import get_three_tier_comparison
                     comparison = get_three_tier_comparison(
                         official_estimate=inputs['official_estimate'],
                         competitor_bids=inputs['competitor_bids'],
@@ -3532,7 +3533,7 @@ def tender_analysis_page_bak2() -> None:
                     competitor_count = st.session_state.get('auto_competitor_count', 3)
                     risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
                     
-                    from modules.competitor_utils import generate_competitor_bids
+                    #from modules.competitor_utils import generate_competitor_bids
                     competitor_bids_source = generate_competitor_bids(
                         estimate_val, 
                         num_competitors=competitor_count, 
@@ -5178,7 +5179,7 @@ def _render_public_pages() -> None:
     from modules.individual_registration import render_individual_registration, render_individual_login
     
     page_handlers = {
-        'home': home_page,
+        'home': lambda: show_landing_page(),  # Use the new landing page
         'login': login_page,
         'register': register_page,
         'pricing': pricing_page,
