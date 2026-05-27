@@ -505,6 +505,7 @@ class DatabaseManager:
             conn.close()
 
 
+
     
     def create_company_bak(self, company_data):
         """Create a new company"""
@@ -1127,7 +1128,6 @@ class DatabaseManager:
             
             return df
         return pd.DataFrame()
-
 
 
     def get_user_analyses_bak(self, user_id, company_id, role, limit=50):
@@ -2915,42 +2915,43 @@ class DatabaseManager:
         conn.commit()
         conn.close() 
     def get_all_pending_users(self):
-        """Get all pending user registrations across all companies (for system admin)"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Fix: Include users where is_approved = 0, regardless of registration_complete
-        cursor.execute('''
-            SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, 
-                u.created_at, u.created_by, c.company_name, u.is_approved, u.is_active
-            FROM users u
-            LEFT JOIN companies c ON u.company_id = c.id
-            WHERE u.is_approved = 0
-            ORDER BY u.created_at ASC
-        ''')
-        
-        users = cursor.fetchall()
-        conn.close()
-        
-        # Convert to list of dicts
-        result = []
-        for user in users:
-            result.append({
-                'id': user[0],
-                'username': user[1],
-                'email': user[2],
-                'full_name': user[3],
-                'phone': user[4] if len(user) > 4 else '',
-                'role': user[5] if len(user) > 5 else 'user',
-                'created_at': user[6] if len(user) > 6 else '',
-                'created_by': user[7] if len(user) > 7 else None,
-                'company_name': user[8] if len(user) > 8 else 'N/A',
-                'is_approved': user[9] if len(user) > 9 else 0,
-                'is_active': user[10] if len(user) > 10 else 1
-            })
-        
-        print(f"🔍 Found {len(result)} pending users")  # Debug
-        return result
+    """Get all pending user registrations across all companies (for system admin)"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+    
+    # Fix: Include users where is_approved = 0, regardless of registration_complete
+    cursor.execute('''
+        SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, 
+               u.created_at, u.created_by, c.company_name, u.is_approved, u.is_active
+        FROM users u
+        LEFT JOIN companies c ON u.company_id = c.id
+        WHERE u.is_approved = 0
+        ORDER BY u.created_at ASC
+    ''')
+    
+    users = cursor.fetchall()
+    conn.close()
+    
+    # Convert to list of dicts
+    result = []
+    for user in users:
+        result.append({
+            'id': user[0],
+            'username': user[1],
+            'email': user[2],
+            'full_name': user[3],
+            'phone': user[4] if len(user) > 4 else '',
+            'role': user[5] if len(user) > 5 else 'user',
+            'created_at': user[6] if len(user) > 6 else '',
+            'created_by': user[7] if len(user) > 7 else None,
+            'company_name': user[8] if len(user) > 8 else 'N/A',
+            'is_approved': user[9] if len(user) > 9 else 0,
+            'is_active': user[10] if len(user) > 10 else 1
+        })
+    
+    print(f"🔍 Found {len(result)} pending users")  # Debug
+    return result
+
 
     
     def migrate_company_isolation(self):
