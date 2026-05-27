@@ -1,14 +1,8 @@
 [server]
-enableCORS = true
-enableXsrfProtection = true
-enableStaticServing = true
+fileWatcherType = "none"
+
+[logger]
+level = "error"
 
 [browser]
 gatherUsageStats = false
-
-[runner]
-magicEnabled = true
-[logger]
-
-# Level of logging for Streamlit's internal logger: "error", "warning", "info", or "debug"
-level = "error"

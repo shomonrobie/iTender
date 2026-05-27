@@ -2,8 +2,24 @@
 TenderAI - Enterprise Tender Management System
 Complete Working Version - Fixed & Debug-Enabled
 """
+# ====================== FIX WATCHDOG LOG SPAM ======================
+import logging
+
+logging.getLogger("watchdog").setLevel(logging.ERROR)
+logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.ERROR)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+
+# Filter out noisy inotify messages
+class NoSpamFilter(logging.Filter):
+    def filter(self, record):
+        msg = str(record.msg).lower()
+        return "inotify_buffer" not in msg and ".git" not in msg
+
+logging.getLogger("watchdog.observers.inotify_buffer").addFilter(NoSpamFilter())
+# ====================== END FIX ======================
 
 import streamlit as st
+
 
 # =============================================================================
 # 🎨 PAGE CONFIG & STYLING
