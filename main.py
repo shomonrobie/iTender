@@ -75,6 +75,7 @@ from modules.forgot_password import render_forgot_password
 from modules.reset_password import render_reset_password
 from _pages.admin_dashboard import show as admin_dashboard_page
 from _pages.landing_page import show_landing_page
+from _pages.about import show_about_page
 import random
 from modules.report_generator import generate_unified_report, generate_html_content_only
 
@@ -231,63 +232,55 @@ except ImportError:
 
 # Custom CSS
 st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 1.5rem;
-    }
-    .main-header h1 { font-size: 1.8rem; margin: 0; }
-    .main-header p { font-size: 0.9rem; margin: 0.5rem 0 0 0; }
-    .metric-card {
-        background: white;
-        padding: 0.75rem;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        text-align: center;
-    }
-    .metric-card h3 { font-size: 0.8rem; margin: 0; color: #666; }
-    .metric-card h2 { font-size: 1.5rem; margin: 0.25rem 0; }
-    .metric-card small { font-size: 0.7rem; color: #999; }
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.4rem 0.8rem;
-        border-radius: 5px;
-        font-weight: bold;
-        font-size: 0.85rem;
-        width: 100%;
-    }
-    div[data-testid="stSidebarNav"] { display: none; }
-    .small-metric {
-        text-align: center;
-        padding: 0.5rem;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
-    .small-metric h3 { font-size: 0.75rem; margin: 0; color: #666; }
-    .small-metric .value { font-size: 1.2rem; font-weight: bold; margin: 0.25rem 0; }
-    .small-metric .sub { font-size: 0.65rem; color: #999; }
-    .success-box {
-        padding: 1rem;
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        border-radius: 5px;
-        margin: 0.5rem 0;
-    }
-    .error-box {
-        padding: 1rem;
-        background: #f8d7da;
-        border: 1px solid #f5c6cb;
-        border-radius: 5px;
-        margin: 0.5rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+    <style>
+        /* =========================================================================
+        REMOVE WHITE GAPS - CRITICAL FIX
+        ========================================================================= */
+        /* Remove padding from main container */
+        .main .block-container {
+            padding-top: 0rem !important;
+            padding-bottom: 0rem !important;
+            margin-top: 0rem !important;
+        }
+        
+        /* Remove spacing from the top of the app */
+        section[data-testid="stAppViewContainer"] > .main {
+            padding-top: 0rem !important;
+        }
+        
+        /* Hide default Streamlit header */
+        header[data-testid="stHeader"] {
+            display: none;
+        }
+        
+        /* Remove margin from the first element */
+        .stApp > div:first-child {
+            margin-top: -1rem !important;
+        }
+        
+        /* Remove default Streamlit padding */
+        .stApp {
+            padding-top: 0 !important;
+        }
+        
+        /* Remove gap from block container */
+        .block-container {
+            padding-top: 0 !important;
+        }
+        
+        /* Remove spacing between elements */
+        .element-container {
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        
+        /* For logged-in users, keep sidebar spacing */
+        .logged-in .main .block-container {
+            padding-top: 2rem !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 
 def safe_markdown_vars(**kwargs) -> Dict[str, str]:
     """
@@ -1425,53 +1418,437 @@ def pricing_page() -> None:
 
 
 
-def about_page() -> None:
-    """About us page"""
+def about_page_bak() -> None:
+    """About us page - Comprehensive company information"""
     debug_print("ℹ️ Rendering about page")
+    
+    # Add animation CSS
+    st.markdown("""
+    <style>
+        
+         /* Reset global font size for landing page only */
+        .main .stMarkdown, .main div, .main p, .main span, .main label {
+            font-size: 1rem !important;
+            line-height: 1.5 !important;
+        }
+                
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        @keyframes slideInLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .fade-up {
+            animation: fadeInUp 0.8s ease-out;
+        }
+        
+        .slide-left {
+            animation: slideInLeft 0.6s ease-out;
+        }
+        
+        .slide-right {
+            animation: slideInRight 0.6s ease-out;
+        }
+        
+        .tech-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .tech-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .stat-card {
+            transition: transform 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .bio-card {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            padding: 1.5rem;
+            border-radius: 16px;
+            margin: 1rem 0;
+            transition: transform 0.3s ease;
+        }
+        
+        .bio-card:hover {
+            transform: translateX(5px);
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
     render_page_header("ℹ️ About Us", "Revolutionizing Bangladesh construction with AI")
     
-    col1, col2 = st.columns([2, 1])
+    # =========================================================================
+    # COMPANY OVERVIEW (with animation)
+    # =========================================================================
+    st.markdown("""
+    <div class="fade-up" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); 
+                padding: 2rem; border-radius: 16px; margin-bottom: 2rem;">
+        <h3 style="color: #1e3a8a; margin-bottom: 1rem;">🏢 Who We Are</h3>
+        <p style="font-size: 1.1rem; line-height: 1.6;">
+            TenderAI is Bangladesh's first AI-powered tender management platform, 
+            created by <strong>Shomon Robie</strong>, an entrepreneur, digital innovator, 
+            and Managing Director of <strong>Babui Limited</strong>. With extensive 
+            experience in digital marketing, IT, and algorithmic trading through 
+            his successful venture <strong>LakshmiFX</strong>, Shomon brings cutting-edge 
+            AI and machine learning expertise to the construction procurement space. 
+            TenderAI represents the culmination of years of experience in developing 
+            high-precision prediction systems, now applied to help Bangladeshi 
+            construction companies win more tenders.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # =========================================================================
+    # MISSION & VISION (Animated columns)
+    # =========================================================================
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 🎯 Our Mission")
         st.markdown("""
-        To empower construction companies in Bangladesh with AI-driven insights, 
-        enabling smarter bidding decisions, reduced risk, and increased win rates 
-        in public procurement tenders.
-        """)
-        
-        st.markdown("### 👁️ Our Vision")
-        st.markdown("""
-        To become the leading AI-powered tender management platform in South Asia, 
-        transforming how infrastructure projects are planned, bid, and delivered.
-        """)
-        
-        st.markdown("### 🛠️ Technology Stack")
-        st.markdown("""
-        - **AI/ML**: Scikit-learn, XGBoost, custom ensemble models
-        - **Backend**: Python, FastAPI, PostgreSQL
-        - **Frontend**: Streamlit, Plotly, custom CSS
-        - **Infrastructure**: Docker, AWS/GCP ready
-        """)
+        <div class="slide-left" style="background: white; padding: 1.5rem; border-radius: 12px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.05); height: 100%;">
+            <div style="font-size: 3rem; margin-bottom: 0.5rem;">🎯</div>
+            <h3 style="color: #1e3a8a; margin-bottom: 1rem;">Our Mission</h3>
+            <p style="line-height: 1.6;">
+                To democratize access to advanced AI-driven insights for 
+                construction companies in Bangladesh, enabling smarter bidding 
+                decisions, reducing financial risk, and increasing win rates 
+                in public procurement tenders. We're committed to making 
+                cutting-edge technology accessible, affordable, and impactful 
+                for businesses of all sizes.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("### 📊 Impact Metrics")
-        metrics = [
-            ("🏆", "Avg. Win Rate Increase", "+23%"),
-            ("💰", "Avg. Savings per Tender", "৳2.4L"),
-            ("⏱️", "Time Saved per Analysis", "4.2 hours"),
-            ("🏢", "Companies Served", "150+"),
-        ]
-        for icon, label, value in metrics:
+        st.markdown("""
+        <div class="slide-right" style="background: white; padding: 1.5rem; border-radius: 12px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.05); height: 100%;">
+            <div style="font-size: 3rem; margin-bottom: 0.5rem;">👁️</div>
+            <h3 style="color: #1e3a8a; margin-bottom: 1rem;">Our Vision</h3>
+            <p style="line-height: 1.6;">
+                To become the undisputed leader in AI-powered tender management 
+                across South Asia, transforming how infrastructure projects are 
+                planned, bid, and delivered. We envision a future where data-driven 
+                decision-making is the standard, not the exception, in public 
+                procurement.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # =========================================================================
+    # CORE VALUES (Animated)
+    # =========================================================================
+    st.markdown("### 🌟 Our Core Values")
+    
+    values_cols = st.columns(4)
+    values = [
+        ("🔬", "Innovation", "Continuously pushing the boundaries of AI in procurement"),
+        ("🤝", "Integrity", "Transparent, ethical, and PPR 2025 compliant solutions"),
+        ("🎯", "Excellence", "Delivering 85%+ accurate predictions consistently"),
+        ("🌱", "Growth", "Empowering Bangladeshi businesses to thrive"),
+    ]
+    
+    for idx, (icon, title, desc) in enumerate(values):
+        with values_cols[idx]:
             st.markdown(f"""
-            <div class="small-metric">
-                <h3>{icon} {label}</h3>
-                <div class="value">{value}</div>
+            <div class="fade-up" style="text-align: center; padding: 1rem; transition: transform 0.3s;">
+                <div style="font-size: 2rem;">{icon}</div>
+                <h4 style="color: #1e3a8a; margin: 0.5rem 0;">{title}</h4>
+                <p style="font-size: 0.85rem; color: #666;">{desc}</p>
             </div>
             """, unsafe_allow_html=True)
     
+    st.markdown("---")
+    
+    # =========================================================================
+    # IMPACT METRICS (Animated)
+    # =========================================================================
+    st.markdown("### 📊 Our Impact")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    metrics = [
+        ("🏆", "Win Rate Increase", "+23%", "Average improvement for our users"),
+        ("💰", "Savings per Tender", "৳2.4L", "Average cost savings"),
+        ("⏱️", "Time Saved", "4.2 hours", "Per analysis on average"),
+        ("🏢", "Companies Served", "150+", "Across Bangladesh"),
+    ]
+    
+    for idx, (icon, label, value, caption) in enumerate(metrics):
+        with [col1, col2, col3, col4][idx]:
+            st.markdown(f"""
+            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 1rem; border-radius: 12px; text-align: center; color: white;">
+                <div style="font-size: 2rem;">{icon}</div>
+                <div style="font-size: 1.8rem; font-weight: bold;">{value}</div>
+                <div style="font-size: 0.85rem; margin: 0.25rem 0;">{label}</div>
+                <div style="font-size: 0.7rem; opacity: 0.8;">{caption}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # =========================================================================
+    # FOUNDER BIO SECTION (Updated with accurate information)
+    # =========================================================================
+    st.markdown("### 👨‍💼 About the Founder")
+    
+    st.markdown("""
+    <div class="bio-card fade-up">
+        <h3 style="color: #1e3a8a; margin-bottom: 1rem;">🔹 Who is Shomon Robie?</h3>
+        <p><strong>Entrepreneur & Digital Founder:</strong> Shomon Robie is the Founder & CEO of <strong>VisitBangladesh.com.bd</strong>, 
+        a travel-oriented website focused on promoting tourism and experiences in Bangladesh. With a background in digital 
+        marketing and IT spanning many years, Shomon built the travel platform to showcase Bangladesh's rich culture and 
+        diverse destinations.</p>
+    </div>
+    
+    <div class="bio-card fade-up">
+        <h3 style="color: #1e3a8a; margin-bottom: 1rem;">🔹 Business & Professional Roles</h3>
+        <p><strong>Managing Director of Babui:</strong> Records from the Bangladesh Computer Samity list Shomon Robie as the 
+        Managing Director of <strong>Babui Limited</strong>, a Dhaka-based company involved in business services and technology activities.</p>
+        <p style="margin-top: 0.5rem;"><strong>Babui's Activities:</strong> Under his leadership as Director/CEO, Babui Limited engages in 
+        corporate management, information services, and web/computer-related business activities, serving clients across Bangladesh.</p>
+    </div>
+    
+    <div class="bio-card fade-up">
+        <h3 style="color: #1e3a8a; margin-bottom: 1rem;">🔹 Technical Contributions</h3>
+        <p><strong>Developer of LakshmiFX:</strong> Shomon Robie is credited as the developer of <strong>LakshmiFX</strong>, 
+        a MetaTrader 5 automated trading tool (Expert Advisor) used for forex and other financial markets. 
+        The detailed manual for LakshmiFX credits him as the developer and outlines the tool's advanced features 
+        and trading purposes.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    
+    # =========================================================================
+    # TECHNOLOGY STACK (Fixed - using st.html for better rendering)
+    # =========================================================================
+    st.markdown("### 🛠️ Technology Stack")
+    # Add CSS to ensure equal height columns
+    # Add CSS to ensure equal height columns and consistent styling
+    st.markdown("""
+    <style>
+        /* Reset global font size for about page as like as landing page */
+        .main .stMarkdown, .main div, .main p, .main span, .main label {
+            font-size: 1rem !important;
+            line-height: 1.5 !important;
+        }
+        
+        /* Equal height columns */
+        .stColumn {
+            display: flex;
+        }
+        
+        .tech-card-full {
+            background: #f8fafc;
+            padding: 1.5rem;
+            border-radius: 12px;
+            width: 100%;
+            min-height: 550px;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .tech-card-full:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .tech-card-full h4 {
+            margin-top: 0;
+            margin-bottom: 0.75rem;
+            color: #1e3a8a;
+            font-size: 1.1rem !important;
+            font-weight: 600;
+        }
+        
+        /* Consistent styling for both ul and p */
+        .tech-card-full ul, 
+        .tech-card-full p,
+        .tech-card-full li {
+            font-size: 0.9rem !important;
+            line-height: 1.5 !important;
+            color: #475569;
+            margin-bottom: 0.75rem;
+        }
+        
+        .tech-card-full ul {
+            padding-left: 1.2rem;
+            margin: 0 0 1rem 0;
+        }
+        
+        .tech-card-full li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .tech-card-full p {
+            margin: 0 0 1rem 0;
+        }
+        
+        .tech-card-full ul:last-child,
+        .tech-card-full p:last-child {
+            margin-bottom: 0;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Use st.html for cleaner HTML rendering (Streamlit 1.36+)
+        st.html("""
+        <div class="tech-card fade-up" style="background: #f8fafc; padding: 1.5rem; border-radius: 12px; height: 100%;">
+            <h4>🤖 Artificial Intelligence & Machine Learning</h4>
+            <ul>
+                <li>Scikit-learn for statistical modeling</li>
+                <li>XGBoost for gradient boosting</li>
+                <li>Custom ensemble models for bid prediction</li>
+                <li>Time series analysis for market trends</li>
+            </ul>
+            
+            <h4>⚙️ Backend & Infrastructure</h4>
+            <ul>
+                <li>Python 3.12 with FastAPI</li>
+                <li>PostgreSQL for data persistence</li>
+                <li>Docker for containerization</li>
+                <li>AWS/GCP ready deployment</li>
+            </ul>
+            
+            <h4>🎨 Frontend & Visualization</h4>
+            <ul>
+                <li>Streamlit for interactive UI</li>
+                <li>Plotly for dynamic charts</li>
+                <li>ReportLab for PDF generation</li>
+                <li>Custom CSS for professional styling</li>
+            </ul>
+        </div>
+        """)
+
+    with col2:
+        st.html("""
+        <div class="tech-card fade-up" style="background: #f8fafc; padding: 1.5rem; border-radius: 12px; height: 100%;">
+            <h4>✅ PPR 2025 Compliant</h4>
+            <ul>
+                <li>Our algorithms are built specifically for Bangladesh's Public Procurement Rules 2025, ensuring full compliance with government regulations.</li>
+            </ul>    
+            
+            <h4>✅ 85% Prediction Accuracy</h4>
+            <ul>
+                <li>Trained on thousands of historical tenders, our AI models achieve industry-leading accuracy in bid success predictions.</li>
+            </ul>
+            
+            <h4>✅ Real-time Market Intelligence</h4>
+            <ul>
+                <li>Stay ahead with live competitor tracking, market trends, and intelligent bid recommendations.</li>
+            </ul>
+            
+            <h4>✅ Enterprise-Grade Security</h4>
+            <ul>
+                <li>Your data is protected with encryption, secure authentication, and regular security audits.</li>
+            </ul>
+            
+            <h4>✅ Dedicated Support</h4>
+            <ul>
+                <li>24/7 technical support, training, and consultation to ensure your success.</li>
+            </ul>
+        </div>
+        """)
+
+
+    
+    # =========================================================================
+    # TESTIMONIALS
+    # =========================================================================
+    st.markdown("### 💬 What Our Users Say")
+    
+    testimonial_cols = st.columns(2)
+    
+    testimonials = [
+        ("⭐⭐⭐⭐⭐", "TenderAI has transformed our bidding process. We've seen a 30% increase in our win rate within just 3 months!", "— Md. Karim, ABC Construction"),
+        ("⭐⭐⭐⭐⭐", "The AI recommendations are incredibly accurate. Saved us hours of manual analysis and helped us win 5 major contracts.", "— Shahnaz Begum, BuildTech Ltd."),
+    ]
+    
+    for idx, (rating, text, author) in enumerate(testimonials):
+        with testimonial_cols[idx]:
+            st.markdown(f"""
+            <div class="fade-up" style="background: #f0fdf4; padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem;">
+                <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">{rating}</div>
+                <p style="font-style: italic; line-height: 1.5;">"{text}"</p>
+                <p style="font-weight: bold; margin-top: 0.5rem;">{author}</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # =========================================================================
+    # CALL TO ACTION
+    # =========================================================================
+    st.markdown("""
+    <div class="fade-up" style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); 
+                padding: 2rem; border-radius: 16px; text-align: center; color: white;">
+        <h3 style="color: white; margin-bottom: 1rem;">Ready to Transform Your Bidding Strategy?</h3>
+        <p style="margin-bottom: 1.5rem;">Join hundreds of construction companies already using TenderAI</p>
+        <div style="display: flex; gap: 1rem; justify-content: center;">
+            <a href="#" onclick="parent.postMessage({type: 'streamlit:setPageValue', value: 'register'}, '*')" 
+               style="background: #22c55e; color: white; text-decoration: none; padding: 0.75rem 2rem; 
+                      border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: bold; display: inline-block;">
+                Start Free Trial
+            </a>
+            <a href="#" onclick="parent.postMessage({type: 'streamlit:setPageValue', value: 'contact'}, '*')" 
+               style="background: transparent; color: white; text-decoration: none; border: 1px solid white; 
+                      padding: 0.75rem 2rem; border-radius: 8px; font-size: 1rem; cursor: pointer; display: inline-block;">
+                Contact Sales
+            </a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     debug_print("✅ About page render complete")
+
 
 
 def contact_page() -> None:
@@ -3298,8 +3675,218 @@ def render_nav_button(label: str, page_key: str, icon: str = "",
         st.rerun()
     
     return clicked
-
 def render_sidebar() -> None:
+    """Optimized sidebar with role-based navigation - ONLY for logged-in users"""
+    # Only show sidebar if user is logged in
+    if not st.session_state.get('logged_in'):
+        return
+    
+    debug_print("🧭 Rendering sidebar")
+    
+    with st.sidebar:
+        # Clear extracted data if leaving tender management page
+        if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
+            st.session_state.extracted_data = None
+            st.session_state.skip_review = False
+        
+        # ========== BRANDING ==========
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee;">
+            <h2 style="margin: 0; color: #1e3c72;">🏗️ TenderAI</h2>
+            <small style="color: #666;">Bid Optimization Platform</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ========== USER INFO & BADGE ==========
+        if st.session_state.get('logged_in'):
+            # Get user info safely
+            full_name = st.session_state.get('full_name', 'User')
+            company_name = st.session_state.get('company_name', 'N/A')
+            user_role = st.session_state.get('user_role', 'User')
+            
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+                        padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
+                <strong>👋 {full_name}</strong><br>
+                <small>🏢 {company_name}<br>
+                ⭐ {safe_title(user_role, 'User')}</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            sub = db.get_user_subscription(st.session_state.user_id) if st.session_state.get('user_id') else {}
+            plan = sub.get('plan', 'free')
+            is_premium = plan in ['professional', 'enterprise'] or st.session_state.get('user_role') in ['admin', 'system_admin']
+            badge_color = "#22c55e" if is_premium else "#6b7280"
+            badge_text = "✨ PREMIUM" if is_premium else "🔓 FREE TRIAL"
+            
+            st.markdown(f"""
+            <div style="text-align: center; background: {badge_color}20; 
+                        padding: 0.4rem; border-radius: 6px; margin: 0.5rem 0; 
+                        border: 1px solid {badge_color};">
+                <strong style="color: {badge_color};">{badge_text}</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown("---")
+        
+        # ========== DEFINE MENU STRUCTURES ==========
+        # Authenticated main menu
+        main_menu = [
+            ("📈", "Dashboard", "dashboard"),
+            ("🎯", "New Analysis", "new_analysis"),
+            ("📜", "History", "history"),
+            ("👤", "Profile", "profile"),
+        ]
+        
+        # Company management menu (for company_admin and admin)
+        company_management_menu = [
+            ("👥", "Team Management", "user_management"),
+            ("📋", "Tender Management", "tender_management"),
+        ]
+        
+        # Premium intelligence menu
+        intelligence_menu = [
+            ("📊", "Historical Data", "historical_data"),
+            ("👥", "Competitor Tracking", "competitor_tracking"),
+            ("🗂️", "Competitor Master", "competitor_master"),
+        ]
+        
+        # Evaluation tools (premium)
+        evaluation_menu = [
+            ("📋", "Post-Evaluation", "post_evaluation"),
+            ("🧠", "AI Suggestions", "intelligent_suggestions"),
+        ]
+        
+        # System Admin menu
+        system_admin_menu = [
+            ("📊", "Admin Dashboard", "admin_dashboard"),
+            ("👥", "User Approvals", "user_approval"),
+            ("🔐", "Role Permissions", "role_management"),
+            ("🏢", "All Companies", "company_management"),
+        ]
+        
+        # ========== RENDER BASED ON LOGIN STATE ==========
+        user_role = st.session_state.get('user_role', 'user')
+        
+        # 1. Main menu
+        st.markdown("### 📊 Main")
+        for icon, label, page in main_menu:
+            render_nav_button(label, page, icon=icon)
+        
+        # 2. Subscription management (standalone button)
+        if st.button("💳 Subscription", key="nav_subscription", use_container_width=True):
+            st.session_state.page = "subscription"
+            st.rerun()
+        
+        # 3. Company Dashboard (for company_admin and admin)
+        if user_role in ['company_admin', 'admin', 'system_admin']:
+            if st.button("🏢 Company Dashboard", key="nav_company_dashboard", use_container_width=True):
+                st.session_state.page = "company_dashboard"
+                st.rerun()
+        
+        # 4. Company Management (for company_admin and admin)
+        if user_role in ['company_admin', 'admin', 'system_admin']:
+            st.markdown("---")
+            st.markdown("### 👥 Company Management")
+            for icon, label, page in company_management_menu:
+                render_nav_button(label, page, icon=icon)
+            
+            # Evaluation tools (premium)
+            if is_premium:
+                st.markdown("#### 📊 Evaluation")
+                for icon, label, page in evaluation_menu:
+                    render_nav_button(label, page, icon=icon, button_type="secondary")
+        
+        # 5. Intelligence features (premium only)
+        if is_premium:
+            st.markdown("---")
+            st.markdown("### 📚 Intelligence")
+            for icon, label, page in intelligence_menu:
+                render_nav_button(label, page, icon=icon, button_type="secondary")
+        
+        # 6. System Admin section (only for system_admin)
+        if user_role == 'system_admin':
+            st.markdown("---")
+            st.markdown("### 👑 System Admin")
+            
+            # Badge for pending approvals
+            pending_count = 0
+            try:
+                if hasattr(db, 'get_pending_users'):
+                    pending_count = len(db.get_pending_users(None))
+            except:
+                pass
+            
+            for icon, label, page in system_admin_menu:
+                badge = str(pending_count) if label == "User Approvals" and pending_count > 0 else None
+                render_nav_button(label, page, icon=icon, badge=badge, button_type="secondary")
+        
+        # 7. Legacy Admin section (for backward compatibility)
+        elif user_role == 'admin':
+            st.markdown("---")
+            st.markdown("### 👑 System Admin")
+            
+            for icon, label, page in system_admin_menu:
+                render_nav_button(label, page, icon=icon, button_type="secondary")
+        
+        # ========== LOGOUT & USAGE STATS ==========
+        st.markdown("---")
+        
+        # Usage stats for premium users
+        if is_premium and sub:
+            limit = sub.get('analyses_limit', -1)
+            used = sub.get('analyses_used', 0)
+            if limit > 0:
+                remaining = max(0, limit - used)
+                pct_used = min(100, (used / limit) * 100)
+                st.markdown(f"""
+                <div style="font-size: 0.8rem; color: #666; text-align: center;">
+                    <strong>Analyses:</strong> {used}/{limit} used<br>
+                    <div style="background: #e5e7eb; border-radius: 4px; height: 4px; margin: 4px 0;">
+                        <div style="background: #667eea; width: {pct_used}%; height: 100%; border-radius: 4px;"></div>
+                    </div>
+                    <small>{remaining} remaining this month</small>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Logout button
+        if st.button("🚪 Sign Out", key="nav_logout", use_container_width=True, type="secondary"):
+            logout_user()
+            for key in list(st.session_state.keys()):
+                if key not in ['debug_mode', 'page']:
+                    del st.session_state[key]
+            initialize_session_state()
+            st.toast("👋 You have been signed out", icon="✅")
+            st.rerun()
+    
+    # Debug mode indicator
+    if DEBUG_MODE:
+        st.markdown("---")
+        st.caption("🐛 Debug Mode Active")
+
+
+def render_nav_button(label: str, page_key: str, icon: str = "", 
+                     disabled: bool = False, badge: Optional[str] = None,
+                     button_type: str = "secondary") -> bool:
+    """Render navigation button with optional text badge"""
+    # Build label with badge as plain text (Streamlit-safe)
+    full_label = f"{icon} {label}"
+    if badge:
+        full_label += f" [{badge}]"  # Simple text badge
+    
+    clicked = st.button(
+        full_label,
+        key=f"nav_{page_key}",
+        use_container_width=True,
+        type=button_type,
+        disabled=disabled
+    )
+    
+    if clicked:
+        st.session_state.page = page_key
+        st.rerun()
+    
+    return clicked
+def render_sidebar_bak() -> None:
     """Optimized sidebar with role-based navigation and responsive design"""
     debug_print("🧭 Rendering sidebar")
     
@@ -3502,30 +4089,6 @@ def render_sidebar() -> None:
             st.markdown("---")
             st.caption("🐛 Debug Mode Active")
 
-def render_nav_button(label: str, page_key: str, icon: str = "", 
-                     disabled: bool = False, badge: Optional[str] = None,
-                     button_type: str = "secondary") -> bool:
-    """Render navigation button with optional text badge"""
-    # Build label with badge as plain text (Streamlit-safe)
-    full_label = f"{icon} {label}"
-    if badge:
-        full_label += f" [{badge}]"  # Simple text badge
-    
-    clicked = st.button(
-        full_label,
-        key=f"nav_{page_key}",
-        use_container_width=True,
-        type=button_type,
-        disabled=disabled
-    )
-    
-    if clicked:
-        st.session_state.page = page_key
-        st.rerun()
-    
-    return clicked
-
-
 # =============================================================================
 # 🎬 MAIN APP ROUTER (Refactored + Optimized)
 # =============================================================================
@@ -3539,7 +4102,7 @@ def _render_public_pages() -> None:
         'login': login_page,
         'register': register_page,
         'pricing': pricing_page,
-        'about': about_page,
+        'about': lambda: show_about_page(),  # Use the new about page
         'contact': contact_page,
         'individual_register': render_individual_registration,
         'individual_login': render_individual_login,
@@ -3603,8 +4166,231 @@ def _import_and_call(module_path: str, function_name: str, *args, **kwargs):
     func = getattr(module, function_name)
     return func(*args, **kwargs)
 
+# =============================================================================
+# 🎨 HEADER COMPONENT (For Public Pages)
+# =============================================================================
+
+def render_header_nav() -> None:
+    """Render header navigation menu for non-authenticated users"""
+    
+    # Custom CSS for header navigation
+    st.markdown("""
+    <style>
+        /* Remove gap below header */
+        .header-nav-container {
+            margin-bottom: -1rem !important;
+        }
+        
+        .header-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            border-radius: 0 0 10px 10px;
+            margin-bottom: 0rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header-logo h2 {
+            color: white;
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .header-logo p {
+            color: rgba(255,255,255,0.8);
+            margin: 0;
+            font-size: 0.8rem;
+        }
+        .header-menu {
+            display: flex;
+            gap: 1rem;
+        }
+        /* Style Streamlit buttons to look like navigation links */
+        .header-menu .stButton > button {
+            background: transparent !important;
+            color: white !important;
+            border: none !important;
+            padding: 0.5rem 1rem !important;
+            border-radius: 5px !important;
+            font-weight: normal !important;
+            font-size: 1rem !important;
+            width: auto !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+        }
+        .header-menu .stButton > button:hover {
+            background: rgba(255,255,255,0.2) !important;
+            transform: none !important;
+        }
+        .header-menu .active .stButton > button {
+            background: rgba(255,255,255,0.3) !important;
+            font-weight: bold !important;
+        }
+        .btn-login .stButton > button {
+            background: transparent !important;
+            border: 1px solid white !important;
+        }
+        .btn-register .stButton > button {
+            background: #22c55e !important;
+        }
+        .btn-register .stButton > button:hover {
+            background: #16a34a !important;
+        }
+        @media (max-width: 768px) {
+            .header-nav {
+                flex-direction: column;
+                gap: 1rem;
+                padding: 1rem;
+            }
+            .header-menu {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Create header using Streamlit columns (this works reliably)
+    with st.container():
+        # Use columns for layout
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown("""
+            <div class="header-logo">
+                <h2>🏗️ TenderAI</h2>
+                <p>Bid Optimization Platform</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            # Get current page
+            current_page = st.session_state.get('page', 'home')
+            
+            # Create a row of buttons
+            menu_cols = st.columns(6)
+            
+            pages = [
+                ("🏠 Home", "home"),
+                ("💰 Pricing", "pricing"),
+                ("ℹ️ About", "about"),
+                ("📞 Contact", "contact"),
+                ("🔐 Login", "login"),
+                ("➕ Register", "register"),
+            ]
+            
+            for idx, (label, page_key) in enumerate(pages):
+                with menu_cols[idx]:
+                    # Determine button type
+                    if page_key in ['login', 'register']:
+                        btn_class = "btn-login" if page_key == 'login' else "btn-register"
+                    else:
+                        btn_class = ""
+                    
+                    # Check if this is the active page
+                    is_active = current_page == page_key
+                    button_type = "primary" if is_active else "secondary"
+                    
+                    # Create the button
+                    if st.button(label, key=f"nav_{page_key}", use_container_width=True, type=button_type):
+                        st.session_state.page = page_key
+                        st.rerun()
 
 def main() -> None:
+    """
+    Main application entry point with optimized routing.
+    """
+    import base64
+    import json
+    
+    # =========================================================================
+    # RESTORE SESSION FROM URL PARAMETER (Google OAuth)
+    # =========================================================================
+    query_params = st.query_params
+    
+    # Check for user data in URL (from Google callback)
+    if 'user' in query_params:
+        try:
+            user_data_b64 = query_params['user']
+            user_data_json = base64.urlsafe_b64decode(user_data_b64).decode()
+            user_data = json.loads(user_data_json)
+            
+            # Restore session state
+            for key, value in user_data.items():
+                st.session_state[key] = value
+            
+            # Clear the parameter to avoid re-processing
+            st.query_params.clear()
+            
+            # Force rerun to show dashboard
+            st.rerun()
+            return
+        except Exception as e:
+            debug_print(f"Error restoring session: {e}")
+    
+    # =========================================================================
+    # HANDLE GOOGLE OAUTH CALLBACK
+    # =========================================================================
+    from modules.google_auth import handle_google_callback
+    
+    # Check if this is an OAuth callback
+    if 'code' in query_params:
+        # Handle the callback - this will process the code and redirect
+        handle_google_callback()
+        # After handling, clear params and rerun to avoid reprocessing
+        st.query_params.clear()
+        st.rerun()
+        return
+
+    debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
+    
+    # Hide Streamlit's default chrome elements
+    st.markdown("""
+    <style>
+        div[data-testid="stSidebarNav"] { display: none; }
+        #MainMenu { visibility: hidden; }
+        footer { visibility: hidden; }
+        .stApp { max-width: 100%; }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Ensure session state is initialized (safety net)
+    if 'page' not in st.session_state:
+        st.session_state.page = PageRoutes.HOME
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    
+    # =========================================================================
+    # CONDITIONAL SIDEBAR RENDERING
+    # =========================================================================
+    # Only show sidebar for logged-in users
+    if st.session_state.logged_in:
+        render_sidebar()
+    else:
+        # For non-authenticated users, show header navigation
+        render_header_nav()
+    
+    # Handle checkout flow (modal-like experience)
+    if st.session_state.get('show_checkout'):
+        render_checkout()
+        return
+    
+    # Route to appropriate page handler
+    if not st.session_state.logged_in:
+        _render_public_pages()
+    else:
+        _render_authenticated_pages()
+    
+    # Optional: Global debug panel (development only)
+    if DEBUG_MODE and st.session_state.get('user_role') == 'admin':
+        _render_global_debug_panel()
+
+def main_bak() -> None:
     """
     Main application entry point with optimized routing.
     Uses PageRoutes constants, lazy imports, and safe error handling.
