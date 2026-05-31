@@ -10,6 +10,7 @@ import re
 import secrets
 import bcrypt
 from modules.google_auth import render_google_login_button, handle_google_callback
+
 db = DatabaseManager()
 
 def debug_print(*args, **kwargs):

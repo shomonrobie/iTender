@@ -13,6 +13,10 @@ from reportlab.lib.utils import ImageReader
 from datetime import datetime
 from database.db_manager import DatabaseManager
 import traceback
+from matplotlib.patches import Wedge, Circle
+from reportlab.platypus import Table, TableStyle, Paragraph
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Configure matplotlib for non-interactive backend (server-friendly)
 plt.switch_backend('Agg')
@@ -79,9 +83,7 @@ def _create_tier_comparison_chart(comparison: dict, est: float = None) -> io.Byt
 
 def _create_ppr_gauge_chart(est: float, recommended_bid: float, slt: float) -> io.BytesIO:
     """Create a gauge chart similar to your Plotly one but as PNG for PDF"""
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Wedge, Circle
-    
+        
     fig, ax = plt.subplots(figsize=(6, 3))
     
     # Calculate compliance percentage
@@ -119,56 +121,140 @@ def _create_ppr_gauge_chart(est: float, recommended_bid: float, slt: float) -> i
 
 def _create_ppr_calculation_table(est: float, nppi: float, slt: float, recommended_bid: float, 
                                     competitor_bids: list = None, ppr_metrics: dict = None) -> Table:
-    """Create detailed PPR 2025 calculation breakdown table"""
+    """Create detailed PPR 2025 calculation breakdown table with proper text wrapping"""
     
-    from reportlab.platypus import Table, TableStyle
+    
+    
+    styles = getSampleStyleSheet()
+    
+    # Create a style for wrapped text
+    wrap_style = ParagraphStyle(
+        'WrapStyle',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=11,
+        alignment=0,  # Left aligned
+        wordWrap='CJK'  # Enable word wrapping
+    )
+    
+    # Style for formula column (can be multi-line)
+    formula_style = ParagraphStyle(
+        'FormulaStyle',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=11,
+        alignment=0,
+        wordWrap='CJK'
+    )
     
     if ppr_metrics:
-        # Use pre-calculated metrics
         avg_comp = ppr_metrics.get('avg_competitor', 0)
         weighted_avg = ppr_metrics.get('weighted_average', 0)
         weighted_std = ppr_metrics.get('weighted_std_dev', 0)
         nppi_price = ppr_metrics.get('nppi_price', est * nppi)
     else:
-        # Calculate on the fly
         comp_values = [c.get('bid', 0) for c in (competitor_bids or []) if c.get('bid', 0) > 0]
         avg_comp = sum(comp_values) / len(comp_values) if comp_values else 0
         nppi_price = est * nppi
         weighted_avg = (0.5 * avg_comp) + (0.2 * est) + (0.3 * nppi_price) if avg_comp > 0 else est * 0.85
         weighted_std = np.std(comp_values) if len(comp_values) > 1 else est * 0.05
     
-    # Build calculation steps
+    # Build calculation steps with proper text wrapping
     calc_data = [
-        ["Step", "Formula", "Value", "Result"],
-        ["1. Official Estimate", "From tender document", f"BDT {est:,.0f}", "Base Value"],
-        ["2. NPPI Factor", "28-day market average", f"{nppi:.3f}", "Index Factor"],
-        ["3. NPPI Price", "Estimate × NPPI", f"{est:,.0f} × {nppi:.3f}", f"BDT {nppi_price:,.0f}"],
-        ["4. Avg Competitor", "Σ(Comp Bids) / N", f"({len(competitor_bids or [])} bids)", f"BDT {avg_comp:,.0f}" if avg_comp > 0 else "N/A"],
-        ["5. Weighted Avg (X̄)", "0.5(Avg Comp) + 0.2(Est) + 0.3(NPPI)", f"0.5×{avg_comp:,.0f} + 0.2×{est:,.0f} + 0.3×{nppi_price:,.0f}", f"BDT {weighted_avg:,.0f}"],
-        ["6. Std Deviation (Sd)", "Statistical dispersion", f"σ = {weighted_std:.2f}", f"{weighted_std:,.0f}"],
-        ["7. SLT Threshold", "X̄ - Sd", f"{weighted_avg:,.0f} - {weighted_std:,.0f}", f"BDT {slt:,.0f}"],
-        ["8. Recommended Bid", "Optimized by AI", "Based on win probability", f"BDT {recommended_bid:,.0f}"],
-        ["9. Compliance", "Bid ≥ SLT?", f"{recommended_bid:,.0f} ≥ {slt:,.0f}", "✅ PASS" if recommended_bid >= slt else "❌ FAIL"],
+        ["Step", "Formula / Description", "Calculation", "Result (BDT)"],
+        
+        ["1", 
+         Paragraph("Official Estimate<br/><font size='7' color='#666'>From tender document</font>", wrap_style),
+         Paragraph(f"<b>{est:,.0f}</b>", wrap_style),
+         "Base Value"],
+        
+        ["2", 
+         Paragraph("NPPI Factor<br/><font size='7' color='#666'>28-day market average</font>", wrap_style),
+         Paragraph(f"<b>{nppi:.3f}</b>", wrap_style),
+         "Index Factor"],
+        
+        ["3", 
+         Paragraph("NPPI Price<br/><font size='7' color='#666'>Estimate × NPPI Factor</font>", wrap_style),
+         Paragraph(f"{est:,.0f} × {nppi:.3f}", wrap_style),
+         Paragraph(f"<b>{nppi_price:,.0f}</b>", wrap_style)],
+        
+        ["4", 
+         Paragraph("Avg Competitor<br/><font size='7' color='#666'>Σ(Comp Bids) ÷ N</font>", wrap_style),
+         Paragraph(f"({len(competitor_bids or [])} bids)", wrap_style),
+         Paragraph(f"<b>{avg_comp:,.0f}</b>" if avg_comp > 0 else "N/A", wrap_style)],
+        
+        ["5", 
+         Paragraph("Weighted Avg (X̄)<br/><font size='7' color='#666'>0.5(Avg) + 0.2(Est) + 0.3(NPPI)</font>", wrap_style),
+         Paragraph(f"0.5×{avg_comp:,.0f}<br/>+ 0.2×{est:,.0f}<br/>+ 0.3×{nppi_price:,.0f}", formula_style),
+         Paragraph(f"<b>{weighted_avg:,.0f}</b>", wrap_style)],
+        
+        ["6", 
+         Paragraph("Std Deviation (Sd)<br/><font size='7' color='#666'>√[Σ(x̄ - xᵢ)²/(n-1)]</font>", wrap_style),
+         Paragraph(f"σ = {weighted_std:.2f}", wrap_style),
+         Paragraph(f"<b>{weighted_std:,.0f}</b>", wrap_style)],
+        
+        ["7", 
+         Paragraph("SLT Threshold<br/><font size='7' color='#666'>X̄ - Sd</font>", wrap_style),
+         Paragraph(f"{weighted_avg:,.0f} - {weighted_std:,.0f}", wrap_style),
+         Paragraph(f"<b>{slt:,.0f}</b>", wrap_style)],
+        
+        ["8", 
+         Paragraph("Recommended Bid<br/><font size='7' color='#666'>AI Optimized</font>", wrap_style),
+         Paragraph("Based on win probability", wrap_style),
+         Paragraph(f"<b>{recommended_bid:,.0f}</b>", wrap_style)],
+        
+        ["9", 
+         Paragraph("Compliance Check<br/><font size='7' color='#666'>Bid ≥ SLT?</font>", wrap_style),
+         Paragraph(f"{recommended_bid:,.0f} ≥ {slt:,.0f}", wrap_style),
+         Paragraph(f"<b>{'✅ PASS' if recommended_bid >= slt else '❌ FAIL'}</b>", wrap_style)],
     ]
     
-    # Create table with styling
-    table = Table(calc_data, colWidths=[0.7*inch, 2*inch, 1.5*inch, 1.2*inch])
+    # Calculate dynamic column widths (wider for formula and value columns)
+    # Column widths: Step(0.4"), Formula(2.2"), Value(1.8"), Result(1.2")
+    table = Table(calc_data, colWidths=[0.4*inch, 2.2*inch, 1.8*inch, 1.2*inch], repeatRows=1)
+    
+    # Apply table styling
     table.setStyle(TableStyle([
+        # Header row styling
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e40af')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTSIZE', (0,0), (-1,0), 9),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 9),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'),
+        ('VALIGN', (0,0), (-1,0), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,0), 6),
+        ('BOTTOMPADDING', (0,0), (-1,0), 6),
+        
+        # Data rows styling
         ('BACKGROUND', (0,1), (-1,-2), colors.HexColor('#f8fafc')),
         ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#dcfce7') if recommended_bid >= slt else colors.HexColor('#fee2e2')),
+        
+        # Grid lines
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        
+        # Cell alignment and padding
+        ('ALIGN', (0,1), (0,-1), 'CENTER'),  # Step column center aligned
+        ('ALIGN', (1,1), (1,-1), 'LEFT'),     # Formula column left aligned
+        ('ALIGN', (2,1), (2,-1), 'LEFT'),     # Value column left aligned
+        ('ALIGN', (3,1), (3,-1), 'RIGHT'),    # Result column right aligned
+        
+        ('VALIGN', (0,1), (-1,-1), 'TOP'),     # Top alignment for all cells
+        
+        # Padding for all cells
+        ('TOPPADDING', (0,1), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,1), (-1,-1), 8),
+        ('LEFTPADDING', (0,1), (-1,-1), 6),
+        ('RIGHTPADDING', (0,1), (-1,-1), 6),
+        
+        # Font settings for data rows
         ('FONTSIZE', (0,1), (-1,-1), 8),
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        
+        # Zebra striping for better readability
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.HexColor('#ffffff'), colors.HexColor('#f1f5f9')]),
     ]))
     
     return table
+
 
 def _create_competitor_chart(comp_bids: list, recommended_bid: float, est: float) -> io.BytesIO:
     """Create horizontal bar chart of competitor bids"""
@@ -408,7 +494,7 @@ def _format_bdt_axis(x, p):
 
 def generate_babui_detailed_report(report_data: dict, user_info: dict = None, include_charts: bool = True) -> io.BytesIO:
     """
-    Generates a comprehensive, print-ready PDF report for Babui TenderAI.
+    Generates a comprehensive, print-ready PDF report for TenderAI.
     Handles missing data gracefully and includes all requested sections with optional charts.
     """
     buffer = io.BytesIO()
@@ -449,7 +535,7 @@ def generate_babui_detailed_report(report_data: dict, user_info: dict = None, in
     comp_bids = report_data.get('competitor_bids', [])
 
     # ─── HEADER ─────────────────────────────────────────────────────────────
-    story.append(Paragraph("🤖 Babui TenderAI", title_style))
+    story.append(Paragraph("🤖 TenderAI", title_style))
     story.append(Paragraph("AI Enhanced Bid Management System", subtitle_style))
     story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Analysis ID: {report_data.get('id', 'N/A')}",
                            ParagraphStyle('Date', parent=normal_style, alignment=TA_CENTER, fontSize=9, textColor=colors.grey)))
@@ -595,8 +681,8 @@ def generate_babui_detailed_report(report_data: dict, user_info: dict = None, in
         story.append(Paragraph("No competitor data provided.", normal_style))
     story.append(Spacer(1, 12))
 
-    # ─── PPR 2025 CALCULATION BREAKDOWN (NEW - Detailed) ──────────────────────────
-    story.append(Paragraph("📐 PPR 2025 Calculation Breakdown", section_style))
+    # ─── TenderAI (NEW - Detailed) ──────────────────────────
+    story.append(Paragraph("📐 TenderAI", section_style))
 
     # Calculate PPR metrics using shared logic
     from modules.ppr_calculations import calculate_ppr_metrics
@@ -856,7 +942,7 @@ def _create_ppr_gauge_chart(est: float, recommended_bid: float, slt: float) -> i
 def _create_ppr_calculation_table(est: float, nppi: float, slt: float, recommended_bid: float, 
                                     competitor_bids: list = None, ppr_metrics: dict = None) -> Table:
     """
-    Create detailed PPR 2025 calculation breakdown table with 3 decimal precision.
+    Create detailed TenderAI table with 3 decimal precision.
     """
     from reportlab.platypus import Table, TableStyle
     

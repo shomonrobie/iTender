@@ -504,26 +504,6 @@ class DatabaseManager:
         finally:
             conn.close()
 
-
-
-    
-    def create_company_bak(self, company_data):
-        """Create a new company"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-            INSERT INTO companies (company_name, email, phone, division)
-            VALUES (?, ?, ?, ?)
-            ''', (company_data['company_name'], company_data.get('email', ''), 
-                  company_data.get('phone', ''), company_data.get('division', 'Dhaka')))
-            company_id = cursor.lastrowid
-            conn.commit()
-            return True, company_id
-        except sqlite3.IntegrityError:
-            return False, "Company name already exists"
-        finally:
-            conn.close()
     
     # ==================== USER MANAGEMENT METHODS ====================
     
@@ -565,88 +545,6 @@ class DatabaseManager:
             })
         return users
 
-    def update_user_bak(self, user_id: int, updates: dict) -> bool:
-        """Update user fields (full_name, email, phone, role, is_active)"""
-        allowed_fields = ['full_name', 'email', 'phone', 'role', 'is_active']
-        set_clause = []
-        params = []
-        for field, value in updates.items():
-            if field in allowed_fields:
-                set_clause.append(f"{field} = ?")
-                params.append(value)
-        if not set_clause:
-            return False
-        params.append(user_id)
-        query = f"UPDATE users SET {', '.join(set_clause)} WHERE id = ?"
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(query, params)
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Update user failed: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def reset_user_password_bak(self, user_id: int, new_password: str) -> bool:
-        """Reset user password (bcrypt hash)"""
-        import bcrypt
-        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Password reset failed: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def delete_user_bak(self, user_id: int) -> bool:
-        """Soft delete or hard delete? We'll hard delete for simplicity"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Delete user failed: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def get_all_users_bak(self, company_id=None, role=None):
-        """Get all users with optional filters"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        query = '''
-        SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-               u.created_at, u.last_login, c.company_name
-        FROM users u
-        JOIN companies c ON u.company_id = c.id
-        WHERE 1=1
-        '''
-        params = []
-        
-        if company_id:
-            query += " AND u.company_id = ?"
-            params.append(company_id)
-        if role:
-            query += " AND u.role = ?"
-            params.append(role)
-        
-        query += " ORDER BY u.created_at DESC"
-        
-        cursor.execute(query, params)
-        users = cursor.fetchall()
-        conn.close()
-        return users
     
     def get_user_by_id(self, user_id):
         """Get user by ID"""
@@ -1125,73 +1023,6 @@ class DatabaseManager:
                             pass
                     return []
                 df['competitor_bids'] = df['competitor_bids'].apply(parse_competitor_bids)
-            
-            return df
-        return pd.DataFrame()
-
-
-    def get_user_analyses_bak(self, user_id, company_id, role, limit=50):
-        """Get user's tender analyses with role-based filtering"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Admin can see all analyses across the company
-        if role in ['admin']:
-            cursor.execute('''
-            SELECT * FROM tender_analyses 
-            WHERE company_id = ? 
-            ORDER BY analysis_date DESC LIMIT ?
-            ''', (company_id, limit))
-        # Company admin and manager can see all company analyses
-        elif role in ['company_admin', 'manager']:
-            cursor.execute('''
-            SELECT * FROM tender_analyses 
-            WHERE company_id = ? 
-            ORDER BY analysis_date DESC LIMIT ?
-            ''', (company_id, limit))
-        # Regular users can only see their own analyses
-        else:
-            cursor.execute('''
-            SELECT * FROM tender_analyses 
-            WHERE user_id = ? AND company_id = ?
-            ORDER BY analysis_date DESC LIMIT ?
-            ''', (user_id, company_id, limit))
-        
-        columns = [description[0] for description in cursor.description]
-        data = cursor.fetchall()
-        conn.close()
-        
-        if data:
-            df = pd.DataFrame(data, columns=columns)
-            
-            # Parse competitor_bids JSON if present - with proper error handling
-            if 'competitor_bids' in df.columns:
-                import json
-                def parse_competitor_bids(value):
-                    if value is None:
-                        return []
-                    if isinstance(value, (int, float)):
-                        return []
-                    if isinstance(value, str):
-                        try:
-                            if value and value != 'null':
-                                parsed = json.loads(value)
-                                return parsed if isinstance(parsed, list) else []
-                        except:
-                            pass
-                    return []
-                
-                df['competitor_bids'] = df['competitor_bids'].apply(parse_competitor_bids)
-            
-            # Convert date column to datetime with error handling
-            if 'analysis_date' in df.columns:
-                try:
-                    # Try to parse with different formats
-                    df['analysis_date'] = pd.to_datetime(df['analysis_date'], errors='coerce')
-                except Exception as e:
-                    print(f"Date conversion error: {e}")
-                    # If conversion fails, keep as is
-                    pass
             
             return df
         return pd.DataFrame()
@@ -2138,54 +1969,6 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting user by username: {e}")
             return None
-    def get_all_users_filtered_bak(self, company_id, search="", role="", status=None, limit=20, offset=0):
-        """Return filtered users list and total count"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        query = """
-            SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-                u.created_at, u.last_login, c.company_name, u.is_approved
-            FROM users u
-            JOIN companies c ON u.company_id = c.id
-            WHERE u.company_id = ?
-        """
-
-        params = [company_id]
-        
-        if search:
-            query += " AND (u.username LIKE ? OR u.email LIKE ? OR u.full_name LIKE ?)"
-            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
-        if role:
-            query += " AND u.role = ?"
-            params.append(role)
-        if status is not None:
-            query += " AND u.is_active = ?"
-            params.append(status)
-        
-        # Count total
-        count_query = query.replace("SELECT u.id, u.username, ...", "SELECT COUNT(*)")
-        cursor.execute(count_query, params)
-        total = cursor.fetchone()[0]
-        
-        # Paginated results
-        query += " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-        cursor.execute(query, params)
-        users = cursor.fetchall()
-        conn.close()
-        
-        # Convert to list of dicts for easier handling
-        result = []
-        for row in users:
-            result.append({
-                'id': row[0], 'username': row[1], 'email': row[2], 'full_name': row[3],
-                'phone': row[4], 'role': row[5], 'is_active': row[6],
-                'created_at': row[7], 'last_login': row[8], 'company_name': row[9],
-                'is_approved': row[10] if len(row) > 10 else 1
-            })
-
-        return result, total
 
     def update_user(self, user_id, updates):
         """Update user fields including company_id"""
@@ -2627,38 +2410,6 @@ class DatabaseManager:
             })
         
         return users, total
-
-    def create_company_user_bak(self, company_id, user_data, created_by):
-        """Create a company-level user"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        hashed_pass = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        try:
-            cursor.execute('''
-                INSERT INTO users (
-                    company_id, username, password, email, full_name, phone, role,
-                    is_active, created_by, is_approved
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                company_id, user_data['username'], hashed_pass, user_data['email'],
-                user_data['full_name'], user_data.get('phone', ''), user_data.get('role', 'viewer'),
-                1, created_by, 1
-            ))
-            user_id = cursor.lastrowid
-            
-            # Create subscription record
-            cursor.execute('''
-            INSERT INTO subscriptions (user_id, plan, status, analyses_limit)
-            VALUES (?, ?, ?, ?)
-            ''', (user_id, 'free', 'active', 5))
-            
-            conn.commit()
-            return True, user_id
-        except sqlite3.IntegrityError as e:
-            return False, str(e)
-        finally:
-            conn.close()
 
     def get_company_stats_by_id(self, company_id):
         """Get statistics for a specific company"""

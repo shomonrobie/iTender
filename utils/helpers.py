@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Optional
 import streamlit as st
 import re
+from datetime import datetime
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
 # =============================================================================
@@ -362,7 +363,7 @@ def _generate_and_download_pdf(analysis_id: int, analysis_record: dict) -> None:
                 st.error("❌ PDF generation returned empty buffer")
                 return
             
-            logger.info(f"✅ PDF generated successfully | size={pdf_buffer.getbuffer().nbytes} bytes")
+            logger.info(f"✅ PDF generated successfully2 | size={pdf_buffer.getbuffer().nbytes} bytes")
             
             # ✅ STORE in session state (CRITICAL STEP)
             safe_tid = str(report_data.get('tender_id', 'report')).replace('/', '_').replace('\\', '_').replace(' ', '_')
