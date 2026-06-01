@@ -218,114 +218,98 @@ def calculate_basic_analysis(official_estimate, competitor_bids, risk_tolerance=
         'slt_threshold': round(official_estimate * 0.80, 3)
     }
 
-def calculate_basic_analysis_bak(official_estimate, competitor_bids, risk_tolerance='moderate'):
-    """Basic Analysis - Returns clean dictionary"""
+def calculate_advanced_ppr_analysis(official_estimate, competitor_bids, procurement_type='goods', 
+                                     risk_tolerance='moderate', historical_data=None, 
+                                     nppi_factor=None):  # nppi_factor is passed as parameter
+    """PPR 2025 Compliant Advanced Analysis with custom NPPI factor"""
+    from scipy import stats
+    import numpy as np
+    
+    # ✅ Use provided NPPI factor or default to 0.92
+    if nppi_factor is None:
+        nppi_factor = 0.920
+    
+    # Extract bid values
     bid_values = _extract_bid_values(competitor_bids)
-    avg_comp = np.mean(bid_values) if bid_values else official_estimate * 0.92
     
-    ratios = {'aggressive': 0.86, 'moderate': 0.89, 'conservative': 0.93}
-    ratio = ratios.get(risk_tolerance, 0.89)
-    recommended_bid = min(official_estimate * ratio, avg_comp * 0.99)
-    recommended_bid = round(recommended_bid, 3)
-    ratio = round(recommended_bid / official_estimate, 4)
+    # Calculate competitor statistics
+    if bid_values:
+        mean_comp = np.mean(bid_values)
+        median_comp = np.median(bid_values)
+        std_comp = np.std(bid_values)
+        min_comp = np.min(bid_values)
+        max_comp = np.max(bid_values)
+    else:
+        mean_comp = official_estimate * nppi_factor
+        median_comp = mean_comp
+        std_comp = official_estimate * 0.05
+        min_comp = official_estimate * 0.85
+        max_comp = official_estimate * 0.98
     
-    risk_map = [(0.87, "HIGH", "🔴", 0.60), (0.92, "MEDIUM", "🟡", 0.65)]
-    risk_level, risk_color, conf = next(((r, c, s) for lim, r, c, s in risk_map if ratio < lim), ("LOW", "🟢", 0.70))
+    # Calculate NPPI Price
+    nppi_price = official_estimate * nppi_factor
     
-    # ✅ CRITICAL FIX: Return clean dictionary
+    # Calculate Weighted Average (as per PPR 2025)
+    weighted_avg = (0.5 * mean_comp) + (0.2 * official_estimate) + (0.3 * nppi_price)
+    
+    # Calculate Standard Deviation
+    if len(bid_values) > 1:
+        squared_deviations = [(weighted_avg - bid) ** 2 for bid in bid_values]
+        variance = sum(squared_deviations) / len(bid_values)
+        weighted_std = np.sqrt(variance)
+    else:
+        weighted_std = official_estimate * 0.03
+    
+    # Calculate SLT Threshold
+    slt_threshold = weighted_avg - weighted_std
+    
+    # Calculate recommended bid based on risk tolerance
+    risk_multipliers = {'aggressive': 0.97, 'moderate': 1.00, 'conservative': 1.03}
+    base_bid = mean_comp * 0.98
+    recommended_bid = base_bid * risk_multipliers.get(risk_tolerance, 1.0)
+    
+    # Ensure bid is above SLT threshold
+    min_allowed = slt_threshold * 1.01
+    recommended_bid = max(recommended_bid, min_allowed)
+    recommended_bid = min(recommended_bid, official_estimate * 0.98)
+    
+    # Calculate win probability
+    if std_comp > 0:
+        win_probability = stats.norm.cdf((mean_comp - recommended_bid) / std_comp)
+    else:
+        win_probability = 0.50
+    win_probability = np.clip(win_probability, 0.05, 0.95)
+    
+    # Calculate confidence score
+    conf = 0.75 + (0.05 if len(bid_values) >= 5 else 0) + (0.05 if historical_data and len(historical_data) >= 10 else 0)
+    confidence_score = round(min(0.90, conf), 4)
+    
+    # Determine risk level based on bid ratio
+    bid_ratio = recommended_bid / official_estimate
+    if bid_ratio < 0.87:
+        risk_level, risk_color = "HIGH", "🔴"
+    elif bid_ratio < 0.92:
+        risk_level, risk_color = "MEDIUM", "🟡"
+    else:
+        risk_level, risk_color = "LOW", "🟢"
+    
     return {
-        'optimal_bid': recommended_bid,
-        'bid_ratio': ratio,
-        'win_probability': round(conf, 4),
+        'optimal_bid': round(recommended_bid, 3),
+        'bid_ratio': round(bid_ratio, 4),
+        'win_probability': round(win_probability, 4),
         'risk_level': risk_level,
         'risk_color': risk_color,
-        'confidence_score': round(conf, 4),
-        'method': 'Basic - Simple Average',  # ✅ Clean method string
-        'slt_threshold': round(official_estimate * 0.80, 3)
+        'confidence_score': confidence_score,
+        'method': f'Advanced - PPR 2025 (NPPI: {nppi_factor:.4f})',
+        'slt_threshold': round(slt_threshold, 3),
+        'nppi_factor': round(nppi_factor, 4),  # ✅ Return only the factor
+        'weighted_average': round(weighted_avg, 3),
+        'weighted_std_dev': round(weighted_std, 3),
+        'nppi_price': round(nppi_price, 3),
+        'avg_competitor': round(mean_comp, 3)
     }
 
-def calculate_basic_analysis_bak(official_estimate, competitor_bids, risk_tolerance='moderate'):
-    bid_values = _extract_bid_values(competitor_bids)
-    avg_comp = np.mean(bid_values) if bid_values else official_estimate * 0.92
-    
-    ratios = {'aggressive': 0.86, 'moderate': 0.89, 'conservative': 0.93}
-    ratio = ratios.get(risk_tolerance, 0.89)
-    recommended_bid = min(official_estimate * ratio, avg_comp * 0.99)
-    
-    risk_map = [(0.87, "HIGH", "🔴", 0.60), (0.92, "MEDIUM", "🟡", 0.65)]
-    risk_level, risk_color, conf = next(((r, c, s) for lim, r, c, s in risk_map if ratio < lim), ("LOW", "🟢", 0.70))
-    
-    return {
-        'optimal_bid': recommended_bid, 'bid_ratio': recommended_bid/official_estimate, 'win_probability': conf,
-        'risk_level': risk_level, 'risk_color': risk_color, 'confidence_score': conf,
-        'method': 'Basic - Simple Average', 'slt_threshold': official_estimate * 0.80
-    }
 
-def calculate_advanced_ppr_analysis(official_estimate, competitor_bids, procurement_type='goods', 
-                                     risk_tolerance='moderate', historical_data=None):
-    """PPR 2025 Compliant Advanced Analysis - Returns clean dictionary with proper method string"""
-    optimizer = AdvancedBidOptimizer()
-    try:
-        res = optimizer.calculate_optimal_bid(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data)
-        conf = 0.75 + (0.05 if len(_extract_bid_values(competitor_bids)) >= 5 else 0) + (0.05 if historical_data and len(historical_data) >= 10 else 0)
-        
-        # ✅ Ensure method is a clean string
-        return {
-            'optimal_bid': round(res['optimal_bid'], 3),
-            'bid_ratio': round(res['bid_ratio'], 4),
-            'win_probability': round(res['win_probability'], 4),
-            'risk_level': res['risk_level'],
-            'risk_color': res['risk_color'],
-            'confidence_score': round(min(0.90, conf), 4),
-            'method': 'Advanced - PPR 2025',  # ✅ Clean method string
-            'slt_threshold': round(res.get('slt_threshold', official_estimate * 0.80), 3),
-            'nppi_factor': round(res.get('nppi_factor', 0.92), 4),
-            'weighted_average': round(res.get('slt_analysis', {}).get('weighted_average', 0), 3)
-        }
-    except Exception as e:
-        print(f"Advanced analysis failed: {e}")
-        return calculate_basic_analysis(official_estimate, competitor_bids, risk_tolerance)
-    
-def calculate_advanced_ppr_analysis_bak(official_estimate, competitor_bids, procurement_type='goods', 
-                                     risk_tolerance='moderate', historical_data=None):
-    """PPR 2025 Compliant Advanced Analysis - Returns clean dictionary with proper method string"""
-    optimizer = AdvancedBidOptimizer()
-    try:
-        res = optimizer.calculate_optimal_bid(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data)
-        conf = 0.75 + (0.05 if len(_extract_bid_values(competitor_bids)) >= 5 else 0) + (0.05 if historical_data and len(historical_data) >= 10 else 0)
-        
-        # ✅ CRITICAL FIX: Ensure method is a clean string without concatenated values
-        return {
-            'optimal_bid': round(res['optimal_bid'], 3),
-            'bid_ratio': round(res['bid_ratio'], 4),
-            'win_probability': round(res['win_probability'], 4),
-            'risk_level': res['risk_level'],
-            'risk_color': res['risk_color'],
-            'confidence_score': round(min(0.90, conf), 4),
-            'method': 'Advanced - PPR 2025',  # ✅ Clean method string
-            'slt_threshold': round(res.get('slt_threshold', official_estimate * 0.80), 3),
-            'nppi_factor': round(res.get('nppi_factor', 0.92), 4),
-            'weighted_average': round(res.get('slt_analysis', {}).get('weighted_average', 0), 3)
-        }
-    except Exception as e:
-        print(f"Advanced analysis failed: {e}")
-        return calculate_basic_analysis(official_estimate, competitor_bids, risk_tolerance)
-
-
-def calculate_advanced_ppr_analysis_bak(official_estimate, competitor_bids, procurement_type='goods', 
-                                     risk_tolerance='moderate', historical_data=None):
-    optimizer = AdvancedBidOptimizer()  # Direct instantiation (no circular import)
-    try:
-        res = optimizer.calculate_optimal_bid(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data)
-        conf = 0.75 + (0.05 if len(_extract_bid_values(competitor_bids)) >= 5 else 0) + (0.05 if historical_data and len(historical_data) >= 10 else 0)
-        return {
-            'optimal_bid': res['optimal_bid'], 'bid_ratio': res['bid_ratio'], 'win_probability': res['win_probability'],
-            'risk_level': res['risk_level'], 'risk_color': res['risk_color'], 'confidence_score': min(0.90, conf),
-            'method': 'Advanced - PPR 2025 Compliant', 'slt_threshold': res.get('slt_threshold', official_estimate * 0.80),
-            'nppi_factor': res.get('nppi_factor', 0.92), 'weighted_average': res.get('slt_analysis', {}).get('weighted_average', 0)
-        }
-    except Exception as e:
-        return calculate_basic_analysis(official_estimate, competitor_bids, risk_tolerance)
 def calculate_enhanced_ml_analysis(official_estimate, competitor_bids, procurement_type='goods',
                                     risk_tolerance='moderate', historical_data=None, 
                                     competitor_tracker=None, market_factors=None):
@@ -373,92 +357,12 @@ def calculate_enhanced_ml_analysis(official_estimate, competitor_bids, procureme
         'expected_profit': round(ml_res.get('estimated_profit', 0), 3),
         'slt_threshold': round(official_estimate * 0.80, 3)
     }
-def calculate_enhanced_ml_analysis_bak(official_estimate, competitor_bids, procurement_type='goods',
-                                    risk_tolerance='moderate', historical_data=None, 
-                                    competitor_tracker=None, market_factors=None):
-    """Enhanced ML Analysis - Returns clean dictionary with proper formatting"""
-    if market_factors is None:
-        m = datetime.now().month
-        market_factors = {
-            'seasonality': {1:1.02,2:1.01,3:0.99,4:0.98,5:0.97,6:0.95,7:0.94,8:0.94,9:0.96,10:0.98,11:1.00,12:1.02}.get(m, 1.0),
-            'competition_level': 'high' if len(_extract_bid_values(competitor_bids)) > 8 else 'medium' if len(_extract_bid_values(competitor_bids)) > 4 else 'low',
-            'economic_factor': 1.0,
-            'policy_factor': 1.0
-        }
-    
-    try:
-        from modules.advanced_win_probability import enhance_win_probability, calculate_optimal_bid_with_ml
-        ml_res = calculate_optimal_bid_with_ml(official_estimate, competitor_bids, historical_data, risk_tolerance, market_factors)
-        wp_res = enhance_win_probability(ml_res['optimal_bid'], official_estimate, competitor_bids, historical_data, market_factors)
-    except Exception:
-        return calculate_advanced_ppr_analysis(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data)
-    
-    ratio = ml_res['optimal_bid'] / official_estimate
-    r_map = [(0.85,"HIGH","🔴"), (0.89,"MEDIUM-HIGH","🟠"), (0.93,"MEDIUM","🟡"), (0.96,"MEDIUM-LOW","🟢")]
-    risk_level, risk_color = next(((r,c) for lim,r,c in r_map if ratio < lim), ("LOW","🔵"))
-    
-    market_intel = {}
-    if competitor_tracker:
-        try: 
-            market_intel = competitor_tracker.get_competitor_insights()
-        except: 
-            pass
-    
-    # ✅ CRITICAL FIX: Return clean dictionary with proper method string
-    return {
-        'optimal_bid': round(ml_res['optimal_bid'], 3),
-        'bid_ratio': round(ratio, 4),
-        'win_probability': round(wp_res.get('win_probability', 0.65), 4),
-        'confidence_score': round(wp_res.get('confidence_score', 0.85), 4),
-        'risk_level': risk_level,
-        'risk_color': risk_color,
-        'method': 'Enhanced - ML Analysis',  # ✅ Clean method string
-        'contributing_factors': wp_res.get('contributing_factors', {}),
-        'market_intelligence': market_intel,
-        'expected_value': round(ml_res.get('expected_value', 0), 3),
-        'expected_profit': round(ml_res.get('estimated_profit', 0), 3),
-        'slt_threshold': round(official_estimate * 0.80, 3)
-    }
 
-
-def calculate_enhanced_ml_analysis_bak(official_estimate, competitor_bids, procurement_type='goods',
-                                    risk_tolerance='moderate', historical_data=None, 
-                                    competitor_tracker=None, market_factors=None):
-    if market_factors is None:
-        m = datetime.now().month
-        market_factors = {
-            'seasonality': {1:1.02,2:1.01,3:0.99,4:0.98,5:0.97,6:0.95,7:0.94,8:0.94,9:0.96,10:0.98,11:1.00,12:1.02}.get(m, 1.0),
-            'competition_level': 'high' if len(_extract_bid_values(competitor_bids)) > 8 else 'medium' if len(_extract_bid_values(competitor_bids)) > 4 else 'low',
-            'economic_factor': 1.0, 'policy_factor': 1.0
-        }
-    
-    try:
-        ml_res = calculate_optimal_bid_with_ml(official_estimate, competitor_bids, historical_data, risk_tolerance, market_factors)
-        wp_res = enhance_win_probability(ml_res['optimal_bid'], official_estimate, competitor_bids, historical_data, market_factors)
-    except Exception:
-        return calculate_advanced_ppr_analysis(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data)
-    
-    ratio = ml_res['optimal_bid'] / official_estimate
-    r_map = [(0.85,"HIGH","🔴"), (0.89,"MEDIUM-HIGH","🟠"), (0.93,"MEDIUM","🟡"), (0.96,"MEDIUM-LOW","🟢")]
-    risk_level, risk_color = next(((r,c) for lim,r,c in r_map if ratio < lim), ("LOW","🔵"))
-    
-    market_intel = {}
-    if competitor_tracker:
-        try: market_intel = competitor_tracker.get_competitor_insights()
-        except: pass
-        
-    return {
-        'optimal_bid': ml_res['optimal_bid'], 'bid_ratio': ratio, 'win_probability': wp_res['win_probability'],
-        'confidence_score': wp_res['confidence_score'], 'risk_level': risk_level, 'risk_color': risk_color,
-        'method': 'Enhanced - ML with Competitor Tracking', 'contributing_factors': wp_res.get('contributing_factors', {}),
-        'market_intelligence': market_intel, 'expected_value': ml_res.get('expected_value', 0),
-        'expected_profit': ml_res.get('estimated_profit', 0), 'slt_threshold': official_estimate * 0.80
-    }
 def get_three_tier_comparison(official_estimate, competitor_bids, procurement_type='goods',
-                               risk_tolerance='moderate', historical_data=None, company_id=None):
+                               risk_tolerance='moderate', historical_data=None, company_id=None,
+                               nppi_factor=None):  # Add nppi_factor parameter
     """
-    Get comparison across all three tiers with clean data handling.
-    Returns properly formatted dictionary for PDF generation.
+    Get comparison across all three tiers with custom NPPI factor.
     """
     # Ensure competitor_bids is a list of numeric values
     if competitor_bids:
@@ -469,13 +373,6 @@ def get_three_tier_comparison(official_estimate, competitor_bids, procurement_ty
     else:
         bid_values = []
     
-    # Debug print
-    print(f"🔍 get_three_tier_comparison called with:")
-    print(f"   Estimate: {official_estimate}")
-    print(f"   Competitor bids count: {len(bid_values)}")
-    print(f"   Risk tolerance: {risk_tolerance}")
-    print(f"   Company ID: {company_id}")
-    
     # Create competitor_tracker if company_id provided
     competitor_tracker = None
     if company_id:
@@ -483,16 +380,25 @@ def get_three_tier_comparison(official_estimate, competitor_bids, procurement_ty
             from modules.competitor_tracking import CompetitorTracker
             competitor_tracker = CompetitorTracker(company_id)
         except ImportError:
-            print("⚠️ CompetitorTracker not available")
+            pass
         except Exception as e:
             print(f"⚠️ Error creating CompetitorTracker: {e}")
     
-    # Get all three tiers
+    # Get all three tiers with custom NPPI
     basic_result = calculate_basic_analysis(official_estimate, bid_values, risk_tolerance)
-    advanced_result = calculate_advanced_ppr_analysis(official_estimate, bid_values, procurement_type, risk_tolerance, historical_data)
-    enhanced_result = calculate_enhanced_ml_analysis(official_estimate, bid_values, procurement_type, risk_tolerance, historical_data, competitor_tracker)
     
-    # Ensure all numeric values are rounded to 3 decimal places
+    # ✅ Pass nppi_factor to advanced analysis
+    advanced_result = calculate_advanced_ppr_analysis(
+        official_estimate, bid_values, procurement_type, 
+        risk_tolerance, historical_data, nppi_factor
+    )
+    
+    enhanced_result = calculate_enhanced_ml_analysis(
+        official_estimate, bid_values, procurement_type, 
+        risk_tolerance, historical_data, competitor_tracker
+    )
+    
+    # Ensure all numeric values are rounded
     for result in [basic_result, advanced_result, enhanced_result]:
         if 'optimal_bid' in result:
             result['optimal_bid'] = round(float(result['optimal_bid']), 3)
@@ -504,19 +410,6 @@ def get_three_tier_comparison(official_estimate, competitor_bids, procurement_ty
             result['confidence_score'] = round(float(result['confidence_score']), 4)
         if 'slt_threshold' in result:
             result['slt_threshold'] = round(float(result['slt_threshold']), 3)
-        
-        # Ensure method is clean
-        if 'method' not in result:
-            if result == basic_result:
-                result['method'] = 'Basic - Simple Average'
-            elif result == advanced_result:
-                result['method'] = 'Advanced - PPR 2025'
-            else:
-                result['method'] = 'Enhanced - ML Analysis'
-    
-    print(f"✅ Analysis complete - Basic bid: {basic_result.get('optimal_bid', 0)}")
-    print(f"✅ Analysis complete - Advanced bid: {advanced_result.get('optimal_bid', 0)}")
-    print(f"✅ Analysis complete - Enhanced bid: {enhanced_result.get('optimal_bid', 0)}")
     
     return {
         'basic': basic_result,
@@ -524,63 +417,6 @@ def get_three_tier_comparison(official_estimate, competitor_bids, procurement_ty
         'enhanced': enhanced_result
     }
 
-def get_three_tier_comparison_bak(official_estimate, competitor_bids, procurement_type='goods',
-                               risk_tolerance='moderate', historical_data=None, company_id=None):
-    """
-    Get comparison across all three tiers with clean data handling.
-    Returns properly formatted dictionary for PDF generation.
-    """
-    # Ensure competitor_bids is a list of numeric values
-    if competitor_bids:
-        if isinstance(competitor_bids[0], dict):
-            bid_values = [float(b.get('bid', 0)) for b in competitor_bids if b.get('bid', 0) > 0]
-        else:
-            bid_values = [float(b) for b in competitor_bids if b > 0]
-    else:
-        bid_values = []
-    
-    # Create competitor_tracker if company_id provided
-    competitor_tracker = None
-    if company_id:
-        try:
-            from modules.competitor_tracking import CompetitorTracker
-            competitor_tracker = CompetitorTracker(company_id)
-        except ImportError:
-            pass
-    
-    # Get all three tiers
-    basic_result = calculate_basic_analysis(official_estimate, bid_values, risk_tolerance)
-    advanced_result = calculate_advanced_ppr_analysis(official_estimate, bid_values, procurement_type, risk_tolerance, historical_data)
-    enhanced_result = calculate_enhanced_ml_analysis(official_estimate, bid_values, procurement_type, risk_tolerance, historical_data, competitor_tracker)
-    
-    # ✅ Ensure all numeric values are rounded to 3 decimal places
-    for result in [basic_result, advanced_result, enhanced_result]:
-        if 'optimal_bid' in result:
-            result['optimal_bid'] = round(result['optimal_bid'], 3)
-        if 'bid_ratio' in result:
-            result['bid_ratio'] = round(result['bid_ratio'], 4)
-        if 'win_probability' in result:
-            result['win_probability'] = round(result['win_probability'], 4)
-        if 'confidence_score' in result:
-            result['confidence_score'] = round(result['confidence_score'], 4)
-        if 'slt_threshold' in result:
-            result['slt_threshold'] = round(result['slt_threshold'], 3)
-    
-    return {
-        'basic': basic_result,
-        'advanced': advanced_result,
-        'enhanced': enhanced_result
-    }
-
-
-
-def get_three_tier_comparison_bak(official_estimate, competitor_bids, procurement_type='goods',
-                               risk_tolerance='moderate', historical_data=None, company_id=None):
-    return {
-        'basic': calculate_basic_analysis(official_estimate, competitor_bids, risk_tolerance),
-        'advanced': calculate_advanced_ppr_analysis(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data),
-        'enhanced': calculate_enhanced_ml_analysis(official_estimate, competitor_bids, procurement_type, risk_tolerance, historical_data, CompetitorTracker(company_id) if company_id else None)
-    }
 
 def calculate_optimal_bid_ppr2025(official_estimate, competitor_bids, procurement_type='goods', 
                                   risk_tolerance='moderate', historical_data=None, company_id=None):

@@ -60,7 +60,15 @@ class EnhancedReportData:
         self.competitor_bids_list = []
         self.competitor_names = []
         self._extract_competitor_bids(analysis_record)
+        # ✅ Extract NPPI information from analysis_record (passed from main.py)
+        self.nppi_factor = self._safe_float(analysis_record.get('nppi_factor', 0.920))
+        self.nppi_mode = self._safe_str(analysis_record.get('nppi_mode', 'Default'))
+        self.nppi_warning = analysis_record.get('nppi_warning', None)
         
+        # If nppi_factor is not in analysis_record, try to get it from advanced comparison
+        if self.nppi_factor == 0.920 and 'advanced' in self.comparison:
+            self.nppi_factor = self._safe_float(self.comparison['advanced'].get('nppi_factor', 0.920))
+
         # Calculate competitor statistics
         if self.competitor_bids_list:
             self.competitor_stats = {
@@ -128,6 +136,73 @@ class EnhancedReportData:
                         self.competitor_names.append(f'Competitor {len(self.competitor_bids_list)+1}')
     
     def _calculate_ppr_detailed(self):
+        """Calculate detailed PPR 2025 metrics using the captured NPPI factor"""
+        
+        # ✅ Use the NPPI factor from analysis (not hardcoded 0.92)
+        # If nppi_factor wasn't set, default to 0.92
+        nppi_factor = getattr(self, 'nppi_factor', 0.920)
+        
+        # NPPI Price (using the actual NPPI factor from analysis)
+        self.nppi_price = round(self.official_estimate * nppi_factor, 3)
+        
+        # Competitor statistics
+        if self.competitor_bids_list:
+            self.avg_competitor = round(np.mean(self.competitor_bids_list), 3)
+            self.std_competitor = round(np.std(self.competitor_bids_list), 3)
+            self.median_competitor = round(np.median(self.competitor_bids_list), 3)
+        else:
+            self.avg_competitor = round(self.official_estimate * 0.91, 3)
+            self.std_competitor = round(self.official_estimate * 0.05, 3)
+            self.median_competitor = self.avg_competitor
+        
+        # PPR Weights
+        weights = {
+            'competitor_avg': 0.50,
+            'official_est': 0.20,
+            'nppi': 0.30
+        }
+        
+        # Weighted Average (X̄) - using actual NPPI factor
+        self.weighted_avg = round(
+            weights['competitor_avg'] * self.avg_competitor +
+            weights['official_est'] * self.official_estimate +
+            weights['nppi'] * self.nppi_price,
+            3
+        )
+        
+        # Weighted Standard Deviation
+        competitor_sample = self.competitor_bids_list[:10] if self.competitor_bids_list else []
+        if competitor_sample:
+            squared_deviations = [(self.weighted_avg - price) ** 2 for price in competitor_sample]
+            variance = sum(squared_deviations) / len(competitor_sample)
+            self.weighted_std = round(np.sqrt(variance), 3)
+        else:
+            self.weighted_std = round(self.official_estimate * 0.03, 3)
+        
+        # SLT Threshold
+        self.slt_threshold = round(self.weighted_avg - self.weighted_std, 3)
+        
+        # Store the actual NPPI factor used
+        self.nppi_factor = nppi_factor
+        
+        # Market competitiveness score
+        if self.official_estimate > 0:
+            self.market_position = min(100, max(0, (1 - (self.recommended_bid / self.official_estimate)) * 100))
+        else:
+            self.market_position = 50
+        
+        # PPR Compliance Score
+        self.is_ppr_compliant = self.recommended_bid >= self.slt_threshold if self.slt_threshold > 0 else False
+        
+        if self.is_ppr_compliant:
+            self.compliance_margin = ((self.recommended_bid - self.slt_threshold) / self.slt_threshold * 100) if self.slt_threshold > 0 else 0
+            self.compliance_score = min(100, 70 + (self.compliance_margin * 2))
+        else:
+            self.compliance_margin = ((self.slt_threshold - self.recommended_bid) / self.slt_threshold * 100) if self.slt_threshold > 0 else 0
+            self.compliance_score = max(0, 70 - (self.compliance_margin * 3))
+
+
+    def _calculate_ppr_detailed_bak(self):
         """Calculate detailed PPR 2025 metrics"""
         # PPR 2025 Constants
         NPPI_FACTOR = 0.920
@@ -557,6 +632,16 @@ def render_enhanced_html_report(data: EnhancedReportData, return_html: bool = Fa
     status_text = "COMPLIANT" if data.is_ppr_compliant else "SLT RISK"
     risk_color = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#10b981"}.get(data.risk_level.upper(), "#6b7280")
     
+    # Build NPPI info HTML if not default
+    nppi_info_html = ""
+    if hasattr(data, 'nppi_mode') and data.nppi_mode != 'Default':
+        nppi_info_html = f"""
+        <div style='background: #f0f9ff; padding: 0.5rem; border-radius: 8px; margin: 0.5rem 0;'>
+            <small>📊 <strong>NPPI Configuration:</strong> {data.nppi_mode} | Factor: {data.nppi_factor:.4f}</small>
+            {f"<small style='color: #e67e22;'> ⚠️ {data.nppi_warning}</small>" if data.nppi_warning else ""}
+        </div>
+        """
+    
     # Competitor table (all with 3 decimals)
     comp_rows = [["#", "Competitor", "Bid Amount (BDT)", "% of Estimate", "Deviation"]]
     if data.competitor_bids_list:
@@ -684,6 +769,7 @@ def render_enhanced_html_report(data: EnhancedReportData, return_html: bool = Fa
                 <!-- PPR 2025 Calculation Breakdown -->
                 <div class="section">
                     <div class="section-title">📐 PPR 2025 Calculation Breakdown</div>
+                    {nppi_info_html}
                     {ppr_table_html}
                 </div>
                 
@@ -789,163 +875,176 @@ def generate_html_content_only(
     return _generate_html_content(data)
 
 def _generate_html_content(data: EnhancedReportData) -> str:
-        """Generate HTML content as string (without displaying)"""
-        logger.info("Generating HTML content for report")
-        # Generate visualizations
-        dist_fig = create_competitor_distribution_chart(data)
-        win_fig = create_win_probability_curve(data)
-        radar_fig = create_risk_radar_chart(data)
-        dashboard_fig = create_performance_dashboard(data)
-        
-        # Convert to base64
-        dist_img = fig_to_base64(dist_fig)
-        win_img = fig_to_base64(win_fig)
-        radar_img = fig_to_base64(radar_fig)
-        dashboard_img = fig_to_base64(dashboard_fig)
-        
-        # Generate detailed recommendation
-        detailed_recommendation = data.generate_detailed_ai_recommendation()
-        
-        # PPR breakdown
-        ppr_rows = data.get_ppr_breakdown_data()
-        ppr_table_html = _generate_html_table(ppr_rows)
-        
-        # Status styling
-        status_color = "#10b981" if data.is_ppr_compliant else "#ef4444"
-        status_icon = "✅" if data.is_ppr_compliant else "⚠️"
-        status_text = "COMPLIANT" if data.is_ppr_compliant else "SLT RISK"
-        
-        # Competitor table
-        comp_rows = [["#", "Competitor", "Bid Amount (BDT)", "% of Estimate", "Deviation"]]
-        if data.competitor_bids_list:
-            sorted_comp = sorted(zip(data.competitor_names, data.competitor_bids_list), key=lambda x: x[1])
-            for i, (name, bid) in enumerate(sorted_comp, 1):
-                pct = (bid / data.official_estimate * 100) if data.official_estimate > 0 else 0
-                dev = ((bid - data.official_estimate) / data.official_estimate * 100) if data.official_estimate > 0 else 0
-                highlight = "🏆 " if i == 1 else ""
-                comp_rows.append([str(i), f"{highlight}{name}", f"{bid:,.3f}", f"{pct:.2f}%", f"{dev:+.2f}%"])
-        
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>TenderAI - Enhanced Analysis Report</title>
-            <style>
-                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-                body {{ font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; }}
-                .report-container {{ max-width: 1400px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }}
-                .header {{ background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); color: white; padding: 30px; text-align: center; }}
-                .header h1 {{ font-size: 32px; margin-bottom: 8px; }}
-                .header p {{ font-size: 14px; opacity: 0.9; }}
-                .content {{ padding: 30px; }}
-                .section {{ margin-bottom: 35px; }}
-                .section-title {{ font-size: 22px; font-weight: bold; color: #1e3a8a; border-left: 5px solid #3b82f6; padding-left: 15px; margin-bottom: 20px; }}
-                .info-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; background: #f8fafc; padding: 20px; border-radius: 12px; }}
-                .info-item {{ padding: 10px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-                .info-label {{ font-size: 12px; color: #64748b; margin-bottom: 5px; }}
-                .info-value {{ font-size: 18px; font-weight: bold; color: #1e293b; }}
-                .recommendation-box {{ background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left: 5px solid #10b981; padding: 20px; border-radius: 12px; margin: 20px 0; line-height: 1.6; }}
-                table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-                th {{ background: #1e3a8a; color: white; padding: 12px; text-align: left; }}
-                td {{ padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }}
-                tr:hover {{ background: #f1f5f9; }}
-                .viz-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 20px 0; }}
-                .viz-card {{ background: #f8fafc; border-radius: 12px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-                .viz-card img {{ width: 100%; height: auto; border-radius: 8px; }}
-                .stats-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }}
-                .stat-card {{ text-align: center; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; }}
-                .stat-value {{ font-size: 28px; font-weight: bold; }}
-                .stat-label {{ font-size: 12px; opacity: 0.9; margin-top: 5px; }}
-                .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
-                .footer {{ background: #f1f5f9; padding: 20px; text-align: center; font-size: 11px; color: #64748b; }}
-            </style>
-        </head>
-        <body>
-            <div class="report-container">
-                <div class="header">
-                    <h1>🤖 TenderAI</h1>
-                    <p>AI Enhanced Bid Management System • PPR 2025 Compliant</p>
-                    <small>Generated: {data.generated_at.strftime('%Y-%m-%d %H:%M:%S')} | Analysis ID: {data.tender_id}</small>
+    """Generate HTML content as string (without displaying)"""
+    logger.info("Generating HTML content for report")
+    
+    # Generate visualizations
+    dist_fig = create_competitor_distribution_chart(data)
+    win_fig = create_win_probability_curve(data)
+    radar_fig = create_risk_radar_chart(data)
+    dashboard_fig = create_performance_dashboard(data)
+    
+    # Convert to base64
+    dist_img = fig_to_base64(dist_fig)
+    win_img = fig_to_base64(win_fig)
+    radar_img = fig_to_base64(radar_fig)
+    dashboard_img = fig_to_base64(dashboard_fig)
+    
+    # Generate detailed recommendation
+    detailed_recommendation = data.generate_detailed_ai_recommendation()
+    
+    # PPR breakdown
+    ppr_rows = data.get_ppr_breakdown_data()
+    ppr_table_html = _generate_html_table(ppr_rows)
+    
+    # Status styling
+    status_color = "#10b981" if data.is_ppr_compliant else "#ef4444"
+    status_icon = "✅" if data.is_ppr_compliant else "⚠️"
+    status_text = "COMPLIANT" if data.is_ppr_compliant else "SLT RISK"
+    
+    # Build NPPI info HTML if not default
+    nppi_info_html = ""
+    if hasattr(data, 'nppi_mode') and data.nppi_mode != 'Default':
+        nppi_info_html = f"""
+        <div style='background: #f0f9ff; padding: 0.5rem; border-radius: 8px; margin: 0.5rem 0;'>
+            <small>📊 <strong>NPPI Configuration:</strong> {data.nppi_mode} | Factor: {data.nppi_factor:.4f}</small>
+            {f"<small style='color: #e67e22;'> ⚠️ {data.nppi_warning}</small>" if data.nppi_warning else ""}
+        </div>
+        """
+    
+    # Competitor table
+    comp_rows = [["#", "Competitor", "Bid Amount (BDT)", "% of Estimate", "Deviation"]]
+    if data.competitor_bids_list:
+        sorted_comp = sorted(zip(data.competitor_names, data.competitor_bids_list), key=lambda x: x[1])
+        for i, (name, bid) in enumerate(sorted_comp, 1):
+            pct = (bid / data.official_estimate * 100) if data.official_estimate > 0 else 0
+            dev = ((bid - data.official_estimate) / data.official_estimate * 100) if data.official_estimate > 0 else 0
+            highlight = "🏆 " if i == 1 else ""
+            comp_rows.append([str(i), f"{highlight}{name}", f"{bid:,.3f}", f"{pct:.2f}%", f"{dev:+.2f}%"])
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>TenderAI - Enhanced Analysis Report</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; }}
+            .report-container {{ max-width: 1400px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }}
+            .header {{ background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); color: white; padding: 30px; text-align: center; }}
+            .header h1 {{ font-size: 32px; margin-bottom: 8px; }}
+            .header p {{ font-size: 14px; opacity: 0.9; }}
+            .content {{ padding: 30px; }}
+            .section {{ margin-bottom: 35px; }}
+            .section-title {{ font-size: 22px; font-weight: bold; color: #1e3a8a; border-left: 5px solid #3b82f6; padding-left: 15px; margin-bottom: 20px; }}
+            .info-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; background: #f8fafc; padding: 20px; border-radius: 12px; }}
+            .info-item {{ padding: 10px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+            .info-label {{ font-size: 12px; color: #64748b; margin-bottom: 5px; }}
+            .info-value {{ font-size: 18px; font-weight: bold; color: #1e293b; }}
+            .recommendation-box {{ background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-left: 5px solid #10b981; padding: 20px; border-radius: 12px; margin: 20px 0; line-height: 1.6; }}
+            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+            th {{ background: #1e3a8a; color: white; padding: 12px; text-align: left; }}
+            td {{ padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }}
+            tr:hover {{ background: #f1f5f9; }}
+            .viz-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 20px 0; }}
+            .viz-card {{ background: #f8fafc; border-radius: 12px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+            .viz-card img {{ width: 100%; height: auto; border-radius: 8px; }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }}
+            .stat-card {{ text-align: center; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; }}
+            .stat-value {{ font-size: 28px; font-weight: bold; }}
+            .stat-label {{ font-size: 12px; opacity: 0.9; margin-top: 5px; }}
+            .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
+            .footer {{ background: #f1f5f9; padding: 20px; text-align: center; font-size: 11px; color: #64748b; }}
+        </style>
+    </head>
+    <body>
+        <div class="report-container">
+            <div class="header">
+                <h1>🤖 TenderAI</h1>
+                <p>AI Enhanced Bid Management System • PPR 2025 Compliant</p>
+                <small>Generated: {data.generated_at.strftime('%Y-%m-%d %H:%M:%S')} | Analysis ID: {data.tender_id}</small>
+            </div>
+            
+            <div class="content">
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-value">{len(data.competitor_bids_list)}</div><div class="stat-label">Competitors</div></div>
+                    <div class="stat-card"><div class="stat-value">{data.win_probability*100:.0f}%</div><div class="stat-label">Win Probability</div></div>
+                    <div class="stat-card"><div class="stat-value">BDT {data.recommended_bid:,.3f}</div><div class="stat-label">Recommended Bid</div></div>
+                    <div class="stat-card"><div class="stat-value">{data.bid_ratio*100:.2f}%</div><div class="stat-label">of Estimate</div></div>
                 </div>
                 
-                <div class="content">
-                    <div class="stats-grid">
-                        <div class="stat-card"><div class="stat-value">{len(data.competitor_bids_list)}</div><div class="stat-label">Competitors</div></div>
-                        <div class="stat-card"><div class="stat-value">{data.win_probability*100:.0f}%</div><div class="stat-label">Win Probability</div></div>
-                        <div class="stat-card"><div class="stat-value">BDT {data.recommended_bid:,.3f}</div><div class="stat-label">Recommended Bid</div></div>
-                        <div class="stat-card"><div class="stat-value">{data.bid_ratio*100:.2f}%</div><div class="stat-label">of Estimate</div></div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">📋 Tender Information</div>
-                        <div class="info-grid">
-                            <div class="info-item"><div class="info-label">Tender ID</div><div class="info-value">{data.tender_id}</div></div>
-                            <div class="info-item"><div class="info-label">Procuring Entity</div><div class="info-value">{data.procuring_entity[:40]}</div></div>
-                            <div class="info-item"><div class="info-label">Official Estimate</div><div class="info-value">BDT {data.official_estimate:,.3f}</div></div>
-                            <div class="info-item"><div class="info-label">Procurement Type</div><div class="info-value">{data.procurement_type}</div></div>
-                            <div class="info-item"><div class="info-label">Location</div><div class="info-value">{data.division} / {data.district}</div></div>
-                            <div class="info-item"><div class="info-label">Risk Tolerance</div><div class="info-value">{data.risk_tolerance}</div></div>
-                            <div class="info-item"><div class="info-label">SLT Threshold</div><div class="info-value">BDT {data.slt_threshold:,.3f}</div></div>
-                            <div class="info-item"><div class="info-label">Compliance</div><div class="info-value"><span class="badge" style="background:{status_color}20; color:{status_color};">{status_icon} {status_text}</span></div></div>
-                        </div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">🎯 AI Recommendation</div>
-                        <div class="recommendation-box">
-                            <strong>💡 Strategic Analysis:</strong><br>
-                            {detailed_recommendation}
-                        </div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">📊 Visual Performance Dashboard</div>
-                        <div class="viz-grid">
-                            <div class="viz-card"><img src="data:image/png;base64,{dashboard_img}" alt="Performance Dashboard"></div>
-                            <div class="viz-card"><img src="data:image/png;base64,{radar_img}" alt="Risk Assessment"></div>
-                            <div class="viz-card"><img src="data:image/png;base64,{dist_img}" alt="Competitor Distribution"></div>
-                            <div class="viz-card"><img src="data:image/png;base64,{win_img}" alt="Win Probability Curve"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">🔄 Three-Tier Analysis Comparison</div>
-                        {_generate_html_table(data.get_tier_table_data())}
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">👥 Competitor Intelligence ({len(data.competitor_bids_list)} competitors)</div>
-                        {_generate_html_table(comp_rows)}
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">📐 PPR 2025 Calculation Breakdown</div>
-                        {ppr_table_html}
-                    </div>
-                    
-                    <div class="section">
-                        <div class="section-title">💰 Financial Projections</div>
-                        <div class="info-grid">
-                            <div class="info-item"><div class="info-label">Estimated Cost</div><div class="info-value">BDT {data.estimated_cost:,.3f}</div></div>
-                            <div class="info-item"><div class="info-label">Expected Profit</div><div class="info-value">BDT {data.expected_profit:,.3f}</div></div>
-                            <div class="info-item"><div class="info-label">Win Probability</div><div class="info-value">{data.win_probability*100:.0f}%</div></div>
-                            <div class="info-item"><div class="info-label">Expected Value</div><div class="info-value">BDT {data.expected_value:,.3f}</div></div>
-                        </div>
+                <div class="section">
+                    <div class="section-title">📋 Tender Information</div>
+                    <div class="info-grid">
+                        <div class="info-item"><div class="info-label">Tender ID</div><div class="info-value">{data.tender_id}</div></div>
+                        <div class="info-item"><div class="info-label">Procuring Entity</div><div class="info-value">{data.procuring_entity[:40]}</div></div>
+                        <div class="info-item"><div class="info-label">Official Estimate</div><div class="info-value">BDT {data.official_estimate:,.3f}</div></div>
+                        <div class="info-item"><div class="info-label">Procurement Type</div><div class="info-value">{data.procurement_type}</div></div>
+                        <div class="info-item"><div class="info-label">Location</div><div class="info-value">{data.division} / {data.district}</div></div>
+                        <div class="info-item"><div class="info-label">Risk Tolerance</div><div class="info-value">{data.risk_tolerance}</div></div>
+                        <div class="info-item"><div class="info-label">SLT Threshold</div><div class="info-value">BDT {data.slt_threshold:,.3f}</div></div>
+                        <div class="info-item"><div class="info-label">Compliance</div><div class="info-value"><span class="badge" style="background:{status_color}20; color:{status_color};">{status_icon} {status_text}</span></div></div>
                     </div>
                 </div>
                 
-                <div class="footer">
-                    <strong>Disclaimer:</strong> This AI-generated analysis complies with Bangladesh PPR 2025 guidelines.<br>
-                    Final bidding decisions should consider project-specific risks, internal cost structures, and strategic objectives.
-                    {f"<br>Prepared for: {data.user_info.get('full_name', 'N/A')} | {data.user_info.get('company_name', 'N/A')}" if data.user_info else ""}
+                <div class="section">
+                    <div class="section-title">🎯 AI Recommendation</div>
+                    <div class="recommendation-box">
+                        <strong>💡 Strategic Analysis:</strong><br>
+                        {detailed_recommendation}
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">📊 Visual Performance Dashboard</div>
+                    <div class="viz-grid">
+                        <div class="viz-card"><img src="data:image/png;base64,{dashboard_img}" alt="Performance Dashboard"></div>
+                        <div class="viz-card"><img src="data:image/png;base64,{radar_img}" alt="Risk Assessment"></div>
+                        <div class="viz-card"><img src="data:image/png;base64,{dist_img}" alt="Competitor Distribution"></div>
+                        <div class="viz-card"><img src="data:image/png;base64,{win_img}" alt="Win Probability Curve"></div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">🔄 Three-Tier Analysis Comparison</div>
+                    {_generate_html_table(data.get_tier_table_data())}
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">👥 Competitor Intelligence ({len(data.competitor_bids_list)} competitors)</div>
+                    {_generate_html_table(comp_rows)}
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">📐 PPR 2025 Calculation Breakdown</div>
+                    {nppi_info_html}
+                    {ppr_table_html}
+                </div>
+                
+                <div class="section">
+                    <div class="section-title">💰 Financial Projections</div>
+                    <div class="info-grid">
+                        <div class="info-item"><div class="info-label">Estimated Cost</div><div class="info-value">BDT {data.estimated_cost:,.3f}</div></div>
+                        <div class="info-item"><div class="info-label">Expected Profit</div><div class="info-value">BDT {data.expected_profit:,.3f}</div></div>
+                        <div class="info-item"><div class="info-label">Win Probability</div><div class="info-value">{data.win_probability*100:.0f}%</div></div>
+                        <div class="info-item"><div class="info-label">Expected Value</div><div class="info-value">BDT {data.expected_value:,.3f}</div></div>
+                    </div>
                 </div>
             </div>
-        </body>
-        </html>
-        """
-        
-        return html
+            
+            <div class="footer">
+                <strong>Disclaimer:</strong> This AI-generated analysis complies with Bangladesh PPR 2025 guidelines.<br>
+                Final bidding decisions should consider project-specific risks, internal cost structures, and strategic objectives.
+                {f"<br>Prepared for: {data.user_info.get('full_name', 'N/A')} | {data.user_info.get('company_name', 'N/A')}" if data.user_info else ""}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html
+
 
 def generate_enhanced_report(
     analysis_record: Dict, 
@@ -1188,45 +1287,56 @@ def generate_pdf_report(data: EnhancedReportData) -> io.BytesIO:
         # ====================== PPR 2025 CALCULATION BREAKDOWN ======================
         story.append(Paragraph("📐 PPR 2025 Calculation Breakdown", section_style))
 
+        # Add NPPI Configuration info if not default (for PDF)
+        if hasattr(data, 'nppi_mode') and data.nppi_mode != 'Default':
+            nppi_config_text = f"<b>NPPI Configuration:</b> {data.nppi_mode} | Factor: {data.nppi_factor:.4f}"
+            if data.nppi_warning:
+                nppi_config_text += f" ⚠️ {data.nppi_warning}"
+            story.append(Paragraph(nppi_config_text, ParagraphStyle('NPPIInfo', parent=normal_style, fontSize=9, textColor=colors.HexColor('#2563eb'), spaceAfter=8)))
+            story.append(Spacer(1, 4))
+
         nppi_price = data.official_estimate * data.nppi_factor
         weighted_avg_full = getattr(data, 'weighted_avg', 0)
         weighted_std_full = getattr(data, 'weighted_std', 0)
         slt_threshold_full = getattr(data, 'slt_threshold', 0)
 
+        # Create a small font style for the formula descriptions
+        small_font_style = ParagraphStyle('Small', parent=normal_style, fontSize=8, leading=10)
+
         ppr_breakdown = [
             ["Step", "Formula / Description", "Calculation", "Result"],
             ["1", Paragraph("Official Estimate<br/><font color='#666666'>From tender document</font>", small_font_style),
-             f"BDT {data.official_estimate:,.3f}", "Base Value"],
+            f"BDT {data.official_estimate:,.3f}", "Base Value"],
             
             ["2", Paragraph("NPPI Factor<br/><font color='#666666'>28-day market average</font>", small_font_style),
-             f"{data.nppi_factor:.3f}", "Index Factor"],
+            f"{data.nppi_factor:.3f}", "Index Factor"],
             
             ["3", Paragraph("NPPI Price<br/><font color='#666666'>Estimate × NPPI Factor</font>", small_font_style),
-             f"{data.official_estimate:,.0f} × {data.nppi_factor:.3f}", f"BDT {nppi_price:,.3f}"],
+            f"{data.official_estimate:,.0f} × {data.nppi_factor:.3f}", f"BDT {nppi_price:,.3f}"],
             
             ["4", Paragraph("Avg Competitor<br/><font color='#666666'>Σ(Comp Bids) ÷ N</font>", small_font_style),
-             f"({len(getattr(data, 'competitor_bids_list', []))} bids)", f"BDT {getattr(data, 'avg_competitor', 0):,.3f}"],
+            f"({len(getattr(data, 'competitor_bids_list', []))} bids)", f"BDT {getattr(data, 'avg_competitor', 0):,.3f}"],
             
             ["5", Paragraph("Weighted Avg (X̄)<br/><font color='#666666'>0.5(Avg) + 0.2(Est) + 0.3(NPPI)</font>", small_font_style),
-             Paragraph(f"0.5×{getattr(data, 'avg_competitor', 0):,.0f}<br/>"
-                       f"+ 0.2×{data.official_estimate:,.0f}<br/>"
-                       f"+ 0.3×{nppi_price:,.0f}",
-                       ParagraphStyle('Calc', parent=normal_style, fontSize=8, leading=10)),
-             f"BDT {weighted_avg_full:,.3f}"],
+            Paragraph(f"0.5×{getattr(data, 'avg_competitor', 0):,.0f}<br/>"
+                    f"+ 0.2×{data.official_estimate:,.0f}<br/>"
+                    f"+ 0.3×{nppi_price:,.0f}",
+                    ParagraphStyle('Calc', parent=normal_style, fontSize=8, leading=10)),
+            f"BDT {weighted_avg_full:,.3f}"],
             
             ["6", Paragraph("Std Deviation (Sd)<br/><font color='#666666'>√[Σ(x̄ - xᵢ)²/(n-1)]</font>", small_font_style),
-             f"σ = {weighted_std_full:,.3f}", f"BDT {weighted_std_full:,.3f}"],
+            f"σ = {weighted_std_full:,.3f}", f"BDT {weighted_std_full:,.3f}"],
             
             ["7", Paragraph("SLT Threshold<br/><font color='#666666'>X̄ - Sd</font>", small_font_style),
-             f"{weighted_avg_full:,.0f} - {weighted_std_full:,.0f}", f"BDT {slt_threshold_full:,.3f}"],
+            f"{weighted_avg_full:,.0f} - {weighted_std_full:,.0f}", f"BDT {slt_threshold_full:,.3f}"],
             
             ["8", Paragraph("Recommended Bid<br/><font color='#666666'>AI Optimized</font>", small_font_style),
-             "Based on win probability", f"BDT {data.recommended_bid:,.3f}"],
+            "Based on win probability", f"BDT {data.recommended_bid:,.3f}"],
             
             ["9", Paragraph("Compliance Check<br/><font color='#666666'>Bid ≥ SLT?</font>", small_font_style),
-             f"{data.recommended_bid:,.0f} ≥ {slt_threshold_full:,.0f}",
-             Paragraph(f"<b><font color='{'green' if getattr(data, 'is_ppr_compliant', False) else 'red'}'>"
-                       f"{'✅ PASS' if getattr(data, 'is_ppr_compliant', False) else '❌ FAIL'}</font></b>", normal_style)],
+            f"{data.recommended_bid:,.0f} ≥ {slt_threshold_full:,.0f}",
+            Paragraph(f"<b><font color='{'green' if getattr(data, 'is_ppr_compliant', False) else 'red'}'>"
+                    f"{'✅ PASS' if getattr(data, 'is_ppr_compliant', False) else '❌ FAIL'}</font></b>", normal_style)],
         ]
 
         breakdown_table = Table(ppr_breakdown, colWidths=[0.5*inch, 1.95*inch, 2.15*inch, 1.3*inch], repeatRows=1)
@@ -1237,10 +1347,11 @@ def generate_pdf_report(data: EnhancedReportData) -> io.BytesIO:
             ('ALIGN', (2,1), (2,-1), 'LEFT'),
             ('ALIGN', (3,1), (3,-1), 'RIGHT'),
             ('BACKGROUND', (0,-1), (-1,-1), 
-             colors.HexColor('#ecfdf5') if getattr(data, 'is_ppr_compliant', False) else colors.HexColor('#fef2f2')),
+            colors.HexColor('#ecfdf5') if getattr(data, 'is_ppr_compliant', False) else colors.HexColor('#fef2f2')),
         ]))
         story.append(breakdown_table)
         story.append(Spacer(1, 18))
+
 
         # ====================== FINANCIAL PROJECTIONS ======================
         story.append(Paragraph("💰 Financial Projections", section_style))

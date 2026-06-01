@@ -2645,290 +2645,6 @@ def model_to_form():
     st.session_state.input_procurement_type = st.session_state.tender_form_data['procurement_type']
     st.session_state.analysis_risk_tolerance = st.session_state.tender_form_data['risk_tolerance']
 
-# =============================================================================
-# REPLACE THE EXISTING tender_analysis_page() IN main.py WITH THIS VERSION
-# =============================================================================
-
-def generate_html_report(analysis_record: dict, comparison: dict, best_result: dict, best_tier: str, comp_bids: list, is_manual_mode: bool) -> str:
-    """Generate HTML report matching PDF format"""
-    
-    # Build competitor table HTML
-    competitor_rows_html = ""
-    for i, cb in enumerate(comp_bids, 1):
-        cb_bid = float(cb.get('bid', 0))
-        pct = (cb_bid / analysis_record['official_estimate'] * 100) if analysis_record['official_estimate'] > 0 else 0
-        dev = ((cb_bid - analysis_record['official_estimate']) / analysis_record['official_estimate'] * 100) if analysis_record['official_estimate'] > 0 else 0
-        competitor_rows_html += f"""
-        <tr>
-            <td>{cb.get('name', f'Competitor {i}')}</td>
-            <td>BDT {cb_bid:,.2f}</td>
-            <td>{pct:.1f}%</td>
-            <td style="color: {'green' if dev < 0 else 'red'}">{dev:+.1f}%</td>
-        </tr>
-        """
-    
-    # Build comparison table HTML
-    comparison_rows_html = ""
-    for tier, result in comparison.items():
-        win_pct = result.get('win_probability', 0) * 100
-        conf_pct = result.get('confidence_score', 0.7) * 100
-        comparison_rows_html += f"""
-        <tr>
-            <td><strong>{tier.upper()}</strong></td>
-            <td>{result.get('method', 'N/A')}</td>
-            <td>BDT {result.get('optimal_bid', 0):,.0f}</td>
-            <td>{win_pct:.0f}%</td>
-            <td>{conf_pct:.0f}%</td>
-            <td>{result.get('risk_level', 'N/A')}</td>
-        </tr>
-        """
-    
-    # Full HTML report
-    html_report = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Tender Analysis Report - {analysis_record.get('tender_id', 'N/A')}</title>
-        <style>
-            body {{
-                font-family: 'Segoe UI', Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }}
-            .report-container {{
-                max-width: 1200px;
-                margin: 0 auto;
-                background: white;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                overflow: hidden;
-            }}
-            .header {{
-                background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-                color: white;
-                padding: 20px;
-                text-align: center;
-            }}
-            .header h1 {{ margin: 0; font-size: 24px; }}
-            .header p {{ margin: 5px 0 0; opacity: 0.9; }}
-            .content {{ padding: 20px; }}
-            .section {{
-                background: #f8f9fa;
-                padding: 15px;
-                border-radius: 8px;
-                margin-bottom: 20px;
-                border: 1px solid #e0e0e0;
-            }}
-            .section-title {{
-                font-size: 18px;
-                font-weight: bold;
-                color: #1e3c72;
-                margin-bottom: 15px;
-                padding-bottom: 8px;
-                border-bottom: 2px solid #667eea;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 10px;
-            }}
-            th, td {{
-                border: 1px solid #ddd;
-                padding: 10px;
-                text-align: left;
-                font-size: 12px;
-            }}
-            th {{
-                background-color: #f2f2f2;
-                font-weight: bold;
-            }}
-            .metric-card {{
-                background: white;
-                padding: 15px;
-                border-radius: 8px;
-                margin: 10px 0;
-                border-left: 4px solid #28a745;
-            }}
-            .metric-value {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #1e3c72;
-            }}
-            .metric-label {{
-                font-size: 12px;
-                color: #666;
-                margin-top: 5px;
-            }}
-            .grid-3 {{
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 15px;
-                margin: 15px 0;
-            }}
-            .footer {{
-                background: #f8f9fa;
-                padding: 15px;
-                text-align: center;
-                font-size: 10px;
-                color: #666;
-                border-top: 1px solid #e0e0e0;
-            }}
-            .badge-success {{
-                background-color: #d4edda;
-                color: #155724;
-                padding: 2px 8px;
-                border-radius: 12px;
-                font-size: 11px;
-                display: inline-block;
-            }}
-            .badge-warning {{
-                background-color: #fff3cd;
-                color: #856404;
-                padding: 2px 8px;
-                border-radius: 12px;
-                font-size: 11px;
-                display: inline-block;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="report-container">
-            <div class="header">
-                <h1>🏗️ TenderAI Analysis Report</h1>
-                <p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <p>Tender ID: {analysis_record.get('tender_id', 'N/A')}</p>
-            </div>
-            
-            <div class="content">
-                <!-- Tender Information -->
-                <div class="section">
-                    <div class="section-title">📋 Tender Information</div>
-                    <table>
-                        <tr><th>Field</th><th>Value</th><th>Field</th><th>Value</th></tr>
-                        <tr>
-                            <td>Tender ID</td><td>{analysis_record.get('tender_id', 'N/A')}</td>
-                            <td>Procuring Entity</td><td>{analysis_record.get('procuring_entity', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>Tender Title</td><td colspan="3">{analysis_record.get('tender_title', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>Official Estimate</td><td>BDT {analysis_record.get('official_estimate', 0):,.3f}</td>
-                            <td>Procurement Type</td><td>{analysis_record.get('procurement_type', 'works').upper()}</td>
-                        </tr>
-                        <tr>
-                            <td>Division</td><td>{analysis_record.get('division', 'N/A')}</td>
-                            <td>District</td><td>{analysis_record.get('district', 'N/A')}</td>
-                        </tr>
-                        <tr>
-                            <td>Risk Tolerance</td><td>{analysis_record.get('risk_tolerance', 'moderate').title()}</td>
-                            <td>Competitors</td><td>{len(comp_bids)} ({'Manual' if is_manual_mode else 'Auto-Generated'})</td>
-                        </tr>
-                    </table>
-                </div>
-                
-                <!-- AI Recommendations -->
-                <div class="section">
-                    <div class="section-title">🎯 AI Recommendations</div>
-                    <div class="metric-card">
-                        <div class="metric-value">BDT {best_result['optimal_bid']:,.3f}</div>
-                        <div class="metric-label">Recommended Bid ({best_result['bid_ratio']*100:.3f}% of estimate)</div>
-                        <div style="margin-top: 10px;">
-                            <span class="badge-success">Win Probability: {best_result['win_probability']*100:.3f}%</span>
-                            <span class="badge-warning">Risk Level: {best_result.get('risk_level', 'MEDIUM')}</span>
-                        </div>
-                        <p style="margin-top: 10px; font-size: 12px;">
-                            Based on {len(comp_bids)} competitor bids and PPR 2025 compliance metrics.
-                        </p>
-                    </div>
-                </div>
-                
-                <!-- Three-Tier Analysis Comparison -->
-                <div class="section">
-                    <div class="section-title">📊 Three-Tier Analysis Comparison</div>
-                    <table>
-                        <thead>
-                            <tr><th>Tier</th><th>Method</th><th>Optimal Bid</th><th>Win Prob</th><th>Confidence</th><th>Risk</th></tr>
-                        </thead>
-                        <tbody>
-                            {comparison_rows_html}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <!-- Competitor Intelligence -->
-                <div class="section">
-                    <div class="section-title">👥 Competitor Intelligence</div>
-                    <table>
-                        <thead>
-                            <tr><th>Competitor</th><th>Bid Amount</th><th>% of Estimate</th><th>Deviation</th></tr>
-                        </thead>
-                        <tbody>
-                            {competitor_rows_html if competitor_rows_html else '<tr><td colspan="4">No competitor data available</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <!-- PPR 2025 Compliance -->
-                <div class="section">
-                    <div class="section-title">📜 PPR 2025 Compliance Check</div>
-                    <div class="grid-3">
-                        <div class="metric-card">
-                            <div class="metric-value">BDT {best_result.get('slt_threshold', analysis_record['official_estimate'] * 0.8):,.3f}</div>
-                            <div class="metric-label">SLT Threshold</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-value">BDT {best_result['optimal_bid']:,.3f}</div>
-                            <div class="metric-label">Recommended Bid</div>
-                        </div>
-                        <div class="metric-card">
-                            <div class="metric-value">{best_result.get('nppi_factor', 0.92):.3f}</div>
-                            <div class="metric-label">NPPI Factor</div>
-                        </div>
-                    </div>
-                    <div style="text-align: center; margin-top: 15px;">
-                        <span class="badge-success" style="font-size: 14px;">
-                            {'✅ COMPLIANT' if best_result['optimal_bid'] >= best_result.get('slt_threshold', 0) else '⚠️ SLT RISK'}
-                        </span>
-                    </div>
-                </div>
-                
-                <!-- Financial Projections -->
-                <div class="section">
-                    <div class="section-title">💰 Financial Projections</div>
-                    <table>
-                        <tr><th>Metric</th><th>Value</th><th>Interpretation</th></tr>
-                        <tr>
-                            <td>Estimated Cost</td>
-                            <td>BDT {analysis_record['official_estimate'] * 0.85:,.3f}</td>
-                            <td>85% of official estimate</td>
-                        </tr>
-                        <tr>
-                            <td>Expected Profit</td>
-                            <td>BDT {best_result['optimal_bid'] - (analysis_record['official_estimate'] * 0.85):,.3f}</td>
-                            <td>If bid wins</td>
-                        </tr>
-                        <tr>
-                            <td>Expected Value</td>
-                            <td>BDT {(best_result['optimal_bid'] - (analysis_record['official_estimate'] * 0.85)) * best_result['win_probability']:,.3f}</td>
-                            <td>Profit × Win Probability</td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
-            
-            <div class="footer">
-                <b>Disclaimer:</b> This AI-generated analysis complies with Bangladesh PPR 2025 guidelines. Final bidding decisions should consider project-specific risks, internal cost structures, and strategic objectives. NPPI factor derived from 28-day market averages.
-                <br><br>
-                Prepared for: {st.session_state.get('full_name', 'N/A')} | {st.session_state.get('company_name', 'N/A')}
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    return html_report
 def tender_analysis_page() -> None:
     """Three-Tier Tender Analysis Page - Refactored with proper state management"""
     debug_print("🎯 Rendering tender analysis page")
@@ -3092,7 +2808,115 @@ def tender_analysis_page() -> None:
             <small>ID: {t.get('tender_id')} • Est: BDT {t.get('official_estimate',0):,.0f} • Deadline: {str(t.get('submission_deadline',''))[:10]}</small>
         </div>
         """, unsafe_allow_html=True)
+    # =============================================================================
+    # 🔹 NPPI FACTOR CONFIGURATION - MOVED OUTSIDE FORM FOR DYNAMIC UPDATES
+    # =============================================================================
+    st.markdown("---")
+    st.markdown("### 📊 NPPI Factor Configuration")
+    st.markdown("""
+    <div style="background: #f0f9ff; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;">
+        <small>💡 <strong>NPPI (Non-performing Price Index)</strong> is a key factor in PPR 2025 calculations.
+        It represents the 28-day market average and affects SLT threshold calculations.</small>
+    </div>
+    """, unsafe_allow_html=True)
     
+    # This is OUTSIDE the form, so it updates immediately when changed
+    nppi_mode = st.radio(
+        "Select NPPI Factor Method:",
+        options=["Default (0.92)", "Manual Entry", "Dynamic (Calculate from historical data)"],
+        index=0,
+        key="nppi_mode_radio_outside",
+        help="Choose how the NPPI factor should be calculated for this analysis",
+        horizontal=True
+    )
+    
+    nppi_factor_value = 0.920  # Default
+    nppi_warning = None
+    
+    # Conditional display based on selection (updates immediately because it's outside form)
+    if nppi_mode == "Default (0.92)":
+        st.info("📌 Using default NPPI factor: **0.920** (28-day market average)")
+        nppi_factor_value = 0.920
+        
+    elif nppi_mode == "Manual Entry":
+        st.success("✏️ **Manual Entry Mode Active** - Enter custom NPPI factor below")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            nppi_factor_value = st.number_input(
+                "Enter Custom NPPI Factor",
+                min_value=0.70,
+                max_value=1.15,
+                value=st.session_state.get('manual_nppi_value_outside', 0.920),
+                step=0.005,
+                format="%.3f",
+                key="manual_nppi_value_outside",
+                help="Enter a custom NPPI factor between 0.70 and 1.15"
+            )
+        
+        with col2:
+            official_estimate = st.session_state.get('input_official_estimate', 0)
+            nppi_price = official_estimate * nppi_factor_value
+            st.metric(
+                "NPPI Price", 
+                f"BDT {nppi_price:,.0f}",
+                delta=f"{(nppi_factor_value - 0.92) * 100:+.1f}% vs default"
+            )
+        
+        # Warning for extreme values
+        if nppi_factor_value < 0.85:
+            st.warning("⚠️ NPPI factor is significantly below market average (0.92)")
+        elif nppi_factor_value > 0.99:
+            st.warning("⚠️ NPPI factor is significantly above market average (0.92)")
+        else:
+            st.success(f"✅ NPPI factor {nppi_factor_value:.3f} is within normal range")
+    
+    elif nppi_mode == "Dynamic (Calculate from historical data)":
+        st.info("📊 **Dynamic Mode Active** - Calculating from historical data")
+        
+        try:
+            from modules.advanced_bid_optimizer import AdvancedBidOptimizer
+            optimizer = AdvancedBidOptimizer()
+            
+            historical_df = db.get_historical_tenders(st.session_state.company_id, limit=50)
+            
+            if historical_df is not None and not historical_df.empty:
+                with st.spinner("Calculating dynamic NPPI..."):
+                    historical_data = historical_df.to_dict('records')
+                    dynamic_nppi = optimizer.calculate_nppi(
+                        st.session_state.get('input_procurement_type', 'goods'),
+                        historical_data=historical_data
+                    )
+                    nppi_factor_value = dynamic_nppi
+                
+                st.success(f"✅ Dynamic NPPI: **{dynamic_nppi:.4f}** from {len(historical_df)} tenders")
+            else:
+                nppi_warning = "⚠️ No historical data. Using default 0.92"
+                nppi_factor_value = 0.920
+                st.warning(nppi_warning)
+                
+        except Exception as e:
+            nppi_warning = f"⚠️ Error: {str(e)}. Using default 0.92"
+            nppi_factor_value = 0.920
+            st.warning(nppi_warning)
+    
+    # Store NPPI values in session state for use in form
+    st.session_state.nppi_factor_value = nppi_factor_value
+    st.session_state.nppi_mode_selected = nppi_mode
+    
+    # Show current NPPI factor
+    official_estimate = st.session_state.get('input_official_estimate', 0)
+    nppi_price = official_estimate * nppi_factor_value
+    
+    st.markdown(f"""
+    <div style="background: #e8f5e9; padding: 0.75rem; border-radius: 8px; text-align: center;">
+        <strong>Current NPPI Factor:</strong> {nppi_factor_value:.4f}<br>
+        <small>NPPI Price: BDT {nppi_price:,.0f}</small>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+
     # =============================================================================
     # 🔹 BID SOURCE SELECTION
     # =============================================================================
@@ -3346,7 +3170,7 @@ def tender_analysis_page() -> None:
                 disabled=form_disabled
             )
             st.session_state.tender_form_data['risk_tolerance'] = risk_tolerance
-        
+       
         with st.expander("⚙️ Auto-Bid Calculation Settings", expanded=False):
             auto_disabled = is_manual_mode or form_disabled
             if is_manual_mode:
@@ -3397,6 +3221,7 @@ def tender_analysis_page() -> None:
         try:
             sync_form_to_model()
             
+            # ✅ Get competitor bids based on mode
             if is_manual_mode:
                 competitor_bids = st.session_state.competitor_data.get('analysis_bids', [])
             else:
@@ -3404,6 +3229,14 @@ def tender_analysis_page() -> None:
                 competitor_count = st.session_state.get('auto_competitor_count', 3)
                 risk_pref = st.session_state.get('auto_risk_pref', 'moderate')
                 competitor_bids = _generate_competitor_bids(estimate_val, num_competitors=competitor_count, risk_preference=risk_pref)
+            
+            # ✅ Get NPPI configuration from session state (moved outside auto/manual block)
+            nppi_factor = st.session_state.get('nppi_factor_value', 0.920)
+            nppi_mode = st.session_state.get('nppi_mode_selected', 'Default')
+            nppi_warning = st.session_state.get('nppi_warning', None)
+
+            
+            debug_print(f"📊 Using NPPI factor: {nppi_factor} (Mode: {nppi_mode})")
             
             inputs = {
                 'tender_id': st.session_state.tender_form_data['tender_id'],
@@ -3415,7 +3248,10 @@ def tender_analysis_page() -> None:
                 'district': st.session_state.tender_form_data['district'],
                 'thana': st.session_state.tender_form_data['thana'],
                 'risk_tolerance': st.session_state.tender_form_data['risk_tolerance'],
-                'competitor_bids': competitor_bids
+                'competitor_bids': competitor_bids,
+                'nppi_factor': nppi_factor,  # ✅ Add NPPI factor to inputs
+                'nppi_mode': nppi_mode,      # ✅ Add NPPI mode to inputs
+                'nppi_warning': nppi_warning  # ✅ Add NPPI warning to inputs
             }
             
             if inputs['official_estimate'] <= 0 or not inputs['competitor_bids']:
@@ -3428,7 +3264,8 @@ def tender_analysis_page() -> None:
                         competitor_bids=inputs['competitor_bids'],
                         procurement_type=inputs['procurement_type'],
                         risk_tolerance=inputs['risk_tolerance'],
-                        company_id=st.session_state.company_id
+                        company_id=st.session_state.company_id,
+                        nppi_factor=nppi_factor  # ✅ Pass NPPI factor to analysis
                     )
                     
                     best_tier = max(comparison.keys(), key=lambda t: comparison[t].get('confidence_score', 0) * comparison[t]['win_probability'])
@@ -3445,7 +3282,10 @@ def tender_analysis_page() -> None:
                         'competitor_bids': inputs['competitor_bids'],
                         'risk_tolerance': inputs['risk_tolerance'],
                         'procurement_type': inputs['procurement_type'],
-                        'competitor_count': len(inputs['competitor_bids'])
+                        'competitor_count': len(inputs['competitor_bids']),
+                        'nppi_factor': nppi_factor,      # ✅ Store NPPI factor
+                        'nppi_mode': nppi_mode,          # ✅ Store NPPI mode
+                        'nppi_warning': nppi_warning     # ✅ Store NPPI warning
                     }
                     st.session_state.analysis_state['current_comparison'] = comparison
                     st.session_state.analysis_state['current_best_result'] = comparison[best_tier]
@@ -3461,6 +3301,7 @@ def tender_analysis_page() -> None:
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             st.error(f"❌ Analysis error: {str(e)}")
+
     
     # =============================================================================
     # 🔹 DISPLAY RESULTS (Using unified report generator)
