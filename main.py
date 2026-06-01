@@ -3463,7 +3463,7 @@ def tender_analysis_page() -> None:
             col1, col2 = st.columns(2)
             with col1:
                 st.session_state.auto_competitor_count = st.slider(
-                    "Number of Competitors", min_value=2, max_value=10, 
+                    "Number of Competitors", min_value=2, max_value=20, 
                     value=st.session_state.get('auto_competitor_count', 3),
                     disabled=auto_disabled
                 )
