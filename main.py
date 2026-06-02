@@ -80,6 +80,7 @@ import random
 from modules.report_generator import generate_unified_report, generate_html_content_only
 
 from modules.auth import restore_session_from_url
+from version import get_version, get_full_version, get_copyright, get_app_name, get_app_desc
 
 
 
@@ -2997,10 +2998,11 @@ def tender_analysis_page() -> None:
 
     # Header
     render_page_header(
-        "🎯 Three-Tier Bid Optimization", 
+        f"🎯 Three-Tier Bid Optimization", 
         "Compare Basic, Advanced (PPR 2025), and Enhanced (ML) analysis",
         icon="🏗️"
     )
+
     
     # Ensure admin has premium access
     ensure_admin_premium()
@@ -3813,12 +3815,13 @@ def render_sidebar() -> None:
         if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
             st.session_state.extracted_data = None
             st.session_state.skip_review = False
-        
+        from version import get_app_name, get_app_desc
+
         # ========== BRANDING ==========
-        st.markdown("""
+        st.markdown(f"""
         <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee;">
-            <h2 style="margin: 0; color: #1e3c72;">🏗️ TenderAI</h2>
-            <small style="color: #666;">Bid Optimization Platform</small>
+            <h2 style="margin: 0; color: #1e3c72;">🏗️ {get_app_name()}</h2>
+            <small style="color: #666;">{get_app_desc()}</small>
         </div>
         """, unsafe_allow_html=True)
         
@@ -3985,7 +3988,12 @@ def render_sidebar() -> None:
             initialize_session_state()
             st.toast("👋 You have been signed out", icon="✅")
             st.rerun()
-    
+    # Add version info at the bottom of sidebar
+    from version import __version__, __version_date__
+    st.markdown("---")
+    st.caption(f"📌 Version {__version__} | {__version_date__}")
+    st.caption("💡 Need help? [Contact Support](mailto:support@tenderai.com)")
+
     # Debug mode indicator
     if DEBUG_MODE:
         st.markdown("---")

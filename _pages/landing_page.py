@@ -1,4 +1,5 @@
 import streamlit as st
+from version import get_app_name, get_app_desc
 
 def show_landing_page():
     """Professional landing page with consistent layout"""
@@ -188,12 +189,12 @@ def show_landing_page():
     """, unsafe_allow_html=True)
     
     # ==================== HERO SECTION ====================
-    st.markdown("""
+    st.markdown(f"""
     <div class="hero-section">
         <div class="badge">🚀 PPR 2025 Compliant • Bangladesh Made</div>
-        <div class="hero-title">🏗️ TenderAI</div>
+        <div class="hero-title">🏗️ {get_app_name()}</div>
         <div class="hero-subtitle">
-            AI-Powered Bid Optimization for Bangladesh Construction Industry<br>
+            {get_app_desc()}<br>
             Win More Tenders with 85% Accurate Predictions
         </div>
     </div>
