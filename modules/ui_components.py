@@ -2,7 +2,7 @@
 
 import streamlit as st
 from datetime import datetime
-
+import hashlib
 def init_theme():
     """Initialize theme settings in session state"""
     if 'dark_mode' not in st.session_state:
@@ -221,151 +221,69 @@ def get_theme_css():
         </style>
         """
 
-def render_app_header():
+def render_app_header(show_dark_mode_toggle=True):
     """Render professional app header with logo and dark mode toggle"""
     
     init_theme()
     
-    # Custom CSS for header
-    st.markdown("""
-    <style>
-    .app-header {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        padding: 0.5rem 2rem;
-        border-radius: 0 0 12px 12px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    
-    .header-content {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    
-    .logo-section {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    
-    .logo-icon {
-        font-size: 2rem;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-        100% { transform: scale(1); }
-    }
-    
-    .logo-text h1 {
-        margin: 0;
-        font-size: 1.5rem;
-        font-weight: bold;
-        background: linear-gradient(135deg, #ffffff, #a8c8ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    
-    .logo-text p {
-        margin: 0;
-        font-size: 0.7rem;
-        color: rgba(255,255,255,0.8);
-    }
-    
-    .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    
-    .theme-toggle {
-        background: rgba(255,255,255,0.2);
-        border: none;
-        border-radius: 20px;
-        padding: 6px 12px;
-        cursor: pointer;
-        color: white;
-        font-size: 0.8rem;
-        transition: all 0.2s;
-    }
-    
-    .theme-toggle:hover {
-        background: rgba(255,255,255,0.3);
-    }
-    
-    .user-badge {
-        background: rgba(255,255,255,0.15);
-        border-radius: 20px;
-        padding: 4px 12px;
-        font-size: 0.8rem;
-        color: white;
-    }
-    
-    @media (max-width: 768px) {
-        .app-header {
-            padding: 0.5rem 1rem;
-        }
-        .logo-text h1 {
-            font-size: 1rem;
-        }
-        .logo-icon {
-            font-size: 1.5rem;
-        }
-        .user-badge {
-            font-size: 0.7rem;
-        }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Get user info safely (handle None values)
+    # Get user info
     full_name = st.session_state.get('full_name') or 'User'
     company_name = st.session_state.get('company_name') or ''
-    
-    # Truncate long names safely
     display_name = full_name[:20] if len(full_name) > 20 else full_name
     display_company = f"| {company_name[:20]}" if company_name and len(company_name) > 0 else ''
     
-    # Create header
+    # Determine button text
+    button_text = "☀️ Light" if st.session_state.dark_mode else "🌙 Dark"
+    
+    # Create header with inline button using Streamlit columns
     st.markdown(f"""
-    <div class="app-header">
-        <div class="header-content">
-            <div class="logo-section">
-                <div class="logo-icon">🏗️</div>
-                <div class="logo-text">
-                    <h1>TenderAI</h1>
-                    <p>Enterprise Tender Management & Bid Optimization Platform</p>
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 0.5rem 2rem; border-radius: 12px; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="font-size: 2rem;">🏗️</div>
+                <div>
+                    <div style="margin: 0; font-size: 1.5rem; font-weight: bold; color: white;">TenderAI</div>
+                    <div style="margin: 0; font-size: 0.7rem; color: rgba(255,255,255,0.8);">Enterprise Tender Management & Bid Optimization Platform</div>
                 </div>
             </div>
-            <div class="header-actions">
-                <div class="user-badge">
-                    👋 {display_name} {display_company}
-                </div>
+            <div style="background: rgba(255,255,255,0.2); border-radius: 30px; padding: 6px 15px;">
+                <span style="color: white; font-size: 0.85rem;">👋 {display_name} {display_company}</span>
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Dark mode toggle button below the header
+    if show_dark_mode_toggle:
+        col1, col2, col3 = st.columns([4, 1, 4])
+        with col2:
+            if st.button(button_text, key="theme_toggle_header", use_container_width=True):
+                toggle_dark_mode()
+    
+    st.markdown("---")
 
+                    
 def render_dark_mode_toggle():
-    """Render dark mode toggle button"""
+    """Render dark mode toggle button with session-unique key"""
     
     init_theme()
+    
+    # Create a unique key based on session ID to avoid duplicates
+    session_id = st.session_state.get('session_id', 'default')
+    unique_suffix = hashlib.md5(f"{session_id}_dark_toggle".encode()).hexdigest()[:8]
     
     # Create columns for the toggle
     col1, col2, col3 = st.columns([2, 1, 2])
     
     with col2:
         if st.session_state.dark_mode:
-            if st.button("☀️ Light Mode", use_container_width=True, key="light_mode_btn"):
+            if st.button("☀️ Light Mode", use_container_width=True, key=f"light_mode_{unique_suffix}"):
                 toggle_dark_mode()
         else:
-            if st.button("🌙 Dark Mode", use_container_width=True, key="dark_mode_btn_1"):
+            if st.button("🌙 Dark Mode", use_container_width=True, key=f"dark_mode_{unique_suffix}"):
                 toggle_dark_mode()
+
+
 
 def apply_theme():
     """Apply current theme CSS to the app"""

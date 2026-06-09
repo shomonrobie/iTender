@@ -45,6 +45,7 @@ from datetime import datetime
 from typing import List, Union, Dict, Callable, Optional
 import bcrypt
 import reportlab  # For error reporting (e.g., Sentry)
+import pdfplumber
 #hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12))
 #user_data['password'] = hashed.decode('utf-8')
 import importlib  # ✅ Added for lazy imports
@@ -1362,10 +1363,8 @@ def render_sidebar() -> None:
     
     with st.sidebar:
         # Clear extracted data if leaving tender management page
-        
-         # ========== DARK MODE TOGGLE - CALLED ONCE ==========
-        render_dark_mode_toggle()
-        st.markdown("---")
+                
+                
         if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
             st.session_state.extracted_data = None
             st.session_state.skip_review = False
@@ -1822,7 +1821,6 @@ def main() -> None:
             
             # Clear the parameter to avoid re-processing
             st.query_params.clear()
-            
             # Force rerun to show dashboard
             st.rerun()
             return
@@ -1867,15 +1865,13 @@ def main() -> None:
     
     # ONLY render app header for logged-in users
     if st.session_state.logged_in:
-        render_app_header()
+        # Pass the dark mode toggle to be rendered inside the header
+        render_app_header(show_dark_mode_toggle=True)
     
     if st.session_state.logged_in:
-        # For logged-in users, show dark mode toggle in sidebar
+        # For logged-in users, show sidebar (without dark mode toggle)
         with st.sidebar:
-            render_dark_mode_toggle()
-            st.markdown("---")
-        
-        render_sidebar()
+            render_sidebar()
     else:
         # For non-authenticated users, show header navigation
         render_header_nav()
@@ -1901,7 +1897,7 @@ def main() -> None:
     # Optional: Global debug panel (development only)
     if DEBUG_MODE and st.session_state.get('user_role') == 'admin':
         _render_global_debug_panel()
-
+        
 def _render_global_debug_panel() -> None:
     """Render global debug information for admin users (development only)"""
     with st.expander("🐛 Global Debug Panel", expanded=False):
