@@ -252,7 +252,7 @@ def render_role_management():
 
     # Check permission
     user_role = st.session_state.get('user_role')
-    if user_role not in ['admin', 'company_admin']:
+    if user_role not in ['admin', 'system_admin', 'company_admin']:
         st.error("❌ You don't have permission to manage roles.")
         return
 
@@ -263,20 +263,31 @@ def render_role_management():
         return
 
     st.info("💡 Changes here affect what users with each role can see and do. Permissions are saved immediately.")
+    
+    # Tabs for different permission categories
+    tab1, tab2 = st.tabs(["📊 General Permissions", "🏗️ Rate Management Permissions"])
+    
+    with tab1:
+        render_general_permissions(roles)
+    
+    with tab2:
+        render_rate_permissions(roles)
 
-    # For each role, display a form (expandable)
+
+def render_general_permissions(roles):
+    """Render general system permissions"""
+    
     for role_info in roles:
         role_name = role_info['role']
         perms = role_info['permissions']
         
-        # Skip editing 'admin' if you want to lock it (optional)
-        if role_name == 'admin' and st.session_state.user_role != 'admin':
-            # Only system admin can edit admin role
+        # Skip editing 'admin' if you want to lock it
+        if role_name == 'admin' and st.session_state.get('user_role') != 'system_admin':
             st.warning(f"Role '{role_name}' permissions are locked for your account level.")
             continue
         
         with st.expander(f"📌 Role: **{role_name.replace('_', ' ').title()}**", expanded=False):
-            # Prepare permission keys (consistent across roles)
+            # Prepare permission keys
             perm_keys = [
                 'manage_users', 'manage_tenders', 'run_analysis',
                 'view_reports', 'export_data', 'change_plans',
@@ -291,29 +302,93 @@ def render_role_management():
             for i, key in enumerate(perm_keys):
                 col = cols[i % col_count]
                 current = perms.get(key, False)
-                # Show human-readable label
                 label = key.replace('_', ' ').title()
                 with col:
                     new_val = st.checkbox(label, value=current, key=f"{role_name}_{key}")
                     updated_perms[key] = new_val
             
             # Save button for this role
-            if st.button(f"💾 Save Permissions for {role_name}", key=f"save_{role_name}"):
-                success = db.update_role_permissions(role_name, updated_perms)
+            if st.button(f"💾 Save General Permissions for {role_name}", key=f"save_general_{role_name}"):
+                # Merge with existing rate permissions
+                current_perms = db.get_role_permissions(role_name)
+                current_perms.update(updated_perms)
+                success = db.update_role_permissions(role_name, current_perms)
                 if success:
                     st.success(f"Permissions for {role_name} updated successfully!")
                     st.rerun()
                 else:
                     st.error("Failed to update permissions.")
+
+
+def render_rate_permissions(roles):
+    """Render rate management permissions"""
     
-    # Display matrix view (readonly) for quick reference
+    st.markdown("#### 🏗️ Rate Management Permissions")
+    st.caption("Control access to Zones, Chapters, Parents, Children, and Versions")
+    
+    for role_info in roles:
+        role_name = role_info['role']
+        perms = role_info['permissions']
+        
+        if role_name == 'admin' and st.session_state.get('user_role') != 'system_admin':
+            continue
+        
+        with st.expander(f"📌 Role: **{role_name.replace('_', ' ').title()}**", expanded=False):
+            # Rate management permission keys
+            rate_perm_keys = [
+                'view_rates', 'edit_rates', 'delete_rates',
+                'manage_zones', 'manage_chapters', 'manage_parents',
+                'manage_children', 'manage_versions'
+            ]
+            
+            # Display in two columns
+            col1, col2 = st.columns(2)
+            updated_perms = {}
+            
+            # Column 1
+            with col1:
+                for key in rate_perm_keys[:4]:
+                    current = perms.get(key, False)
+                    label = key.replace('_', ' ').title()
+                    new_val = st.checkbox(label, value=current, key=f"{role_name}_rate_{key}")
+                    updated_perms[key] = new_val
+            
+            # Column 2
+            with col2:
+                for key in rate_perm_keys[4:]:
+                    current = perms.get(key, False)
+                    label = key.replace('_', ' ').title()
+                    new_val = st.checkbox(label, value=current, key=f"{role_name}_rate_{key}")
+                    updated_perms[key] = new_val
+            
+            # Save button
+            if st.button(f"💾 Save Rate Permissions for {role_name}", key=f"save_rate_{role_name}"):
+                current_perms = db.get_role_permissions(role_name)
+                current_perms.update(updated_perms)
+                success = db.update_role_permissions(role_name, current_perms)
+                if success:
+                    st.success(f"Rate permissions for {role_name} updated successfully!")
+                    st.rerun()
+                else:
+                    st.error("Failed to update permissions.")
+
+
+def render_permission_matrix(roles):
+    """Display permission matrix for quick reference"""
     with st.expander("📊 Permission Matrix (Read‑only)", expanded=False):
         matrix_data = []
         for role_info in roles:
             row = {'Role': role_info['role'].replace('_', ' ').title()}
             perms = role_info['permissions']
+            
+            # General permissions
             for key in ['manage_users', 'manage_tenders', 'run_analysis', 'view_reports', 'export_data']:
                 row[key.replace('_', ' ').title()] = '✅' if perms.get(key, False) else '❌'
+            
+            # Rate permissions
+            for key in ['view_rates', 'edit_rates', 'manage_parents', 'manage_children']:
+                row[key.replace('_', ' ').title()] = '✅' if perms.get(key, False) else '❌'
+            
             matrix_data.append(row)
         
         st.dataframe(matrix_data, use_container_width=True, hide_index=True)

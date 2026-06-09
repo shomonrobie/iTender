@@ -20,6 +20,14 @@ TenderAI is an enterprise-grade tender management and bid optimization platform 
   - Win probability curve
   - Risk radar chart
   - Performance metrics dashboard
+  - **Rate Management**: Import and manage PWD/LGED rate schedules
+  - **BOQ Generation**: Create Bill of Quantities from rate schedules
+  - **Bid Optimization**: 3-tier AI analysis (Basic, Advanced PPR 2025, Enhanced ML)
+  - **Tender Management**: Complete tender lifecycle management
+  - **Competitor Tracking**: Track and analyze competitor bids
+  - **Subscription Management**: Plan-based access control
+  - **Role-Based Access**: Granular permissions for team members
+
 
 ### User Management
 - Company registration (requires admin approval)
@@ -1367,6 +1375,18 @@ D:.
 ├───_pages
 └───__pycache__
 🔄 Version History
+
+v2.0.1 (2026-06-08) - BOQ Management Release
+Added BOQ Management System
+
+Added PWD/LGED rate import wizards
+
+Added 3-tier bid optimization
+
+Added subscription management
+
+Added role-based access control
+
 See CHANGELOG.md for full version history.
 
 🤝 Contributing

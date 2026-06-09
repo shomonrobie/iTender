@@ -1,13 +1,14 @@
+# _pages/landing_page.py
+
 import streamlit as st
 from version import get_app_name, get_app_desc
 
 def show_landing_page():
-    """Professional landing page with consistent layout"""
+    """Unified landing page with English and Bangla content"""
     
-    st.set_page_config(page_title="TenderAI - AI Bid Optimization", page_icon="🏗️", layout="wide")
+    st.set_page_config(page_title="iTender BD - AI Tender Intelligence Platform", page_icon="🏗️", layout="wide")
     
-       
-    # Custom CSS - Override global styles
+    # Custom CSS
     st.markdown("""
     <style>
     /* Reset global font size for landing page only */
@@ -28,12 +29,18 @@ def show_landing_page():
         font-size: 3rem !important;
         font-weight: 800;
         color: white;
-        margin-bottom: 1rem;
+        margin-bottom: 0.5rem;
     }
     .hero-subtitle {
         font-size: 1.2rem !important;
         color: #cbd5e1;
-        margin-bottom: 2rem;
+        margin-bottom: 1rem;
+    }
+    .hero-bangla {
+        font-size: 1.5rem !important;
+        color: #93c5fd;
+        margin-bottom: 1rem;
+        font-weight: 600;
     }
     .badge {
         display: inline-block;
@@ -53,38 +60,40 @@ def show_landing_page():
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         text-align: center;
         margin-bottom: 1rem;
+        transition: transform 0.3s;
+    }
+    .feature-card:hover {
+        transform: translateY(-5px);
     }
     .feature-icon {
-        font-size: 2rem !important;
+        font-size: 2.5rem !important;
         margin-bottom: 0.5rem;
     }
     .feature-title {
         font-size: 1.1rem !important;
         font-weight: 700;
         margin-bottom: 0.5rem;
+        color: #1e3a8a;
     }
     .feature-desc {
         font-size: 0.85rem !important;
         color: #666;
     }
     
-    /* Report Cards */
-    .report-card {
-        background: #1e293b;
-        border-radius: 15px;
-        padding: 1.2rem;
-        margin-bottom: 1rem;
-        color: white;
-        min-height: 320px;        
+    /* Problem Section */
+    .problem-section {
+        background: #fef2f2;
+        padding: 2rem;
+        border-radius: 20px;
+        margin: 2rem 0;
+        border: 1px solid #fecaca;
     }
-    .report-card h4 {
-        color: #60a5fa;
-        margin-bottom: 0.75rem;
-        font-size: 1.1rem !important;
-    }
-    .report-card p, .report-card li {
-        color: #cbd5e1;
-        font-size: 0.85rem !important;
+    .solution-section {
+        background: #f0fdf4;
+        padding: 2rem;
+        border-radius: 20px;
+        margin: 2rem 0;
+        border: 1px solid #bbf7d0;
     }
     
     /* Stats Section */
@@ -109,10 +118,14 @@ def show_landing_page():
         text-align: center;
         margin-bottom: 1rem;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        position: relative;
+        transition: transform 0.3s;
+    }
+    .pricing-card:hover {
+        transform: translateY(-5px);
     }
     .pricing-card.popular {
         border: 2px solid #3b82f6;
+        position: relative;
     }
     .popular-badge {
         position: absolute;
@@ -141,9 +154,7 @@ def show_landing_page():
         border-radius: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         text-align: center;
-    }
-    .testimonial-card p {
-        font-size: 0.85rem !important;
+        height: 100%;
     }
     
     /* FAQ Section */
@@ -166,6 +177,15 @@ def show_landing_page():
         border-left: 3px solid #3b82f6;
     }
     
+    /* ROI Calculator */
+    .roi-calculator {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        padding: 2rem;
+        border-radius: 20px;
+        margin: 2rem 0;
+        color: white;
+    }
+    
     .divider {
         margin: 2rem 0;
         height: 1px;
@@ -178,12 +198,13 @@ def show_landing_page():
         color: #666;
     }
     
-    /* Headers */
     h1, h2, h3 {
         font-size: 1.8rem !important;
     }
     h2 {
         font-size: 1.5rem !important;
+        text-align: center;
+        margin-bottom: 1.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -191,12 +212,11 @@ def show_landing_page():
     # ==================== HERO SECTION ====================
     st.markdown(f"""
     <div class="hero-section">
-        <div class="badge">🚀 PPR 2025 Compliant • Bangladesh Made</div>
-        <div class="hero-title">🏗️ {get_app_name()}</div>
-        <div class="hero-subtitle">
-            {get_app_desc()}<br>
-            Win More Tenders with 85% Accurate Predictions
-        </div>
+        <div class="badge">🚀 AI-Powered • Bangladesh's First • PPR 2025 Compliant</div>
+        <div class="hero-title">🏗️ iTender BD</div>
+        <div class="hero-subtitle">AI Powered Tender Intelligence & Bid Optimization Platform</div>
+        <div class="hero-bangla">বাংলাদেশের প্রথম AI-চালিত Tender Intelligence Platform</div>
+        <div class="hero-subtitle">টেন্ডার বিশ্লেষণে পুরো দিন নয়, এখন লাগবে মাত্র কয়েক সেকেন্ড</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -205,117 +225,162 @@ def show_landing_page():
     with col2:
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("🚀 Start Free Trial", use_container_width=True, type="primary"):
-                st.session_state.page = "register"
-                st.rerun()
+            if st.button("🎥 ডেমো দেখুন", use_container_width=True, type="primary"):
+                st.info("Demo video coming soon!")
         with col_b:
-            if st.button("📊 View Live Demo", use_container_width=True):
-                st.session_state.page = "login"
-                st.rerun()
+            if st.button("📞 ফ্রি কনসালটেশন বুক করুন", use_container_width=True):
+                st.info("Call us: +880 1234 567890")
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # ==================== SEE TENDERAI IN ACTION ====================
-    st.markdown("<h2 style='text-align: center; margin-bottom: 1.5rem;'>📊 See TenderAI in Action</h2>", unsafe_allow_html=True)
+    # ==================== WHAT iTender BD DOES ====================
+    st.markdown("""
+    <div style="background: #f8fafc; padding: 2rem; border-radius: 20px; margin-bottom: 2rem;">
+        <p style="font-size: 1.1rem; text-align: center; margin-bottom: 1rem;">
+            <strong>iTender BD</strong> এমন একটি অত্যাধুনিক AI প্ল্যাটফর্ম যা টেন্ডার ডকুমেন্ট, BOQ এবং বাজার পরিস্থিতি বিশ্লেষণ করে 
+            আপনাকে সবচেয়ে প্রতিযোগিতামূলক এবং লাভজনক বিডিং সিদ্ধান্ত নিতে সাহায্য করে।
+        </p>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+            <div>✅ টেন্ডার বিশ্লেষণের সময় 95% পর্যন্ত কমান</div>
+            <div>✅ বিড প্রস্তুতির খরচ কমান</div>
+            <div>✅ আরও বেশি টেন্ডারে অংশগ্রহণ করুন</div>
+            <div>✅ তথ্যভিত্তিক বিডিং সিদ্ধান্ত নিন</div>
+            <div>✅ টেন্ডার জয়ের সম্ভাবনা বৃদ্ধি করুন</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Row 1: AI Recommendation + Three-Tier Analysis
+    # ==================== PROBLEM VS SOLUTION ====================
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
-        <div class="report-card">
-            <h4>🎯 AI Recommendation</h4>
-            <p>Based on <strong>3 competitor bids</strong> and <strong>PPR 2025 compliance metrics</strong>, the optimal bid is <strong>BDT 2,745,260</strong> (93.9% of estimate). This bid maintains a <strong>68% win probability</strong> while staying safely above the SLT threshold.</p>
-            <hr style="border-color: #334155;">
-            <h4>📈 Key Insights</h4>
-            <ul>
-                <li>Market Position: 6.1% competitive score</li>
-                <li>Compliance Margin: +1.8% from SLT threshold</li>
-                <li>Expected ROI: 10.4% on investment</li>
+        <div class="problem-section">
+            <h3 style="color: #dc2626; text-align: center;">❌ এখনও কি আপনার টিম ঘণ্টার পর ঘণ্টা BOQ বিশ্লেষণ করে?</h3>
+            <div style="margin-top: 1rem;">
+                <p>একটি বড় টেন্ডার বিশ্লেষণ করতে সাধারণত:</p>
+                <ul>
+                    <li>৩-৫ জন কর্মী</li>
+                    <li>৪-৮ ঘণ্টা সময়</li>
+                    <li>অসংখ্য Excel Sheet</li>
+                    <li>শত শত BOQ Item</li>
+                    <li>অসংখ্য Manual Calculation</li>
+                </ul>
+                <p><strong>তারপরও সঠিক বিড মূল্য নির্ধারণ করা কঠিন।</strong></p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="solution-section">
+            <h3 style="color: #16a34a; text-align: center;">✨ iTender BD কী করে?</h3>
+            <div style="margin-top: 1rem;">
+                <p><strong>এক ক্লিকে:</strong></p>
+                <ul>
+                    <li>📋 টেন্ডার বিশ্লেষণ</li>
+                    <li>📊 BOQ বিশ্লেষণ</li>
+                    <li>🎯 Bid Optimization</li>
+                    <li>👥 Competitor Simulation</li>
+                    <li>⚠️ Risk Assessment</li>
+                    <li>💰 Cost Analysis</li>
+                    <li>📄 Executive Summary</li>
+                </ul>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # ==================== KEY FEATURES ====================
+    
+    # Feature 1: AI Tender Analysis Engine
+    st.markdown("<h2>🤖 AI Tender Analysis Engine</h2>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.markdown("""
+        <div class="feature-card" style="text-align: left;">
+            <div class="feature-icon">⚡</div>
+            <div class="feature-title">কয়েক সেকেন্ডে সম্পূর্ণ টেন্ডার বিশ্লেষণ</div>
+            <ul style="margin-top: 0.5rem; padding-left: 1rem;">
+                <li>Eligibility Criteria Analysis</li>
+                <li>Tender Requirement Extraction</li>
+                <li>Mandatory Document Detection</li>
+                <li>Risk Identification</li>
+                <li>Technical Evaluation Summary</li>
+                <li>Financial Requirement Summary</li>
+                <li><strong>Bid / No-Bid Recommendation</strong></li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
-    
     with col2:
         st.markdown("""
-        <div class="report-card">
-            <h4>🎯 Three-Tier Analysis Comparison</h4>
-            <p>Compare Basic, Advanced (PPR 2025), and Enhanced (ML) analysis to find the optimal bidding strategy.</p>
-            <hr style="border-color: #334155;">        
-            <table style="width:100%; border-collapse: collapse; margin-top: 0.5rem;">
-                <tr style="border-bottom: 1px solid #334155;">
-                    <th style="text-align: left; padding: 5px;">Tier</th>
-                    <th style="text-align: left; padding: 5px;">Optimal Bid</th>
-                    <th style="text-align: left; padding: 5px;">Win Prob</th>
-                </tr>
-                <tr style="background: #334155;">
-                    <td style="padding: 5px;"><strong>Advanced (PPR)</strong></td>
-                    <td style="padding: 5px;"><strong>BDT 2,745,260</strong></td>
-                    <td style="padding: 5px;"><strong>68%</strong></td>
-                </tr>
-                <tr>
-                    <td style="padding: 5px;">Enhanced (ML)</td>
-                    <td style="padding: 5px;">BDT 2,749,500</td>
-                    <td style="padding: 5px;">75%</td>
-                </tr>
-                <tr>
-                    <td style="padding: 5px;">Basic</td>
-                    <td style="padding: 5px;">BDT 2,603,250</td>
-                    <td style="padding: 5px;">65%</td>
-                </tr>
-            </table>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Row 2: Financial Projections + Competitor Intelligence
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        <div class="report-card">
-            <h4>💰 Financial Projections</h4>
-            <p>Financial analysis showing expected costs, profits, and returns on investment based on bid optimization.</p>
-            <hr style="border-color: #334155;">
-            <p><strong>Estimated Cost:</strong> BDT 2,486,250 (85% of estimate)<br>
-            <strong>Expected Profit:</strong> BDT 259,010<br>
-            <strong>Expected Value:</strong> BDT 174,832<br>
-            <strong>Win Probability:</strong> 68%</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="report-card">
-            <h4>📊 Competitor Intelligence</h4>
-            <p>Track competitor bidding patterns and analyze their strategies to gain competitive advantage.</p>
-            <hr style="border-color: #334155;">
-            <table style="width:100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 0.5rem;">
-                <tr style="border-bottom: 1px solid #334155;">
-                    <th>Competitor</th>
-                    <th>Bid Amount</th>
-                    <th>% of Estimate</th>
-                </tr>
-                <tr><td>Competitor 1</td><td>BDT 2,698,712</td><td>92.3%</td></tr>
-                <tr><td>Competitor 2</td><td>BDT 2,749,863</td><td>94.0%</td></tr>
-                <tr><td>Competitor 3</td><td>BDT 2,909,282</td><td>99.5%</td></tr>
-            </table>
+        <div class="feature-card" style="text-align: left;">
+            <div class="feature-icon">🔍</div>
+            <div class="feature-title">AI Tender Analysis System Features</div>
+            <ul style="margin-top: 0.5rem; padding-left: 1rem;">
+                <li>📄 Automatic Document Parsing</li>
+                <li>📊 Key Information Extraction</li>
+                <li>⚠️ Risk & Compliance Check</li>
+                <li>💡 Smart Recommendations</li>
+                <li>📈 Market Comparison</li>
+            </ul>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem; color: #666;"><strong>SEO:</strong> AI Tender Analysis Software Bangladesh, Tender Analysis System, eGP Tender Analysis</p>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # ==================== WHY CHOOSE TENDERAI ====================
-    st.markdown("<h2 style='text-align: center; margin-bottom: 1.5rem;'>✨ Why Choose TenderAI?</h2>", unsafe_allow_html=True)
+    # Feature 2: Smart Bid Optimization Engine
+    st.markdown("<h2>🎯 Smart Bid Optimization Engine</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; margin-bottom: 1rem;'>কত টাকায় বিড করলে জয়ের সম্ভাবনা বেশি?</p>", unsafe_allow_html=True)
     
-    # Row 1
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown("""
         <div class="feature-card">
-            <div class="feature-icon">🤖</div>
-            <div class="feature-title">AI Bid Predictions</div>
-            <div class="feature-desc">85% accurate winning bid predictions using advanced machine learning</div>
+            <div class="feature-icon">⚔️</div>
+            <div class="feature-title">Aggressive Bid Strategy</div>
+            <div class="feature-desc">সর্বোচ্চ প্রতিযোগিতামূলক বিড</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">⚖️</div>
+            <div class="feature-title">Moderate Bid Strategy</div>
+            <div class="feature-desc">ঝুঁকি ও লাভের ভারসাম্যপূর্ণ বিড</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">🛡️</div>
+            <div class="feature-title">Conservative Bid Strategy</div>
+            <div class="feature-desc">নিরাপদ ও উচ্চ লাভের বিড</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">🎯</div>
+            <div class="feature-title">Weighted Average Recommendation</div>
+            <div class="feature-desc">AI-ভিত্তিক সুপারিশকৃত বিড মূল্য</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-icon">👥</div>
+            <div class="feature-title">Competitor Simulation</div>
+            <div class="feature-desc">বিভিন্ন সংখ্যক প্রতিযোগী ধরে সম্ভাব্য ফলাফল বিশ্লেষণ</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -323,66 +388,142 @@ def show_landing_page():
         st.markdown("""
         <div class="feature-card">
             <div class="feature-icon">📊</div>
-            <div class="feature-title">PPR 2025 Compliance</div>
-            <div class="feature-desc">Fully compliant with Bangladesh Public Procurement Rules 2025</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">🎯</div>
-            <div class="feature-title">Competitor Intelligence</div>
-            <div class="feature-desc">Real-time competitor tracking and historical analysis</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Row 2
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">📈</div>
-            <div class="feature-title">Three-Tier Analysis</div>
-            <div class="feature-desc">Basic, Advanced (PPR), and Enhanced (ML) analysis options</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">👥</div>
-            <div class="feature-title">Team Collaboration</div>
-            <div class="feature-desc">Role-based access control for your entire organization</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">🔒</div>
-            <div class="feature-title">Enterprise Security</div>
-            <div class="feature-desc">Bank-grade encryption and secure data handling</div>
+            <div class="feature-title">Bid Optimization Results</div>
+            <div class="feature-desc">Three-Tier Analysis: Basic, Advanced (PPR 2025), Enhanced (ML)</div>
+            <p style="margin-top: 0.5rem; font-size: 0.7rem; color: #666;"><strong>SEO:</strong> Bid Optimization Software, Tender Bid Calculator, Tender Pricing Software Bangladesh</p>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # ==================== STATS SECTION ====================
+    # Feature 3: BOQ Intelligence Platform
+    st.markdown("<h2>📊 BOQ Intelligence Platform</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; margin-bottom: 1rem;'>হাজার হাজার BOQ Item বিশ্লেষণ করুন মুহূর্তেই</p>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div class="feature-card" style="text-align: left;">
+            <ul style="margin-top: 0.5rem; padding-left: 1rem;">
+                <li>📄 BOQ Upload (Excel/PDF)</li>
+                <li>🤖 Automated Item Analysis</li>
+                <li>✅ Quantity Verification</li>
+                <li>💰 Rate Comparison</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <div class="feature-card" style="text-align: left;">
+            <ul style="margin-top: 0.5rem; padding-left: 1rem;">
+                <li>📊 Cost Breakdown</li>
+                <li>📈 Margin Analysis</li>
+                <li>⚠️ Abnormal Item Detection</li>
+            </ul>
+            <p style="margin-top: 0.5rem; font-size: 0.7rem; color: #666;"><strong>SEO:</strong> BOQ Analysis Software Bangladesh, Construction Cost Analysis Software, Quantity Surveying Software</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # Feature 4: Tender Management System
+    st.markdown("<h2>📋 Tender Management System</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; margin-bottom: 1rem;'>সব টেন্ডার এক প্ল্যাটফর্মে</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    features = [
+        ("📌", "Tender Tracking"),
+        ("⏰", "Submission Reminder"),
+        ("🔄", "Workflow Management"),
+        ("👥", "Team Collaboration"),
+        ("✅", "Approval Process"),
+        ("📁", "Document Repository"),
+        ("📊", "Audit Trail")
+    ]
+    
+    for idx, (icon, label) in enumerate(features):
+        col = [col1, col2, col3, col4][idx % 4]
+        with col:
+            st.markdown(f"""
+            <div class="feature-card">
+                <div class="feature-icon">{icon}</div>
+                <div class="feature-title">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown('<p style="text-align: center; font-size: 0.8rem; color: #666;"><strong>SEO:</strong> Tender Management Software Bangladesh, eGP Management System, Procurement Software Bangladesh</p>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # Feature 5: Executive Dashboard
+    st.markdown("<h2>📊 Executive Dashboard</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; margin-bottom: 1rem;'>ব্যবসায়িক সিদ্ধান্ত এখন হবে তথ্যভিত্তিক</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    dashboard_features = [
+        ("🏆", "Win Rate Analysis"),
+        ("📈", "Tender Performance Analytics"),
+        ("💰", "Revenue Forecasting"),
+        ("📋", "Project Pipeline Tracking"),
+        ("⚠️", "Risk Dashboard"),
+        ("💡", "Profitability Insights")
+    ]
+    
+    for idx, (icon, label) in enumerate(dashboard_features):
+        col = [col1, col2, col3][idx % 3]
+        with col:
+            st.markdown(f"""
+            <div class="feature-card">
+                <div class="feature-icon">{icon}</div>
+                <div class="feature-title">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # ==================== WHO IS USING ====================
+    st.markdown("<h2>👥 কারা ব্যবহার করছেন?</h2>", unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    users = [
+        "🏗️ Construction Companies",
+        "📋 Contractors",
+        "📦 Suppliers",
+        "🔧 Engineering Firms",
+        "🏭 EPC Contractors",
+        "📊 Government Project Consultants",
+        "🏗️ Infrastructure Developers",
+        "📋 Procurement Teams"
+    ]
+    
+    for idx, user in enumerate(users):
+        col = [col1, col2, col3, col4][idx % 4]
+        with col:
+            st.markdown(f"""
+            <div style="background: #f8fafc; padding: 0.75rem; border-radius: 10px; text-align: center; margin-bottom: 0.5rem;">
+                {user}
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # ==================== ROI CALCULATOR ====================
     st.markdown("""
-    <div class="stats-section">
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
-            <div><div class="stat-number">150+</div><div>Companies</div></div>
-            <div><div class="stat-number">23%</div><div>Win Rate Increase</div></div>
-            <div><div class="stat-number">4.2hrs</div><div>Time Saved</div></div>
-            <div><div class="stat-number">85%</div><div>Accuracy</div></div>
+    <div class="roi-calculator">
+        <h3 style="color: white; text-align: center;">💰 ROI Calculator</h3>
+        <p style="text-align: center; margin-bottom: 1rem;">আপনার প্রতিষ্ঠান বছরে কত সাশ্রয় করতে পারে?</p>
+        <div style="background: #1e293b; padding: 1rem; border-radius: 10px;">
+            <p style="text-align: center;">যদি: ৪ জন কর্মী • প্রতিদিন ৪ ঘণ্টা • মাসে ২০টি টেন্ডার</p>
+            <p style="text-align: center; margin-top: 0.5rem;">তাহলে বছরে শত শত মানব-ঘণ্টা সাশ্রয় সম্ভব।</p>
+            <p style="text-align: center; font-weight: bold; margin-top: 0.5rem;">iTender BD আপনার টিমকে কম সময়ে আরও বেশি টেন্ডার বিশ্লেষণের সুযোগ দেয়।</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
     # ==================== PRICING SECTION ====================
-    st.markdown("<h2 style='text-align: center; margin-bottom: 1.5rem;'>💰 Simple, Transparent Pricing</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>💰 Simple, Transparent Pricing</h2>", unsafe_allow_html=True)
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -396,9 +537,10 @@ def show_landing_page():
             <div align="left">✅ 5 analyses/mo</div>
             <div align="left">✅ Basic reports</div>
             <div align="left">✅ Email support</div>
+            <div align="left">✅ 7-day history</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Choose Free", key="plan_Free", use_container_width=True):
+        if st.button("Choose Free", key="plan_free", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
     
@@ -411,10 +553,11 @@ def show_landing_page():
             <hr>
             <div align="left">✅ 30 analyses/mo</div>
             <div align="left">✅ AI predictions</div>
+            <div align="left">✅ Export reports</div>
             <div align="left">✅ Priority support</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Choose Basic", key="plan_Basic", use_container_width=True):
+        if st.button("Choose Basic", key="plan_basic", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
     
@@ -429,9 +572,10 @@ def show_landing_page():
             <div align="left">✅ Unlimited analyses</div>
             <div align="left">✅ ML predictions</div>
             <div align="left">✅ Team collaboration</div>
+            <div align="left">✅ Priority support</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Choose Professional", key="plan_Professional", use_container_width=True):
+        if st.button("Choose Professional", key="plan_pro", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
     
@@ -442,19 +586,20 @@ def show_landing_page():
             <div class="feature-title">Enterprise</div>
             <div class="pricing-price">৳49,999<span style="font-size:0.7rem;">/mo</span></div>
             <hr>
-            <div align="left">✅ Everything + API</div>
+            <div align="left">✅ Everything in Professional</div>
             <div align="left">✅ Custom AI model</div>
             <div align="left">✅ Dedicated support</div>
+            <div align="left">✅ SLA guarantee</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Choose Enterprise", key="plan_Enterprise", use_container_width=True):
+        if st.button("Choose Enterprise", key="plan_enterprise", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
     # ==================== TESTIMONIALS ====================
-    st.markdown("<h2 style='text-align: center; margin-bottom: 1.5rem;'>💬 What Our Users Say</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>💬 What Our Users Say</h2>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
@@ -491,13 +636,13 @@ def show_landing_page():
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
     # ==================== FAQ SECTION ====================
-    st.markdown("<h2 style='text-align: center; margin-bottom: 1.5rem;'>❓ Frequently Asked Questions</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>❓ Frequently Asked Questions</h2>", unsafe_allow_html=True)
     
     faqs = [
-        ("Is TenderAI compliant with PPR 2025?", "Yes! TenderAI is fully compliant with Bangladesh Public Procurement Rules 2025 and e-GP standards."),
-        ("How accurate are the AI predictions?", "Our ML models achieve 85% accuracy in predicting winning bid ranges based on historical data."),
-        ("Can I try before buying?", "Absolutely! Start with a 14-day free trial, no credit card required."),
-        ("Is my data secure?", "Yes, we use bank-grade encryption and never share your data with third parties.")
+        ("iTender BD কি e-GP এর বিকল্প?", "না। iTender BD হলো একটি Tender Intelligence Platform যা e-GP ব্যবহারকারীদের টেন্ডার বিশ্লেষণ ও বিডিং সিদ্ধান্ত গ্রহণে সহায়তা করে।"),
+        ("কত দ্রুত টেন্ডার বিশ্লেষণ করা যায়?", "সাধারণত কয়েক সেকেন্ডের মধ্যে।"),
+        ("এটি কি BOQ বিশ্লেষণ করতে পারে?", "হ্যাঁ। হাজার হাজার BOQ Item স্বয়ংক্রিয়ভাবে বিশ্লেষণ করতে পারে।"),
+        ("এটি কি বিড মূল্য সুপারিশ করে?", "হ্যাঁ। Aggressive, Moderate, Conservative এবং Weighted Average Bid Recommendation প্রদান করে।")
     ]
     
     for question, answer in faqs:
@@ -511,18 +656,30 @@ def show_landing_page():
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
     # ==================== FINAL CTA ====================
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 2rem; border-radius: 20px; text-align: center; margin-bottom: 2rem;">
+        <h2 style="color: white;">Ready to Win More Tenders?</h2>
+        <p style="color: #cbd5e1; margin-bottom: 1rem;">আপনার টেন্ডার বিশ্লেষণকে নিয়ে যান AI-এর পরবর্তী পর্যায়ে</p>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; max-width: 800px; margin: 0 auto 1rem auto;">
+            <div style="color: white;">✔ দ্রুত বিশ্লেষণ</div>
+            <div style="color: white;">✔ কম খরচ</div>
+            <div style="color: white;">✔ উন্নত সিদ্ধান্ত</div>
+            <div style="color: white;">✔ অধিক দক্ষতা</div>
+            <div style="color: white;">✔ জয়ের সম্ভাবনা বৃদ্ধি</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h3 style='text-align: center;'>Ready to Transform Your Bidding Strategy?</h3>", unsafe_allow_html=True)
-        if st.button("Start Your 14-Day Free Trial", use_container_width=True, type="primary"):
-            st.session_state.page = "register"
-            st.rerun()
-        st.caption("No credit card required • Cancel anytime • 14-day free trial")
+        if st.button("আজই ডেমো বুক করুন", use_container_width=True, type="primary"):
+            st.info("Please call us at +880 1234 567890 or email sales@itenderbd.com")
+        st.caption("📞 যোগাযোগ করুন: +880 1234 567890 | 📧 sales@itenderbd.com | 🌐 www.itenderbd.com")
     
     # Trust Badges
     st.markdown("---")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    badges = ["✓ PPR 2025", "✓ e-GP Ready", "✓ SSL Secure", "✓ 24/7 Support", "✓ Bangladesh Made"]
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    badges = ["✓ PPR 2025", "✓ e-GP Ready", "✓ SSL Secure", "✓ 24/7 Support", "✓ Bangladesh Made", "✓ AI Powered"]
     for idx, badge in enumerate(badges):
-        with [col1, col2, col3, col4, col5][idx]:
+        with [col1, col2, col3, col4, col5, col6][idx]:
             st.markdown(f"<div class='trust-badge'>{badge}</div>", unsafe_allow_html=True)

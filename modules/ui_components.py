@@ -1,0 +1,435 @@
+# modules/ui_components.py
+
+import streamlit as st
+from datetime import datetime
+
+def init_theme():
+    """Initialize theme settings in session state"""
+    if 'dark_mode' not in st.session_state:
+        st.session_state.dark_mode = False
+
+def toggle_dark_mode():
+    """Toggle dark mode setting"""
+    st.session_state.dark_mode = not st.session_state.dark_mode
+    st.rerun()
+
+def get_theme_css():
+    """Return CSS based on dark/light mode"""
+    if st.session_state.get('dark_mode', False):
+        return """
+        <style>
+        /* Dark Theme */
+        :root {
+            --bg-primary: #0f0f12;
+            --bg-secondary: #1a1a24;
+            --bg-card: #1e1e2a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --border-color: #2a2a35;
+            --accent-primary: #667eea;
+            --accent-secondary: #764ba2;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        
+        /* Main app background */
+        .stApp {
+            background: linear-gradient(135deg, #0f0f12 0%, #1a1a24 100%);
+        }
+        
+        /* Card styling */
+        .metric-card, .feature-card, .pricing-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            transition: transform 0.2s;
+        }
+        
+        .metric-card:hover, .feature-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        /* Text colors */
+        .stMarkdown, .stText, p, div, span {
+            color: var(--text-primary);
+        }
+        
+        /* Headers */
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--text-primary);
+        }
+        
+        /* Dataframes */
+        .stDataFrame, .dataframe {
+            background: var(--bg-card);
+            color: var(--text-primary);
+        }
+        
+        /* Sidebar */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0f0f12 0%, #1a1a24 100%);
+            border-right: 1px solid var(--border-color);
+        }
+        
+        /* Buttons */
+        .stButton > button {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            transition: all 0.2s;
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            opacity: 0.9;
+        }
+        
+        /* Input fields */
+        .stTextInput > div > div > input,
+        .stNumberInput > div > div > input,
+        .stSelectbox > div > div > select {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            border-radius: 8px;
+        }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 1rem;
+            background: transparent;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: var(--text-secondary);
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: white;
+        }
+        
+        /* Expander */
+        .streamlit-expanderHeader {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            color: var(--text-primary);
+        }
+        
+        /* Info/Warning/Success boxes */
+        .stAlert {
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--accent-primary);
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--accent-primary);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-secondary);
+        }
+        </style>
+        """
+    else:
+        return """
+        <style>
+        /* Light Theme */
+        :root {
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --accent-primary: #667eea;
+            --accent-secondary: #764ba2;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        
+        .stApp {
+            background: var(--bg-primary);
+        }
+        
+        .metric-card, .feature-card, .pricing-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            transition: transform 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        
+        .metric-card:hover, .feature-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .stDataFrame, .dataframe {
+            background: var(--bg-card);
+        }
+        
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+            border-right: 1px solid var(--border-color);
+        }
+        
+        .stButton > button {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: white;
+            border: none;
+            border-radius: 8px;
+        }
+        
+        .stTextInput > div > div > input,
+        .stNumberInput > div > div > input,
+        .stSelectbox > div > div > select {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background: #f1f5f9;
+            border-radius: 8px;
+        }
+        
+        .streamlit-expanderHeader {
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+        </style>
+        """
+
+def render_app_header():
+    """Render professional app header with logo and dark mode toggle"""
+    
+    init_theme()
+    
+    # Custom CSS for header
+    st.markdown("""
+    <style>
+    .app-header {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        padding: 0.5rem 2rem;
+        border-radius: 0 0 12px 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .logo-section {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .logo-icon {
+        font-size: 2rem;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+    
+    .logo-text h1 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: bold;
+        background: linear-gradient(135deg, #ffffff, #a8c8ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .logo-text p {
+        margin: 0;
+        font-size: 0.7rem;
+        color: rgba(255,255,255,0.8);
+    }
+    
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .theme-toggle {
+        background: rgba(255,255,255,0.2);
+        border: none;
+        border-radius: 20px;
+        padding: 6px 12px;
+        cursor: pointer;
+        color: white;
+        font-size: 0.8rem;
+        transition: all 0.2s;
+    }
+    
+    .theme-toggle:hover {
+        background: rgba(255,255,255,0.3);
+    }
+    
+    .user-badge {
+        background: rgba(255,255,255,0.15);
+        border-radius: 20px;
+        padding: 4px 12px;
+        font-size: 0.8rem;
+        color: white;
+    }
+    
+    @media (max-width: 768px) {
+        .app-header {
+            padding: 0.5rem 1rem;
+        }
+        .logo-text h1 {
+            font-size: 1rem;
+        }
+        .logo-icon {
+            font-size: 1.5rem;
+        }
+        .user-badge {
+            font-size: 0.7rem;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Get user info safely (handle None values)
+    full_name = st.session_state.get('full_name') or 'User'
+    company_name = st.session_state.get('company_name') or ''
+    
+    # Truncate long names safely
+    display_name = full_name[:20] if len(full_name) > 20 else full_name
+    display_company = f"| {company_name[:20]}" if company_name and len(company_name) > 0 else ''
+    
+    # Create header
+    st.markdown(f"""
+    <div class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <div class="logo-icon">🏗️</div>
+                <div class="logo-text">
+                    <h1>TenderAI</h1>
+                    <p>Enterprise Tender Management & Bid Optimization Platform</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="user-badge">
+                    👋 {display_name} {display_company}
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_dark_mode_toggle():
+    """Render dark mode toggle button"""
+    
+    init_theme()
+    
+    # Create columns for the toggle
+    col1, col2, col3 = st.columns([2, 1, 2])
+    
+    with col2:
+        if st.session_state.dark_mode:
+            if st.button("☀️ Light Mode", use_container_width=True, key="light_mode_btn"):
+                toggle_dark_mode()
+        else:
+            if st.button("🌙 Dark Mode", use_container_width=True, key="dark_mode_btn_1"):
+                toggle_dark_mode()
+
+def apply_theme():
+    """Apply current theme CSS to the app"""
+    css = get_theme_css()
+    st.markdown(css, unsafe_allow_html=True)
+def render_footer():
+    """Render app footer with gradient styling"""
+    from version import __version__, __version_date__
+    
+    # Footer with gradient background
+    st.markdown("""
+    <style>
+    .gradient-footer {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        border-radius: 12px;
+        padding: 1rem 2rem;
+        margin-top: 2rem;
+        margin-bottom: 0.5rem;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    }
+    .footer-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    .footer-item {
+        color: rgba(255,255,255,0.9);
+        font-size: 0.8rem;
+        text-align: center;
+    }
+    .footer-item a {
+        color: #a8c8ff;
+        text-decoration: none;
+    }
+    .footer-item a:hover {
+        text-decoration: underline;
+    }
+    @media (max-width: 768px) {
+        .footer-content {
+            flex-direction: column;
+            text-align: center;
+        }
+        .gradient-footer {
+            padding: 0.8rem 1rem;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Create gradient footer
+    st.markdown(f"""
+    <div class="gradient-footer">
+        <div class="footer-content">
+            <div class="footer-item">
+                📌 Version {__version__} | {__version_date__}
+            </div>
+            <div class="footer-item">
+                🏗️ TenderAI - AI-Powered Tender Management
+            </div>
+            <div class="footer-item">
+                💡 Need help? <a href="mailto:support@tenderai.com">Contact Support</a>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)

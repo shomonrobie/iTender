@@ -3,6 +3,7 @@ from typing import Dict, Optional
 import streamlit as st
 import re
 from datetime import datetime
+import traceback
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
 # =============================================================================
@@ -388,89 +389,7 @@ def _generate_and_download_pdf(analysis_id: int, analysis_record: dict) -> None:
                 with st.expander("🐛 PDF Helper Traceback"):
                     st.code(traceback.format_exc(), language="python")
 
-def _generate_and_download_pdf_old(analysis_id: int, analysis_record: dict) -> None:
-    """Helper to generate and offer PDF download for saved analysis"""
-    with st.spinner("🔄 Generating PDF report..."):
-        try:
-            from modules.pdf_generator import generate_enhanced_analysis_report
-            
-            # ✅ Build complete user info
-            user_info = {
-                'full_name': st.session_state.get('full_name', 'N/A'),
-                'company_name': st.session_state.get('company_name', 'N/A'),
-                'role': st.session_state.get('user_role', 'N/A'),
-                'email': st.session_state.get('user_email', 'N/A'),
-                'company_id': st.session_state.get('company_id', 'N/A'),
-                'user_id': st.session_state.get('user_id', 'N/A'),
-            }
-            
-            # ✅ Fetch full analysis record from DB (not just session state)
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM tender_analyses WHERE id = ?', (analysis_id,))
-            saved = cursor.fetchone()
-            conn.close()
-            
-            if not saved or not cursor.description:
-                st.error("❌ Could not load analysis data from database")
-                return
-            
-            # ✅ Convert DB row to dict with proper keys
-            cols = [d[0] for d in cursor.description]
-            db_record = dict(zip(cols, saved))
-            
-            # ✅ Merge session state analysis_record with DB record for completeness
-            # Session state has live form data; DB has saved metadata
-            report_data = {**db_record, **analysis_record}
-            
-            # ✅ Ensure critical fields have proper types (prevent N/A/0 issues)
-            report_data['official_estimate'] = float(report_data.get('official_estimate', 1) or 1)
-            report_data['recommended_bid'] = float(report_data.get('recommended_bid', 0) or 0)
-            report_data['slt_threshold'] = float(report_data.get('slt_threshold', 0) or 0)
-            report_data['nppi_factor'] = float(report_data.get('nppi_factor', 0.92) or 0.92)
-            report_data['success_probability'] = float(report_data.get('success_probability', 0.6) or 0.6)
-            
-            # ✅ Generate enhanced PDF
-            pdf_buffer = generate_enhanced_analysis_report(report_data, user_info, include_charts=False)
-            
-            if not pdf_buffer or pdf_buffer.getbuffer().nbytes == 0:
-                st.error("❌ PDF generation returned empty buffer")
-                return
-            
-            # ✅ Safe filename
-            safe_tid = str(report_data.get('tender_id', 'report')).replace('/', '_').replace('\\', '_').replace(' ', '_')
-            fname = f"Enhanced_Analysis_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-            
-            # ✅ Show download button (MUST be after PDF generation in same rerun cycle)
-            st.download_button(
-                "💾 Download Enhanced PDF Report",
-                data=pdf_buffer,
-                file_name=fname,
-                mime="application/pdf",
-                use_container_width=True
-            )
-            st.success("✅ Enhanced PDF ready! Click button above to download.")
-            
-            # ✅ Log activity
-            if hasattr(db, 'log_team_activity'):
-                db.log_team_activity(
-                    company_id=st.session_state.company_id,
-                    actor_user_id=st.session_state.user_id,
-                    action_type="pdf_export_enhanced",
-                    target_type="analysis",
-                    target_id=str(analysis_id),
-                    details=f"Exported enhanced PDF for tender {safe_tid}"
-                )
-                
-        except ImportError as e:
-            st.warning(f"⚠️ PDF module not available: {e}. Using basic report.")
-            # Fallback logic here if needed
-        except Exception as e:
-            logger.error(f"PDF generation failed: {e}", exc_info=True)
-            st.error(f"❌ PDF error: {str(e)}")
-            if DEBUG_MODE:
-                with st.expander("🐛 Debug Traceback"):
-                    st.code(traceback.format_exc(), language="python")
+
 
 import re
 def validate_password_strength(password: str) -> tuple[int, str, str]:
@@ -517,3 +436,45 @@ def validate_password_strength(password: str) -> tuple[int, str, str]:
         color = "#ef4444"  # red
 
     return score, message.strip(), color
+def render_page_header(title: str, description: str = None):
+    """Render page header with consistent styling"""
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+                padding: 1.2rem 1.5rem; 
+                border-radius: 12px; 
+                margin-bottom: 1.5rem;">
+        <h1 style="margin: 0; color: #1e3c72;">{title}</h1>
+        {f'<p style="margin: 0.5rem 0 0 0; color: #555;">{description}</p>' if description else ''}
+    </div>
+    """, unsafe_allow_html=True)
+
+def safe_title(value, default: str = 'N/A') -> str:
+    """Safely convert any value to title case"""
+    if value is None:
+        return default
+    try:
+        return str(value).strip().title() if str(value).strip() else default
+    except Exception:
+        return default
+
+def render_tender_info_card(tender_data: dict) -> None:
+    """Render a compact tender information summary card"""
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+                padding: 1rem; border-radius: 10px; border-left: 4px solid #667eea;">
+        <strong>📋 {tender_data.get('tender_title', 'Untitled')[:60]}{'...' if len(tender_data.get('tender_title',''))>60 else ''}</strong><br>
+        <small>
+            ID: {tender_data.get('tender_id', 'N/A')} • 
+            Entity: {tender_data.get('procuring_entity', 'N/A')[:40]}<br>
+            Estimate: BDT {tender_data.get('official_estimate', 0):,.3f} • 
+            Deadline: {tender_data.get('submission_deadline', 'N/A')}
+        </small>
+    </div>
+    """, unsafe_allow_html=True)
+
+def safe_date_slice(date_value, length: int = 10) -> str:
+    """Safely slice date values (handles Timestamp, str, None)"""
+    if date_value is None:
+        return 'N/A'
+    date_str = str(date_value)
+    return date_str[:length] if len(date_str) >= length else date_str

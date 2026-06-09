@@ -2,7 +2,7 @@
 Database Manager for TenderAI System
 Handles all database operations including users, subscriptions, tenders, and competitor tracking
 """
-
+import streamlit as st
 import sqlite3
 import hashlib
 import json
@@ -17,37 +17,186 @@ from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Union  # ← Add this line
 import secrets
 import string
-
+import re
 
 logger = logging.getLogger(__name__)
+logging.getLogger("pdfminer").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.psparser").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.pdfdocument").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.pdfpage").setLevel(logging.WARNING)
+logging.getLogger("pdfplumber").setLevel(logging.WARNING)
 
 class DatabaseManager:
     def __init__(self, db_path="data/tender_system.db"):
         self.db_path = db_path
-        # Only initialize if tables don't exist
+        # Force a database directory build check if it's missing on fresh clones
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
+        # Initialize base tables if absent
         if not self._tables_exist():
             self.init_database()
-    
-    def _tables_exist(self):
-        """Check if database tables already exist"""
-        conn = self.get_connection()        
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-        result = cursor.fetchone()
-        conn.close()
-        return result is not None
+            
+        # FORCE ALIGNMENT: Explicitly initialize advanced BOQ subsystems 
+        # so they build even if the legacy 'users' table already exists.
+        #self.init_boq_tables_direct()
+        #self.init_pwd_hierarchical_tables()
+        #self.init_chapters_tables()
+        #self.init_lged_tables()
+        #self.init_boq_management_tables()  # ← ADD THIS LINE
+        #self.migrate_lged_tables_for_sections()
+        #self.migrate_rate_versions_add_version_number()
+        self.migrate_subscription()    
+        #self.migrate_lged_tables_for_parent_types()
+        self._verify_tables()
 
-    def get_connection(self):
-        """Get a fresh SQLite connection with FK enforcement"""
-        import os
-        conn = sqlite3.connect(self.db_path)
-        #print(f"🗄️ APP DB PATH: {os.path.abspath(self.db_path)}")  # Adjust variable name to match yours
-        conn.row_factory = sqlite3.Row  # Optional: enables dict-like access
-        #conn.execute("PRAGMA foreign_keys = ON;")        
+    def _verify_tables(self):
+        """Verify that all expected tables exist"""
+        expected_tables = ['users', 'companies', 'subscriptions', 'rate_versions', 
+                        'lged_parents', 'lged_children', 'pwd_parents', 'pwd_children']
         
-        return conn
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing = [row[0] for row in cursor.fetchall()]
+        conn.close()
         
-    
+        missing = [t for t in expected_tables if t not in existing]
+        if missing:
+            print(f"⚠️ Warning: Missing tables: {missing}. Run migrations to fix.")
+
+    def migrate_subscription(self):
+        """Initialize subscription tables and add missing columns"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        print("🔧 Migrating subscription tables...")
+        
+        # ========== 1. CREATE SUBSCRIPTION PLANS TABLE ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_name TEXT UNIQUE NOT NULL,
+                plan_type TEXT DEFAULT 'company',
+                monthly_price REAL DEFAULT 0,
+                yearly_price REAL DEFAULT 0,
+                max_boq_generations INTEGER DEFAULT 5,
+                max_bid_optimizations INTEGER DEFAULT 5,
+                max_tender_analyses INTEGER DEFAULT 5,
+                max_users INTEGER DEFAULT 1,
+                can_export_data BOOLEAN DEFAULT 0,
+                can_edit_rates BOOLEAN DEFAULT 0,
+                can_delete_rates BOOLEAN DEFAULT 0,
+                can_create_versions BOOLEAN DEFAULT 0,
+                can_manage_team BOOLEAN DEFAULT 0,
+                description TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Insert default plans
+        default_plans = [
+            ('free', 'company', 0, 0, 5, 5, 5, 1, 0, 0, 0, 0, 0, 'Free plan with basic features'),
+            ('basic', 'company', 4999, 49990, 30, 30, 30, 5, 1, 0, 0, 0, 0, 'Basic plan for small businesses'),
+            ('professional', 'company', 14999, 149990, 100, 100, -1, 15, 1, 0, 0, 1, 1, 'Professional plan for growing businesses'),
+            ('enterprise', 'company', 49999, 499990, -1, -1, -1, -1, 1, 0, 0, 1, 1, 'Enterprise plan with unlimited features')
+        ]
+        
+        for plan in default_plans:
+            cursor.execute("""
+                INSERT OR IGNORE INTO subscription_plans (
+                    plan_name, plan_type, monthly_price, yearly_price,
+                    max_boq_generations, max_bid_optimizations, max_tender_analyses,
+                    max_users, can_export_data, can_edit_rates, can_delete_rates,
+                    can_create_versions, can_manage_team, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, plan)
+        
+        # ========== 2. ADD MISSING COLUMNS TO SUBSCRIPTIONS TABLE ==========
+        # Check existing columns
+        cursor.execute("PRAGMA table_info(subscriptions)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        # Define columns to add
+        columns_to_add = {
+            'max_boq_generations': 'INTEGER DEFAULT 5',
+            'max_bid_optimizations': 'INTEGER DEFAULT 5',
+            'boq_used': 'INTEGER DEFAULT 0',
+            'bid_optimizations_used': 'INTEGER DEFAULT 0',
+            'can_edit_rates': 'BOOLEAN DEFAULT 0',
+            'can_delete_rates': 'BOOLEAN DEFAULT 0',
+            'can_create_versions': 'BOOLEAN DEFAULT 0',
+            'can_export_data': 'BOOLEAN DEFAULT 0',
+            'can_manage_team': 'BOOLEAN DEFAULT 0',
+            'last_reset_date': 'DATE'
+        }
+        
+        for col_name, col_type in columns_to_add.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE subscriptions ADD COLUMN {col_name} {col_type}")
+                    print(f"  ✅ Added column: {col_name}")
+                except Exception as e:
+                    print(f"  ⚠️ Could not add {col_name}: {e}")
+        
+        # ========== 3. UPDATE EXISTING SUBSCRIPTIONS WITH PLAN VALUES ==========
+        # Set default values based on plan
+        cursor.execute("""
+            UPDATE subscriptions 
+            SET 
+                analyses_limit = CASE plan
+                    WHEN 'free' THEN 5
+                    WHEN 'basic' THEN 30
+                    WHEN 'professional' THEN -1
+                    WHEN 'enterprise' THEN -1
+                    ELSE 5
+                END,
+                max_boq_generations = CASE plan
+                    WHEN 'free' THEN 5
+                    WHEN 'basic' THEN 30
+                    WHEN 'professional' THEN 100
+                    WHEN 'enterprise' THEN -1
+                    ELSE 5
+                END,
+                max_bid_optimizations = CASE plan
+                    WHEN 'free' THEN 5
+                    WHEN 'basic' THEN 30
+                    WHEN 'professional' THEN 100
+                    WHEN 'enterprise' THEN -1
+                    ELSE 5
+                END,
+                can_edit_rates = CASE plan
+                    WHEN 'professional' THEN 1
+                    WHEN 'enterprise' THEN 1
+                    ELSE 0
+                END,
+                can_delete_rates = CASE plan
+                    WHEN 'enterprise' THEN 1
+                    ELSE 0
+                END,
+                can_create_versions = CASE plan
+                    WHEN 'professional' THEN 1
+                    WHEN 'enterprise' THEN 1
+                    ELSE 0
+                END,
+                can_export_data = CASE plan
+                    WHEN 'basic' THEN 1
+                    WHEN 'professional' THEN 1
+                    WHEN 'enterprise' THEN 1
+                    ELSE 0
+                END,
+                can_manage_team = CASE plan
+                    WHEN 'professional' THEN 1
+                    WHEN 'enterprise' THEN 1
+                    ELSE 0
+                END,
+                last_reset_date = date('now')
+            WHERE plan IN ('free', 'basic', 'professional', 'enterprise')
+        """)
+        
+        conn.commit()
+        conn.close()
+        print("✅ Subscription migration complete!")
     def init_database(self):
         """Initialize all database tables"""
         conn = self.get_connection()
@@ -57,146 +206,203 @@ class DatabaseManager:
         
         # Companies table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS companies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_name TEXT UNIQUE NOT NULL,
-            registration_number TEXT,
-            vat_number TEXT,
-            address TEXT,
-            district TEXT,
-            division TEXT,
-            phone TEXT,
-            email TEXT,
-            website TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT 1
-        )
-        ''')
+            CREATE TABLE IF NOT EXISTS companies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT UNIQUE NOT NULL,
+                registration_number TEXT,
+                vat_number TEXT,
+                address TEXT,
+                district TEXT,
+                division TEXT,
+                phone TEXT,
+                email TEXT,
+                website TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            )
+            ''')
         
         # Users table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            full_name TEXT,
-            phone TEXT,
-            role TEXT DEFAULT 'user',
-            is_active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login TIMESTAMP,
-            created_by INTEGER,
-            FOREIGN KEY (company_id) REFERENCES companies (id)
-        )
-        ''')
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                full_name TEXT,
+                phone TEXT,
+                role TEXT DEFAULT 'user',
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP,
+                created_by INTEGER,
+                FOREIGN KEY (company_id) REFERENCES companies (id)
+            )
+            ''')
         
         # Subscriptions table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            plan TEXT DEFAULT 'free',
-            status TEXT DEFAULT 'active',
-            start_date DATE,
-            end_date DATE,
-            analyses_used INTEGER DEFAULT 0,
-            analyses_limit INTEGER DEFAULT 5,
-            payment_method TEXT,
-            transaction_id TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-        ''')
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                plan TEXT DEFAULT 'free',
+                status TEXT DEFAULT 'active',
+                start_date DATE,
+                end_date DATE,
+                analyses_used INTEGER DEFAULT 0,
+                analyses_limit INTEGER DEFAULT 5,
+                payment_method TEXT,
+                transaction_id TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+            ''')
         
                 
         # 3. Create consultant-client mapping table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS consultant_clients (
-            id INTEGER PRIMARY KEY,
-            consultant_user_id INTEGER REFERENCES users(id),
-            client_company_id INTEGER REFERENCES companies(id),
-            role TEXT DEFAULT 'manager',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(consultant_user_id, client_company_id)
-        )''')
+            CREATE TABLE IF NOT EXISTS consultant_clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                consultant_user_id INTEGER REFERENCES users(id),
+                client_company_id INTEGER REFERENCES companies(id),
+                role TEXT DEFAULT 'manager',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(consultant_user_id, client_company_id)
+            )''')
 
         # 4. Indexes for fast lookups
         cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id);
-        ''')
+            CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id);
+            ''')
         cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_sub_company ON subscriptions(company_id);
-        ''')
+            CREATE INDEX IF NOT EXISTS idx_sub_company ON subscriptions(company_id);
+            ''')
         cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_consultant_client ON consultant_clients(consultant_user_id);
-        ''')
+            CREATE INDEX IF NOT EXISTS idx_consultant_client ON consultant_clients(consultant_user_id);
+            ''')
         # Tender analyses table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tender_analyses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            company_id INTEGER,
-            tender_id TEXT,
-            tender_title TEXT,
-            procuring_entity TEXT,
-            division TEXT,
-            construction_type TEXT,
-            official_estimate REAL,
-            recommended_bid REAL,
-            actual_bid REAL,
-            success_probability REAL,
-            risk_level TEXT,
-            competitor_count INTEGER,
-            bid_status TEXT,
-            analysis_type TEXT,
-            analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (company_id) REFERENCES companies (id)
-        )
-        ''')
+            CREATE TABLE IF NOT EXISTS tender_analyses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                company_id INTEGER,
+                tender_id TEXT,
+                tender_title TEXT,
+                procuring_entity TEXT,
+                division TEXT,
+                construction_type TEXT,
+                official_estimate REAL,
+                recommended_bid REAL,
+                actual_bid REAL,
+                success_probability REAL,
+                risk_level TEXT,
+                competitor_count INTEGER,
+                bid_status TEXT,
+                analysis_type TEXT,
+                analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (company_id) REFERENCES companies (id)
+            )
+            ''')
         
         # Contact messages table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS contact_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            email TEXT,
-            subject TEXT,
-            message TEXT,
-            status TEXT DEFAULT 'unread',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
+            CREATE TABLE IF NOT EXISTS contact_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                email TEXT,
+                subject TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'unread',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
         
         # ==================== HISTORICAL DATA TABLES ====================
         
         # Historical tenders table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historical_tenders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            company_id INTEGER,
-            tender_id TEXT,
-            tender_title TEXT,
-            procuring_entity TEXT,
-            procurement_type TEXT,
-            official_estimate REAL,
-            awarded_price REAL,
-            num_competitors INTEGER,
-            total_bidders INTEGER,
-            our_rank INTEGER,
-            award_date DATE,
-            competitors_data TEXT,
-            winning_competitor TEXT,
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (company_id) REFERENCES companies (id)
-        )
+            CREATE TABLE IF NOT EXISTS historical_tenders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                company_id INTEGER,
+                tender_id TEXT,
+                tender_title TEXT,
+                procuring_entity TEXT,
+                procurement_type TEXT,
+                official_estimate REAL,
+                awarded_price REAL,
+                num_competitors INTEGER,
+                total_bidders INTEGER,
+                our_rank INTEGER,
+                award_date DATE,
+                competitors_data TEXT,
+                winning_competitor TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (company_id) REFERENCES companies (id)
+            )
+            ''')
+        # 1. Extends state management for ingested e-GP Tenders
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tenders_boq_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT PRIMARY KEY,
+                ministry_or_agency TEXT,
+                selected_zone TEXT,
+                workflow_status TEXT CHECK(workflow_status IN ('Draft', 'Pending Approval', 'Approved')) DEFAULT 'Draft',
+                official_budget_cap REAL DEFAULT 0.0,
+                created_by TEXT,
+                approved_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         ''')
-        
+
+        # 2. Stores individual financial line items tied contextually to the Tender
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tender_boq_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                item_no TEXT,
+                group_name TEXT,
+                item_code TEXT,
+                description TEXT,
+                unit TEXT,
+                quantity REAL,
+                unit_rate REAL,
+                last_modified_by TEXT,
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
+
+        # 3. Dedicated Audit Trail Log System
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_change_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                item_code TEXT,
+                item_no TEXT,
+                old_rate REAL,
+                new_rate REAL,
+                modified_by TEXT,
+                modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
+        # 4. Competitor Pricing Registry Table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS competitor_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                competitor_name TEXT NOT NULL,
+                total_bid_amount REAL NOT NULL,
+                submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_winner INTEGER DEFAULT 0 CHECK(is_winner IN (0, 1)),
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
         # Company NPPI table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS company_nppi (
@@ -273,6 +479,7 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_nppi_company ON company_nppi(company_id, procurement_type, calculation_date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_competitor_master ON competitor_master(company_id, competitor_name)')
         
+      
         # ==================== DEFAULT DATA ====================
         
         # Create default admin company if not exists
@@ -283,15 +490,15 @@ class DatabaseManager:
         # Create admin user
         admin_pass = hashlib.sha256("admin123".encode()).hexdigest()
         cursor.execute('''
-        INSERT OR IGNORE INTO users (company_id, username, password, email, full_name, role)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''', (admin_company_id, "admin", admin_pass, "admin@tenderai.com", "System Administrator", "admin"))
+            INSERT OR IGNORE INTO users (company_id, username, password, email, full_name, role)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', (admin_company_id, "admin", admin_pass, "admin@tenderai.com", "System Administrator", "admin"))
         
         # Create demo company
         cursor.execute('''
-        INSERT OR IGNORE INTO companies (company_name, email, phone, division)
-        VALUES (?, ?, ?, ?)
-        ''', ("ABC Construction Ltd", "info@abcconstruction.com", "017XXXXXXXX", "Dhaka"))
+            INSERT OR IGNORE INTO companies (company_name, email, phone, division)
+            VALUES (?, ?, ?, ?)
+            ''', ("ABC Construction Ltd", "info@abcconstruction.com", "017XXXXXXXX", "Dhaka"))
         
         cursor.execute('SELECT id FROM companies WHERE company_name = "ABC Construction Ltd"')
         demo_company = cursor.fetchone()
@@ -350,6 +557,1869 @@ class DatabaseManager:
         conn.commit()
         conn.close()
         print("Database initialized successfully")
+    
+    def init_boq_tables_direct(self):
+        """Guarantees advanced e-GP and PWD schemas are injected without constructor bypass conflicts."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 1. Ingested Tenders Metadata Tracking Table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tenders_boq_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT PRIMARY KEY,
+                ministry_or_agency TEXT,
+                selected_zone TEXT,
+                workflow_status TEXT CHECK(workflow_status IN ('Draft', 'Pending Approval', 'Approved')) DEFAULT 'Draft',
+                official_budget_cap REAL DEFAULT 0.0,
+                created_by TEXT,
+                approved_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 2. Transactional Financial Line Items
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tender_boq_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                item_no TEXT,
+                group_name TEXT,
+                item_code TEXT,
+                description TEXT,
+                unit TEXT,
+                quantity REAL,
+                unit_rate REAL,
+                last_modified_by TEXT,
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # 3. Modification Accountability Logs Audit Trail
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_change_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                item_code TEXT,
+                item_no TEXT,
+                old_rate REAL,
+                new_rate REAL,
+                modified_by TEXT,
+                modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
+        
+        # 4. Competitor Bids Matrix Registry
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS competitor_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id TEXT,
+                competitor_name TEXT NOT NULL,
+                total_bid_amount REAL NOT NULL,
+                submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_winner INTEGER DEFAULT 0 CHECK(is_winner IN (0, 1)),
+                FOREIGN KEY(tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE CASCADE
+            )
+        ''')
+        
+
+        conn.commit()
+        conn.close()
+
+
+    def init_lged_tables(self):
+        """Initialize LGED-specific tables"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # LGED Versions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rate_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT DEFAULT 'LGED',
+                version_name TEXT NOT NULL,
+                edition_year INTEGER NOT NULL,
+                effective_from DATE,
+                is_active BOOLEAN DEFAULT 0,
+                released_by TEXT,
+                release_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                notes TEXT,
+                total_parents INTEGER DEFAULT 0,
+                total_children INTEGER DEFAULT 0,
+                total_rates INTEGER DEFAULT 0,
+                created_by TEXT
+            )
+        """)
+        
+        # LGED Parents table (updated to support both section headers and leaf items)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_parents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                description TEXT,
+                chapter_number TEXT,
+                section_number TEXT,
+                parent_type TEXT DEFAULT 'section_header',  -- 'section_header' or 'leaf_item'
+                has_children BOOLEAN DEFAULT 0,
+                unit TEXT,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (version_id) REFERENCES rate_versions(id)
+            )
+        """)
+        
+        # LGED Children table (for items that belong to section headers)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_children (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                parent_code TEXT NOT NULL,
+                description TEXT,
+                unit TEXT,
+                chapter_number TEXT,
+                section_number TEXT,
+                zone_a REAL,
+                zone_b REAL,
+                zone_c REAL,
+                zone_d REAL,
+                edition_year INTEGER,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (version_id) REFERENCES rate_versions(id)
+            )
+        """)
+        
+        # LGED Zone Rates table (for leaf items)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_zone_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_id INTEGER,
+                zone_name TEXT NOT NULL,
+                unit_rate REAL NOT NULL,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (parent_id) REFERENCES lged_parents(id),
+                FOREIGN KEY (version_id) REFERENCES rate_versions(id)
+            )
+        """)
+        
+        # LGED Sections table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_sections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chapter_number TEXT NOT NULL,
+                section_number TEXT NOT NULL,
+                section_name TEXT NOT NULL,
+                description TEXT,
+                display_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chapter_number, section_number)
+            )
+        """)
+        
+        # Zone mapping table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_zone_mapping (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zone_code TEXT PRIMARY KEY,
+                zone_name TEXT,
+                divisions TEXT,
+                accessibility_bonus REAL DEFAULT 0.05,
+                description TEXT
+            )
+        """)
+        
+        # Insert default zone mapping
+        cursor.execute("""
+            INSERT OR IGNORE INTO lged_zone_mapping (zone_code, zone_name, divisions, accessibility_bonus)
+            VALUES 
+            ('A', 'Dhaka & Mymensingh Division', '["Dhaka","Mymensingh"]', 0.05),
+            ('B', 'Chattogram & Sylhet Division', '["Chattogram","Sylhet"]', 0.05),
+            ('C', 'Rajshahi & Rangpur Division', '["Rajshahi","Rangpur"]', 0.05),
+            ('D', 'Khulna & Barishal Division', '["Khulna","Barishal"]', 0.05)
+        """)
+        
+        # Insert default sections for Chapter 1 (your data uses Chapter 1)
+        default_sections = [
+            ("1", "1.01", "Site Office Setup", 1),
+            ("1", "1.1", "Videography Services", 2),
+        ]
+        
+        for chapter_num, section_num, section_name, display_order in default_sections:
+            cursor.execute("""
+                INSERT OR IGNORE INTO lged_sections (chapter_number, section_number, section_name, display_order)
+                VALUES (?, ?, ?, ?)
+            """, (chapter_num, section_num, section_name, display_order))
+        
+        conn.commit()
+        conn.close()
+        print("✅ LGED tables initialized")
+    def migrate_lged_tables_for_parent_types(self):
+        """Migrate existing LGED tables to support parent types (section_header vs leaf_item)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Check and add parent_type column to lged_parents
+        cursor.execute("PRAGMA table_info(lged_parents)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'parent_type' not in columns:
+            cursor.execute("ALTER TABLE lged_parents ADD COLUMN parent_type TEXT DEFAULT 'section_header'")
+            print("✅ Added parent_type to lged_parents")
+        
+        if 'has_children' not in columns:
+            cursor.execute("ALTER TABLE lged_parents ADD COLUMN has_children BOOLEAN DEFAULT 0")
+            print("✅ Added has_children to lged_parents")
+        
+        if 'unit' not in columns:
+            cursor.execute("ALTER TABLE lged_parents ADD COLUMN unit TEXT")
+            print("✅ Added unit to lged_parents")
+        
+        # Check lged_children for rate columns
+        cursor.execute("PRAGMA table_info(lged_children)")
+        child_columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'zone_a' not in child_columns:
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_a REAL")
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_b REAL")
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_c REAL")
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_d REAL")
+            print("✅ Added zone rate columns to lged_children")
+        
+        conn.commit()
+        conn.close()
+    def migrate_lged_tables_for_sections(self):
+        """Add section support columns to LGED tables if missing"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Migrate lged_parents table
+        cursor.execute("PRAGMA table_info(lged_parents)")
+        parent_columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'section_number' not in parent_columns:
+            cursor.execute("ALTER TABLE lged_parents ADD COLUMN section_number TEXT")
+            print("✅ Added section_number to lged_parents")
+        
+        # Migrate lged_children table
+        cursor.execute("PRAGMA table_info(lged_children)")
+        child_columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'chapter_number' not in child_columns:
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN chapter_number TEXT")
+            print("✅ Added chapter_number to lged_children")
+        
+        if 'section_number' not in child_columns:
+            cursor.execute("ALTER TABLE lged_children ADD COLUMN section_number TEXT")
+            print("✅ Added section_number to lged_children")
+        
+        conn.commit()
+        conn.close()
+        print("✅ LGED tables migration complete")
+
+    def migrate_rate_versions_add_version_number(self):
+        """Add version_number column to rate_versions table if missing"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Check if version_number column exists
+            cursor.execute("PRAGMA table_info(rate_versions)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'version_number' not in columns:
+                cursor.execute("ALTER TABLE rate_versions ADD COLUMN version_number INTEGER DEFAULT 1")
+                print("✅ Added version_number column to rate_versions")
+            
+            if 'updated_at' not in columns:
+                cursor.execute("ALTER TABLE rate_versions ADD COLUMN updated_at TIMESTAMP")
+                print("✅ Added updated_at column to rate_versions")
+            
+            if 'notes' not in columns:
+                cursor.execute("ALTER TABLE rate_versions ADD COLUMN notes TEXT")
+                print("✅ Added notes column to rate_versions")
+            
+            # Update existing records to have version_number = 1
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET version_number = 1 
+                WHERE version_number IS NULL
+            """)
+            
+            conn.commit()
+            
+        except Exception as e:
+            print(f"⚠️ Migration error: {e}")
+            conn.rollback()
+        finally:
+            conn.close()    
+    def init_pwd_hierarchical_tables(self):
+        """Initialize hierarchical PWD tables"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Ensure rate_versions table exists with all columns
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rate_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT DEFAULT 'PWD',
+                version_name TEXT NOT NULL,
+                edition_year INTEGER NOT NULL,
+                effective_from DATE,
+                is_active BOOLEAN DEFAULT 0,
+                released_by TEXT,
+                release_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                notes TEXT,
+                total_parents INTEGER DEFAULT 0,
+                total_children INTEGER DEFAULT 0,
+                total_rates INTEGER DEFAULT 0,
+                created_by TEXT
+            )
+        """)
+        
+        # Parent items table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pwd_parents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pwd_code TEXT PRIMARY KEY,
+                description TEXT,
+                chapter_number TEXT,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Child items table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pwd_children (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pwd_code TEXT PRIMARY KEY,
+                parent_code TEXT NOT NULL,
+                description TEXT,
+                unit TEXT,
+                edition_year INTEGER,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (parent_code) REFERENCES pwd_parents(pwd_code) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Rates table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pwd_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pwd_code TEXT NOT NULL,
+                zone_name TEXT NOT NULL,
+                unit_rate REAL NOT NULL,
+                edition_year INTEGER NOT NULL,
+                version_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(pwd_code, zone_name, edition_year),
+                FOREIGN KEY (pwd_code) REFERENCES pwd_children(pwd_code) ON DELETE CASCADE
+            )
+        ''')
+        
+        # Indexes
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_parent_chapter ON pwd_parents(chapter_number)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_child_parent ON pwd_children(parent_code)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pwd_rates_code ON pwd_rates(pwd_code)')
+        
+        conn.commit()
+        conn.close()
+        print("✅ PWD hierarchical tables initialized")
+
+
+    def init_chapters_tables(self):
+        """Initialize chapters tables for both PWD and LGED"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # PWD Chapters table (without description column initially)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pwd_chapters (
+                chapter_number TEXT PRIMARY KEY,
+                chapter_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Add description column if it doesn't exist (for future use)
+        try:
+            cursor.execute("ALTER TABLE pwd_chapters ADD COLUMN description TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        # LGED Chapters table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS lged_chapters (
+                chapter_number TEXT PRIMARY KEY,
+                chapter_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Add description column if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE lged_chapters ADD COLUMN description TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        # Insert default PWD chapters
+        default_pwd_chapters = [
+            ("01", "General, Site Facilities and Safety"),
+            ("02", "Excavation, Filling & Site Development"),
+            ("03", "Brick Works, Patent Stone and Fancy Screen"),
+            ("04", "Reinforced Cement Concrete (RCC) Works"),
+            ("05", "Mosaic Works"),
+            ("06", "Tiles, Marble and Granite Stone Works"),
+            ("07", "Wood Works"),
+            ("08", "Window Grill, Verandah Grill & Netting"),
+            ("09", "Pile Works and Pile Test"),
+            ("10", "Structural Steel Works"),
+            ("11", "Wood Works in Door and Window Frame"),
+            ("12", "Collapsible Gate, M.S. Gate, Rolling Shutter"),
+            ("13", "Aluminium Door, Window and Partition"),
+            ("14", "Cement Plaster, Fair-Face Plaster"),
+            ("15", "Painting and Polishing"),
+            ("16", "Water Proofing and Heat Proofing"),
+            ("17", "False Ceiling and Wall Panelling"),
+            ("18", "Sanitary and Plumbing Works"),
+            ("19", "Gas Pipe Line Installation"),
+            ("20", "Sub-Soil Investigation"),
+            ("21", "Repair Works")
+        ]
+        
+        for chapter_num, chapter_name in default_pwd_chapters:
+            cursor.execute("""
+                INSERT OR IGNORE INTO pwd_chapters (chapter_number, chapter_name)
+                VALUES (?, ?)
+            """, (chapter_num, chapter_name))
+        
+        # Insert default LGED chapters
+        default_lged_chapters = [
+            ("1", "General, Site Facilities and Safety"),
+            ("2", "Earth Works in Road Embankment"),
+            ("3", "Sub-Base and Base Course"),
+            ("4", "Bituminous Pavement"),
+            ("5", "Bridge and Culvert Works"),
+            ("6", "Building Works"),
+            ("7", "Sanitary and Water Supply"),
+            ("8", "Electrical Works"),
+            ("9", "Landscaping and Development")
+        ]
+        
+        for chapter_num, chapter_name in default_lged_chapters:
+            cursor.execute("""
+                INSERT OR IGNORE INTO lged_chapters (chapter_number, chapter_name)
+                VALUES (?, ?)
+            """, (chapter_num, chapter_name))
+        
+        conn.commit()
+        conn.close()
+        print("✅ Chapters tables initialized")
+    
+
+    def init_boq_management_tables(self):
+        """Initialize BOQ management tables with tender linking"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # BOQ generation history with tender link
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS boq_generation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                company_id INTEGER,
+                tender_id TEXT,
+                tender_title TEXT,
+                procuring_entity TEXT,
+                file_name TEXT,
+                item_count INTEGER,
+                total_estimated_cost REAL,
+                selected_zone TEXT,
+                rate_source TEXT,
+                edition_year INTEGER,
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'completed',
+                notes TEXT,
+                FOREIGN KEY (tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE SET NULL
+            )
+        """)
+        
+        # Bid submissions tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bid_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                boq_history_id INTEGER,
+                tender_id TEXT,
+                company_id INTEGER,
+                submitted_bid_amount REAL,
+                bid_document_path TEXT,
+                submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                submitted_by TEXT,
+                status TEXT DEFAULT 'draft',
+                notes TEXT,
+                FOREIGN KEY (boq_history_id) REFERENCES boq_generation_history(id) ON DELETE CASCADE,
+                FOREIGN KEY (tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE SET NULL
+            )
+        """)
+        
+        # Add indexes for performance
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_boq_history_tender ON boq_generation_history(tender_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_boq_history_user ON boq_generation_history(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_boq_history_company ON boq_generation_history(company_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bid_submissions_tender ON bid_submissions(tender_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bid_submissions_company ON bid_submissions(company_id)")
+        
+        conn.commit()
+        conn.close()
+        print("✅ BOQ management tables initialized")
+
+    
+    def save_lged_hierarchy_enhanced(self, hierarchy, version_name, edition_year, 
+                                  effective_date=None, selected_chapters=None, 
+                                  selected_sections=None):
+        """
+        Save LGED hierarchy with support for:
+        - Section headers (parents without rates, have children)
+        - Leaf items (parents with rates, no children)
+        - Child items (belong to section headers)
+        """
+        from datetime import date
+        import json
+        
+        # Ensure schema is updated
+        self.migrate_lged_tables_for_parent_types()
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        effective_date = effective_date or date.today()
+        has_sections = selected_sections is not None and len(selected_sections) > 0
+        
+        try:
+            # Create version record
+            cursor.execute("""
+                INSERT INTO rate_versions (source, version_name, edition_year, effective_from, 
+                                        is_active, release_date, created_by, has_sections)
+                VALUES ('LGED', ?, ?, ?, 1, ?, ?, ?)
+            """, (version_name, edition_year, effective_date, datetime.now(), 
+                'system', has_sections))
+            
+            version_id = cursor.lastrowid
+            
+            # Save section headers (parents without rates)
+            section_headers = [p for p in hierarchy.get('section_headers', [])]
+            leaf_items = [p for p in hierarchy.get('leaf_items', [])]
+            children = hierarchy.get('children', [])
+            
+            parent_ids = {}
+            
+            # Save section headers (parents without rates, may have children)
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', ''), 
+                    header.get('chapter_number', ''), header.get('section_number', ''),
+                    1 if header.get('has_children') else 0, version_id))
+                parent_ids[header['code']] = cursor.lastrowid
+            
+            # Save leaf items (parents with rates, no children)
+            for leaf in leaf_items:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, unit, version_id)
+                    VALUES (?, ?, ?, ?, 'leaf_item', 0, ?, ?)
+                """, (leaf['code'], leaf.get('description', ''), 
+                    leaf.get('chapter_number', ''), leaf.get('section_number', ''),
+                    leaf.get('unit', ''), version_id))
+                parent_id = cursor.lastrowid
+                parent_ids[leaf['code']] = parent_id
+                
+                # Save rates for leaf items
+                for zone, rate in leaf.get('rates', {}).items():
+                    cursor.execute("""
+                        INSERT INTO lged_zone_rates (parent_id, zone_name, unit_rate, version_id)
+                        VALUES (?, ?, ?, ?)
+                    """, (parent_id, zone, rate, version_id))
+            
+            # Save child items (belong to section headers)
+            for child in children:
+                parent_code = child.get('parent_code', '')
+                cursor.execute("""
+                    INSERT INTO lged_children (code, parent_code, description, unit, 
+                                            chapter_number, section_number,
+                                            zone_a, zone_b, zone_c, zone_d,
+                                            edition_year, version_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (child['code'], parent_code, child.get('description', ''), 
+                    child.get('unit', ''),
+                    child.get('chapter_number', ''), child.get('section_number', ''),
+                    child.get('zone_a'), child.get('zone_b'), 
+                    child.get('zone_c'), child.get('zone_d'),
+                    edition_year, version_id))
+            
+            # Update version record with statistics
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?
+                WHERE id = ?
+            """, (len(section_headers) + len(leaf_items), len(children), 
+                len(leaf_items) + len(children), version_id))
+            
+            conn.commit()
+            
+            print(f"✅ Saved LGED hierarchy:")
+            print(f"  - Section Headers: {len(section_headers)}")
+            print(f"  - Leaf Items: {len(leaf_items)}")
+            print(f"  - Child Items: {len(children)}")
+            
+            return version_id
+            
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ Error saving LGED hierarchy: {e}")
+            import traceback
+            traceback.print_exc()
+            raise e
+        finally:
+            conn.close()
+
+
+
+    # ==================== LGED IMPORT MODES METHODS ====================
+
+    def get_active_version_id(self, source: str, edition_year: int) -> Optional[int]:
+        """Get the active version ID for a specific source and edition year"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id FROM rate_versions 
+            WHERE source = ? AND edition_year = ? AND is_active = 1
+            LIMIT 1
+        """, (source, edition_year))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result[0] if result else None
+
+    def version_exists(self, source: str, edition_year: int) -> bool:
+        """Check if ANY version exists for given source and edition year"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Count all versions (including inactive)
+        cursor.execute("""
+            SELECT COUNT(*) FROM rate_versions 
+            WHERE source = ? AND edition_year = ?
+        """, (source, edition_year))
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        return count > 0
+
+    def get_version_history(self, source: str, edition_year: int) -> pd.DataFrame:
+        """Get version history for a specific source and edition year"""
+        conn = self.get_connection()
+        
+        try:
+            # Use a simpler query that works regardless of columns
+            query = """
+                SELECT 
+                    id, 
+                    version_name, 
+                    version_number, 
+                    is_active,
+                    COALESCE(created_at, release_date, datetime('now')) as created_at,
+                    COALESCE(updated_at, release_date, datetime('now')) as updated_at,
+                    COALESCE(total_parents, 0) as total_parents,
+                    COALESCE(total_children, 0) as total_children,
+                    COALESCE(total_rates, 0) as total_rates,
+                    COALESCE(notes, '') as notes
+                FROM rate_versions
+                WHERE source = ? AND edition_year = ?
+                ORDER BY version_number DESC
+            """
+            
+            df = pd.read_sql_query(query, conn, params=(source, edition_year))
+            
+            # Calculate total_items
+            if not df.empty:
+                df['total_items'] = df['total_parents'] + df['total_children']
+            
+            conn.close()
+            return df
+            
+        except Exception as e:
+            print(f"Error getting version history: {e}")
+            conn.close()
+            return pd.DataFrame()
+    def update_existing_lged_version(self, hierarchy, version_id, edition_year, notes=None):
+        """Update an existing version with new data"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Clear existing data for this version
+            cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
+            
+            # Get data from hierarchy
+            section_headers = hierarchy.get('section_headers', [])
+            rate_items = hierarchy.get('rate_items', [])
+            
+            # Save section headers
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', '')[:500], 
+                    header.get('chapter_number', ''), header.get('section_number', ''),
+                    1 if header.get('has_children') else 0, version_id))
+            
+            # Save ALL rate items
+            for item in rate_items:
+                cursor.execute("""
+                    INSERT INTO lged_children (
+                        code, parent_code, description, unit, 
+                        chapter_number, section_number,
+                        zone_a, zone_b, zone_c, zone_d,
+                        edition_year, version_id, is_parent
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item['code'], 
+                    item.get('parent_code'), 
+                    item.get('description', '')[:500], 
+                    item.get('unit', ''),
+                    item.get('chapter_number', ''), 
+                    item.get('section_number', ''),
+                    item.get('zone_a'), item.get('zone_b'), 
+                    item.get('zone_c'), item.get('zone_d'),
+                    edition_year, version_id, 
+                    1 if item.get('is_parent') else 0
+                ))
+            
+            # Update version record
+            total_parents = len(section_headers) + len([i for i in rate_items if i.get('is_parent')])
+            total_children = len([i for i in rate_items if not i.get('is_parent')])
+            total_rates = len(rate_items) * 4
+            
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    updated_at = ?, notes = ?, is_active = 1
+                WHERE id = ?
+            """, (total_parents, total_children, total_rates,
+                datetime.now(), notes, version_id))
+            
+            conn.commit()
+            
+            # Get version number for display
+            cursor.execute("SELECT version_number FROM rate_versions WHERE id = ?", (version_id,))
+            version_number = cursor.fetchone()[0]
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': version_number,
+                'mode': 'update',
+                'message': f"✅ Updated Version {version_number} for LGED {edition_year}"
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e),
+                'mode': 'update',
+                'message': f"❌ Failed to update version: {e}"
+            }
+        finally:
+            conn.close()
+
+    def save_lged_hierarchy_enhanced(self, hierarchy, version_name, edition_year, 
+                                  effective_date=None, selected_chapters=None, 
+                                  selected_sections=None, notes=None):
+        """
+        Create NEW version for LGED hierarchy
+        """
+        from datetime import date
+        
+        self.migrate_lged_tables_for_parent_types()
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        effective_date = effective_date or date.today()
+        has_sections = selected_sections is not None and len(selected_sections) > 0
+        
+        try:
+            # Get the next version number
+            cursor.execute("""
+                SELECT MAX(version_number) FROM rate_versions 
+                WHERE source = 'LGED' AND edition_year = ?
+            """, (edition_year,))
+            
+            result = cursor.fetchone()
+            next_version = (result[0] or 0) + 1
+            
+            # Deactivate current active version
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET is_active = 0, updated_at = ?
+                WHERE source = 'LGED' AND edition_year = ? AND is_active = 1
+            """, (datetime.now(), edition_year))
+            
+            # Create new version
+            cursor.execute("""
+                INSERT INTO rate_versions (
+                    source, version_name, edition_year, version_number,
+                    effective_from, is_active, release_date, 
+                    created_by, has_sections, notes
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            """, ('LGED', version_name, edition_year, next_version, 
+                effective_date, datetime.now(), 'system', has_sections, notes))
+            
+            version_id = cursor.lastrowid
+            print(f"✅ Created version {next_version} for LGED {edition_year}")
+            
+            # Get data from hierarchy
+            section_headers = hierarchy.get('section_headers', [])
+            rate_items = hierarchy.get('rate_items', [])
+            
+            # Clear existing data for this version
+            cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
+            
+            # Save section headers (parents without rates) - stored in lged_parents
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', '')[:500], 
+                    header.get('chapter_number', ''), header.get('section_number', ''),
+                    1 if header.get('has_children') else 0, version_id))
+            
+            # Save ALL rate items (both 2-part and 3-part codes) - stored in lged_children
+            for item in rate_items:
+                cursor.execute("""
+                    INSERT INTO lged_children (
+                        code, parent_code, description, unit, 
+                        chapter_number, section_number,
+                        zone_a, zone_b, zone_c, zone_d,
+                        edition_year, version_id, is_parent
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item['code'], 
+                    item.get('parent_code'), 
+                    item.get('description', '')[:500], 
+                    item.get('unit', ''),
+                    item.get('chapter_number', ''), 
+                    item.get('section_number', ''),
+                    item.get('zone_a'), item.get('zone_b'), 
+                    item.get('zone_c'), item.get('zone_d'),
+                    edition_year, version_id, 
+                    1 if item.get('is_parent') else 0
+                ))
+            
+            # Count items
+            total_parents = len(section_headers) + len([i for i in rate_items if i.get('is_parent')])
+            total_children = len([i for i in rate_items if not i.get('is_parent')])
+            total_rates = len(rate_items) * 4  # Each item has 4 zones
+            
+            # Update version record with statistics
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?
+                WHERE id = ?
+            """, (total_parents, total_children, total_rates, version_id))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': next_version,
+                'mode': 'create_new',
+                'total_parents': total_parents,
+                'total_children': total_children,
+                'total_rates': total_rates,
+                'message': f"✅ Created new version {next_version} for LGED {edition_year}"
+            }
+
+            
+        except Exception as e:
+            conn.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e),
+                'mode': 'create_new',
+                'message': f"❌ Failed to create new version: {e}"
+            }
+        finally:
+            conn.close()
+
+    def update_lged_hierarchy(self, hierarchy, edition_year, notes=None):
+        """
+        UPDATE existing active version (replaces data, no version increment)
+        """
+        from datetime import date
+        
+        self.migrate_lged_tables_for_parent_types()
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get the active version
+            cursor.execute("""
+                SELECT id, version_number FROM rate_versions 
+                WHERE source = 'LGED' AND edition_year = ? AND is_active = 1
+            """, (edition_year,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return {
+                    'success': False,
+                    'error': f"No active version found for LGED {edition_year}",
+                    'mode': 'update_existing',
+                    'message': f"❌ No active version found. Please do a first-time import first."
+                }
+            
+            version_id = result[0]
+            current_version = result[1]
+            
+            # Clear existing data for this version
+            cursor.execute("DELETE FROM lged_zone_rates WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
+            
+            # Insert the new/updated data
+            section_headers = hierarchy.get('section_headers', [])
+            leaf_items = hierarchy.get('leaf_items', [])
+            children = hierarchy.get('children', [])
+            
+            parent_ids = {}
+            
+            # Save section headers
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', ''), 
+                    header.get('chapter_number', ''), header.get('section_number', ''),
+                    1 if header.get('has_children') else 0, version_id))
+                parent_ids[header['code']] = cursor.lastrowid
+            
+            # Save leaf items
+            for leaf in leaf_items:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, unit, version_id)
+                    VALUES (?, ?, ?, ?, 'leaf_item', 0, ?, ?)
+                """, (leaf['code'], leaf.get('description', ''), 
+                    leaf.get('chapter_number', ''), leaf.get('section_number', ''),
+                    leaf.get('unit', ''), version_id))
+                parent_id = cursor.lastrowid
+                parent_ids[leaf['code']] = parent_id
+                
+                for zone, rate in leaf.get('rates', {}).items():
+                    cursor.execute("""
+                        INSERT INTO lged_zone_rates (parent_id, zone_name, unit_rate, version_id)
+                        VALUES (?, ?, ?, ?)
+                    """, (parent_id, zone, rate, version_id))
+            
+            # Save child items
+            for child in children:
+                cursor.execute("""
+                    INSERT INTO lged_children (code, parent_code, description, unit, 
+                                            chapter_number, section_number,
+                                            zone_a, zone_b, zone_c, zone_d,
+                                            edition_year, version_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (child['code'], child.get('parent_code', ''), child.get('description', ''), 
+                    child.get('unit', ''),
+                    child.get('chapter_number', ''), child.get('section_number', ''),
+                    child.get('zone_a'), child.get('zone_b'), 
+                    child.get('zone_c'), child.get('zone_d'),
+                    edition_year, version_id))
+            
+            # Update version record
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    updated_at = ?, notes = ?
+                WHERE id = ?
+            """, (len(section_headers) + len(leaf_items), len(children), 
+                len(leaf_items) + len(children),
+                datetime.now(), notes or "Updated via import", version_id))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': current_version,
+                'mode': 'update_existing',
+                'message': f"✅ Updated existing version {current_version} for LGED {edition_year}"
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            return {
+                'success': False,
+                'error': str(e),
+                'mode': 'update_existing',
+                'message': f"❌ Failed to update: {e}"
+            }
+        finally:
+            conn.close()
+
+    def add_items_to_lged_version(self, items, edition_year, conflict_handling='skip'):
+        """
+        Add new items only to existing version (selective update)
+        
+        Args:
+            items: List of new items to add
+            edition_year: Edition year
+            conflict_handling: 'skip', 'replace', or 'error'
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get active version
+            cursor.execute("""
+                SELECT id FROM rate_versions 
+                WHERE source = 'LGED' AND edition_year = ? AND is_active = 1
+            """, (edition_year,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return {
+                    'success': False,
+                    'error': f"No active version found for LGED {edition_year}",
+                    'mode': 'add_items',
+                    'message': "❌ No active version found"
+                }
+            
+            version_id = result[0]
+            
+            added = 0
+            skipped = 0
+            
+            for item in items:
+                item_code = item.get('code')
+                dot_count = item_code.count('.')
+                
+                # Check if item already exists
+                if dot_count == 1:  # Parent item
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM lged_parents 
+                        WHERE code = ? AND version_id = ?
+                    """, (item_code, version_id))
+                    exists = cursor.fetchone()[0] > 0
+                    
+                    if exists:
+                        if conflict_handling == 'skip':
+                            skipped += 1
+                            continue
+                        elif conflict_handling == 'replace':
+                            # Delete existing
+                            cursor.execute("""
+                                DELETE FROM lged_parents 
+                                WHERE code = ? AND version_id = ?
+                            """, (item_code, version_id))
+                        else:
+                            return {'success': False, 'error': f"Item {item_code} already exists"}
+                    
+                    # Insert new parent
+                    cursor.execute("""
+                        INSERT INTO lged_parents (code, description, chapter_number, section_number,
+                                                parent_type, has_children, unit, version_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (item_code, item.get('description', ''), item.get('chapter_number', ''),
+                        item.get('section_number', ''), item.get('parent_type', 'leaf_item'),
+                        0, item.get('unit', ''), version_id))
+                    added += 1
+                    
+                elif dot_count == 2:  # Child item
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM lged_children 
+                        WHERE code = ? AND version_id = ?
+                    """, (item_code, version_id))
+                    exists = cursor.fetchone()[0] > 0
+                    
+                    if exists:
+                        if conflict_handling == 'skip':
+                            skipped += 1
+                            continue
+                        elif conflict_handling == 'replace':
+                            cursor.execute("""
+                                DELETE FROM lged_children 
+                                WHERE code = ? AND version_id = ?
+                            """, (item_code, version_id))
+                        else:
+                            return {'success': False, 'error': f"Item {item_code} already exists"}
+                    
+                    # Insert new child
+                    cursor.execute("""
+                        INSERT INTO lged_children (code, parent_code, description, unit,
+                                                chapter_number, section_number,
+                                                zone_a, zone_b, zone_c, zone_d,
+                                                edition_year, version_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (item_code, item.get('parent_code', ''), item.get('description', ''),
+                        item.get('unit', ''), item.get('chapter_number', ''),
+                        item.get('section_number', ''), item.get('zone_a'), item.get('zone_b'),
+                        item.get('zone_c'), item.get('zone_d'), edition_year, version_id))
+                    added += 1
+            
+            # Update version statistics
+            cursor.execute("""
+                SELECT COUNT(*) FROM lged_parents WHERE version_id = ?
+            """, (version_id,))
+            total_parents = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM lged_children WHERE version_id = ?
+            """, (version_id,))
+            total_children = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, updated_at = ?
+                WHERE id = ?
+            """, (total_parents, total_children, datetime.now(), version_id))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'added': added,
+                'skipped': skipped,
+                'mode': 'add_items',
+                'message': f"✅ Added {added} new items ({skipped} skipped)"
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            return {
+                'success': False,
+                'error': str(e),
+                'mode': 'add_items',
+                'message': f"❌ Failed to add items: {e}"
+            }
+        finally:
+            conn.close()
+    def get_version_with_structure(self, version_id: int) -> Dict:
+        """
+        Get complete version data including chapters, sections, and items.
+        
+        Args:
+            version_id: The version ID to retrieve
+            
+        Returns:
+            Dict with version, chapters, sections, and items
+        """
+        conn = self.get_connection()
+        
+        try:
+            # Get version info
+            version_df = pd.read_sql_query(
+                "SELECT * FROM rate_versions WHERE id = ?",
+                conn, params=[version_id]
+            )
+            
+            if version_df.empty:
+                return None
+            
+            version = version_df.to_dict('records')[0]
+            source = version['source']
+            
+            # Get chapters
+            chapters = pd.read_sql_query("""
+                SELECT * FROM rate_chapters 
+                WHERE version_id = ? AND source = ?
+                ORDER BY display_order, chapter_number
+            """, conn, params=[version_id, source]).to_dict('records')
+            
+            # Get sections (if LGED and has sections)
+            sections = []
+            if source == 'LGED' and version.get('has_sections'):
+                sections = pd.read_sql_query("""
+                    SELECT s.*, c.chapter_number 
+                    FROM rate_sections s
+                    JOIN rate_chapters c ON s.chapter_id = c.id
+                    WHERE s.version_id = ? AND s.source = ?
+                    ORDER BY s.display_order, s.section_number
+                """, conn, params=[version_id, source]).to_dict('records')
+            
+            # Get items based on source
+            if source == 'LGED':
+                items = pd.read_sql_query("""
+                    SELECT c.*, ch.chapter_number, s.section_number,
+                        z.zone_name, z.unit_rate
+                    FROM lged_children c
+                    LEFT JOIN rate_chapters ch ON c.chapter_id = ch.id
+                    LEFT JOIN rate_sections s ON c.section_id = s.id
+                    LEFT JOIN lged_zone_rates z ON c.id = z.child_id
+                    WHERE c.version_id = ?
+                    ORDER BY c.code
+                """, conn, params=[version_id]).to_dict('records')
+            else:  # PWD
+                items = pd.read_sql_query("""
+                    SELECT c.*, ch.chapter_number,
+                        r.zone_name, r.unit_rate
+                    FROM pwd_children c
+                    LEFT JOIN rate_chapters ch ON c.chapter_id = ch.id
+                    LEFT JOIN pwd_rates r ON c.pwd_code = r.pwd_code AND r.version_id = c.version_id
+                    WHERE c.version_id = ?
+                    ORDER BY c.pwd_code
+                """, conn, params=[version_id]).to_dict('records')
+            
+            return {
+                'version': version,
+                'chapters': chapters,
+                'sections': sections,
+                'items': items
+            }
+            
+        except Exception as e:
+            print(f"Error getting version structure: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def get_chapters_by_source(self, source: str, version_id: int = None) -> pd.DataFrame:
+        """
+        Get chapters for a specific source, optionally filtered by version.
+        
+        Args:
+            source: 'PWD' or 'LGED'
+            version_id: Optional version ID to filter by
+        
+        Returns:
+            DataFrame with chapters
+        """
+        conn = self.get_connection()
+        
+        if version_id:
+            query = """
+                SELECT * FROM rate_chapters 
+                WHERE source = ? AND version_id = ?
+                ORDER BY display_order, chapter_number
+            """
+            df = pd.read_sql_query(query, conn, params=[source, version_id])
+        else:
+            query = """
+                SELECT DISTINCT chapter_number, chapter_name, description
+                FROM rate_chapters 
+                WHERE source = ?
+                ORDER BY CAST(chapter_number AS INTEGER)
+            """
+            df = pd.read_sql_query(query, conn, params=[source])
+        
+        conn.close()
+        return df
+
+    def get_sections_by_chapter(self, source: str, version_id: int, chapter_id: int) -> pd.DataFrame:
+        """
+        Get sections for a specific chapter (LGED only).
+        
+        Args:
+            source: Must be 'LGED'
+            version_id: Version ID
+            chapter_id: Chapter ID
+        
+        Returns:
+            DataFrame with sections
+        """
+        if source != 'LGED':
+            return pd.DataFrame()
+        
+        conn = self.get_connection()
+        df = pd.read_sql_query("""
+            SELECT * FROM rate_sections 
+            WHERE source = ? AND version_id = ? AND chapter_id = ?
+            ORDER BY display_order, section_number
+        """, conn, params=[source, version_id, chapter_id])
+        conn.close()
+        return df
+
+    def _is_float(self, value):
+        """Helper method to check if string can be converted to float"""
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    
+    def get_pwd_chapters(self):
+        """Get all PWD chapters"""
+        conn = self.get_connection()
+        df = pd.read_sql_query("SELECT chapter_number, chapter_name, description FROM pwd_chapters ORDER BY CAST(chapter_number AS INTEGER)", conn)
+        conn.close()
+        return df
+
+
+    def get_lged_chapters(self):
+        """Get all LGED chapters"""
+        try:
+            conn = self.get_connection()
+            df = pd.read_sql_query("""
+                SELECT chapter_number, chapter_name 
+                FROM lged_chapters 
+                ORDER BY CAST(chapter_number AS INTEGER)
+            """, conn)
+            conn.close()
+            return df
+        except Exception as e:
+            # Return default chapters if table doesn't exist
+            return pd.DataFrame([
+                {"chapter_number": "1", "chapter_name": "General, Site Facilities and Safety"},
+                {"chapter_number": "2", "chapter_name": "Earth Works in Road Embankment"},
+                {"chapter_number": "3", "chapter_name": "Sub-Base and Base Course"},
+                {"chapter_number": "4", "chapter_name": "Bituminous Pavement"},
+                {"chapter_number": "5", "chapter_name": "Bridge and Culvert Works"},
+                {"chapter_number": "6", "chapter_name": "Building Works"},
+                {"chapter_number": "7", "chapter_name": "Sanitary and Water Supply"},
+                {"chapter_number": "8", "chapter_name": "Electrical Works"},
+                {"chapter_number": "9", "chapter_name": "Landscaping and Development"}
+            ])
+
+
+
+    def add_pwd_chapter(self, chapter_number, chapter_name, description=""):
+        """Add a new PWD chapter"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO pwd_chapters (chapter_number, chapter_name, description)
+            VALUES (?, ?, ?)
+        """, (chapter_number, chapter_name, description))
+        conn.commit()
+        conn.close()
+
+    def save_pwd_hierarchy_enhanced(self, hierarchy, version_name, edition_year, 
+                                effective_date=None, selected_chapters=None):
+        """
+        Save PWD hierarchy with chapter support (PWD doesn't have sections).
+        Auto-increments version number for each new version.
+        """
+        from datetime import date
+        import json
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        effective_date = effective_date or date.today()
+        
+        try:
+            # Get the next version number
+            cursor.execute("""
+                SELECT MAX(version_number) FROM rate_versions 
+                WHERE source = 'PWD' AND edition_year = ?
+            """, (edition_year,))
+            
+            result = cursor.fetchone()
+            next_version = (result[0] or 0) + 1
+            
+            # Deactivate current active version
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET is_active = 0, updated_at = ?
+                WHERE source = 'PWD' AND edition_year = ? AND is_active = 1
+            """, (datetime.now(), edition_year))
+            
+            # Create version record
+            cursor.execute("""
+                INSERT INTO rate_versions (
+                    source, version_name, edition_year, version_number,
+                    effective_from, is_active, release_date, created_by, 
+                    has_sections, created_at
+                ) VALUES ('PWD', ?, ?, ?, ?, 1, ?, ?, 0, ?)
+            """, (version_name, edition_year, next_version, effective_date, 
+                datetime.now(), 'system', datetime.now()))
+            
+            version_id = cursor.lastrowid
+            print(f"✅ Created version {next_version} for PWD {edition_year}")
+            
+            chapter_ids = {}
+            
+            # Save chapters to rate_chapters
+            chapters_saved = 0
+            if selected_chapters:
+                for chapter_num, chapter_info in selected_chapters.items():
+                    cursor.execute("""
+                        INSERT INTO rate_chapters (
+                            source, version_id, chapter_number, 
+                            chapter_name, description, display_order
+                        ) VALUES ('PWD', ?, ?, ?, ?, ?)
+                    """, (version_id, chapter_num, chapter_info.get('name', f'Chapter {chapter_num}'),
+                        chapter_info.get('description', ''), int(chapter_num) if chapter_num.isdigit() else 999))
+                    chapter_ids[chapter_num] = cursor.lastrowid
+                    chapters_saved += 1
+            
+            # Save parents to pwd_parents
+            parents_saved = 0
+            for parent in hierarchy.get('parents', []):
+                chapter_num = parent.get('chapter_number', parent.get('chapter', parent['code']))
+                
+                cursor.execute("""
+                    INSERT INTO pwd_parents (pwd_code, description, chapter_number, version_id)
+                    VALUES (?, ?, ?, ?)
+                """, (parent['code'], parent.get('description', ''), chapter_num, version_id))
+                parents_saved += 1
+            
+            # Save children to pwd_children - handle NOT NULL constraint
+            children_saved = 0
+            rates_saved = 0
+            
+            for child in hierarchy.get('children', []):
+                code = child.get('pwd_code') or child.get('code')
+                if not code:
+                    continue
+                
+                # Handle parent_code NOT NULL constraint
+                parent_code = child.get('parent_code')
+                if parent_code is None or parent_code == '':
+                    # For leaf items, use empty string (if allowed) or a default value
+                    parent_code = ''  # Try empty string first
+                    # If empty string fails, use: parent_code = code (self-reference)
+                
+                cursor.execute("""
+                    INSERT INTO pwd_children (
+                        pwd_code, parent_code, description, unit, 
+                        edition_year, version_id
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (code, parent_code, child.get('description', ''), 
+                    child.get('unit', ''), edition_year, version_id))
+                children_saved += 1
+                
+                # Save rates
+                for zone, rate in child.get('rates', {}).items():
+                    cursor.execute("""
+                        INSERT INTO pwd_rates (pwd_code, zone_name, unit_rate, edition_year, version_id)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (code, zone, rate, edition_year, version_id))
+                    rates_saved += 1
+            
+            # Update version record with statistics
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    chapter_numbers = ?
+                WHERE id = ?
+            """, (parents_saved, children_saved, rates_saved,
+                json.dumps(list(chapter_ids.keys())), version_id))
+            
+            conn.commit()
+            
+            print(f"✅ Saved PWD hierarchy: {chapters_saved} chapters, "
+                f"{parents_saved} parents, {children_saved} children, {rates_saved} rates")
+            
+            return version_id
+            
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ Error saving PWD hierarchy: {e}")
+            import traceback
+            traceback.print_exc()
+            raise e
+        finally:
+            conn.close()
+
+
+    def save_pwd_hierarchy(self, hierarchy, edition_year, version_name=None):
+        """
+        Save PWD hierarchy to database with version number support.
+        """
+        from datetime import date
+        
+        self.init_pwd_hierarchical_tables()
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Create version if new
+        if version_name is None:
+            version_name = f"PWD Schedule {edition_year}"
+        
+        # Check if rate_versions table has all columns
+        cursor.execute("PRAGMA table_info(rate_versions)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'source' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN source TEXT DEFAULT 'PWD'")
+        if 'total_parents' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN total_parents INTEGER DEFAULT 0")
+        if 'total_children' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN total_children INTEGER DEFAULT 0")
+        if 'total_rates' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN total_rates INTEGER DEFAULT 0")
+        if 'created_by' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN created_by TEXT")
+        if 'version_number' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN version_number INTEGER DEFAULT 1")
+        if 'created_at' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        if 'updated_at' not in columns:
+            cursor.execute("ALTER TABLE rate_versions ADD COLUMN updated_at TIMESTAMP")
+        
+        # Get the next version number
+        cursor.execute("""
+            SELECT MAX(version_number) FROM rate_versions 
+            WHERE source = 'PWD' AND edition_year = ?
+        """, (edition_year,))
+        
+        result = cursor.fetchone()
+        next_version = (result[0] or 0) + 1
+        
+        # Deactivate current active version
+        cursor.execute("""
+            UPDATE rate_versions 
+            SET is_active = 0, updated_at = ?
+            WHERE source = 'PWD' AND edition_year = ? AND is_active = 1
+        """, (datetime.now(), edition_year))
+        
+        # Create version record
+        cursor.execute("""
+            INSERT INTO rate_versions (
+                source, version_name, edition_year, version_number, 
+                effective_from, is_active, release_date, created_by, created_at
+            ) VALUES ('PWD', ?, ?, ?, ?, 1, ?, ?, ?)
+        """, (version_name, edition_year, next_version, date.today(), 
+            datetime.now(), 'system', datetime.now()))
+        
+        version_id = cursor.lastrowid
+        
+        # Clear existing data for this version
+        cursor.execute("DELETE FROM pwd_rates WHERE version_id = ?", (version_id,))
+        cursor.execute("DELETE FROM pwd_children WHERE version_id = ?", (version_id,))
+        cursor.execute("DELETE FROM pwd_parents WHERE version_id = ?", (version_id,))
+        
+        # Save parents
+        parents_saved = 0
+        for parent in hierarchy.get('parents', []):
+            cursor.execute("""
+                INSERT INTO pwd_parents (pwd_code, description, chapter_number, version_id)
+                VALUES (?, ?, ?, ?)
+            """, (parent['code'], parent.get('description', ''), parent.get('chapter', parent['code']), version_id))
+            parents_saved += 1
+        
+        # Save children and rates
+        children_saved = 0
+        rates_saved = 0
+        
+        for child in hierarchy.get('children', []):
+            # Determine chapter from code
+            code = child['pwd_code']
+            chapter_num = code.split('.')[0] if '.' in code else code
+            
+            # Get chapter_id from rate_chapters if exists
+            chapter_id = None
+            cursor.execute("""
+                SELECT id FROM rate_chapters 
+                WHERE source = 'PWD' AND chapter_number = ? AND version_id = ?
+            """, (chapter_num, version_id))
+            chapter_row = cursor.fetchone()
+            if chapter_row:
+                chapter_id = chapter_row[0]
+            
+            cursor.execute("""
+                INSERT INTO pwd_children (
+                    pwd_code, parent_code, description, unit, 
+                    edition_year, version_id, chapter_id, is_parent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (code, child.get('parent_code', ''), child.get('description', ''), 
+                child.get('unit', ''), edition_year, version_id, chapter_id, 0))
+            children_saved += 1
+            
+            for zone, rate in child.get('rates', {}).items():
+                cursor.execute("""
+                    INSERT INTO pwd_rates (pwd_code, zone_name, unit_rate, edition_year, version_id)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (code, zone, rate, edition_year, version_id))
+                rates_saved += 1
+        
+        # Update version record with statistics
+        cursor.execute("""
+            UPDATE rate_versions 
+            SET total_parents = ?, total_children = ?, total_rates = ?
+            WHERE id = ?
+        """, (parents_saved, children_saved, rates_saved, version_id))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Saved PWD hierarchy: {parents_saved} parents, {children_saved} children, {rates_saved} rates")
+        
+        return {
+            'parents': parents_saved, 
+            'children': children_saved, 
+            'rates': rates_saved,
+            'version_id': version_id,
+            'version_number': next_version
+        }
+    def add_lged_chapter(self, chapter_number, chapter_name, description=""):
+        """Add a new LGED chapter"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO lged_chapters (chapter_number, chapter_name, description)
+            VALUES (?, ?, ?)
+        """, (chapter_number, chapter_name, description))
+        conn.commit()
+        conn.close()    
+
+    def save_lged_hierarchy(self, hierarchy, version_name, edition_year, effective_date=None):
+        """Save LGED hierarchy to database"""
+        from datetime import date
+        
+        self.init_lged_tables()
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        effective_date = effective_date or date.today()
+        
+        # Create version record with all required columns
+        cursor.execute("""
+            INSERT INTO rate_versions (source, version_name, edition_year, effective_from, is_active, release_date, created_by)
+            VALUES ('LGED', ?, ?, ?, 1, ?, ?)
+        """, (version_name, edition_year, effective_date, datetime.now(), 'system'))
+        
+        version_id = cursor.lastrowid
+        
+        # Insert parents
+        parents_saved = 0
+        for parent in hierarchy.get('parents', []):
+            cursor.execute("""
+                INSERT INTO lged_parents (code, description, chapter_number, version_id)
+                VALUES (?, ?, ?, ?)
+            """, (parent['code'], parent['description'], parent['chapter'], version_id))
+            parents_saved += 1
+        
+        # Insert children
+        children_saved = 0
+        rates_saved = 0
+        
+        for child in hierarchy.get('children', []):
+            cursor.execute("""
+                INSERT INTO lged_children (code, parent_code, description, unit, edition_year, version_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (child['code'], child['parent_code'], child['description'], 
+                child.get('unit', ''), edition_year, version_id))
+            child_id = cursor.lastrowid
+            children_saved += 1
+            
+            # Insert zone rates
+            for zone, rate in child.get('rates', {}).items():
+                cursor.execute("""
+                    INSERT INTO lged_zone_rates (child_id, zone_name, unit_rate, version_id)
+                    VALUES (?, ?, ?, ?)
+                """, (child_id, zone, rate, version_id))
+                rates_saved += 1
+        
+        # Update version record with statistics
+        cursor.execute("""
+            UPDATE rate_versions 
+            SET total_parents = ?, total_children = ?, total_rates = ?
+            WHERE id = ?
+        """, (parents_saved, children_saved, rates_saved, version_id))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Saved LGED hierarchy: {parents_saved} parents, {children_saved} children, {rates_saved} rates")
+        
+        return version_id
+
+    def get_lged_active_version(self):
+        """Get active LGED version"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, version_name, edition_year, effective_from
+            FROM rate_versions 
+            WHERE is_active = 1 
+            ORDER BY edition_year DESC 
+            LIMIT 1
+        """)
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'id': result[0],
+                'version_name': result[1],
+                'edition_year': result[2],
+                'effective_from': result[3]
+            }
+        return None
+
+
+    def get_lged_rate(self, code, zone="Zone-A"):
+        """Get LGED rate for specific item code and zone"""
+        active = self.get_lged_active_version()
+        if not active:
+            return None
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.unit_rate 
+            FROM lged_zone_rates r
+            JOIN lged_children c ON r.child_id = c.id
+            WHERE c.code = ? AND r.zone_name = ? AND c.version_id = ?
+            LIMIT 1
+        """, (code, zone, active['id']))
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result[0] if result else None
+    
+
+    def get_pwd_stats(self):
+        """Get PWD statistics"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM pwd_parents")
+        total_parents = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM pwd_children")
+        total_children = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM pwd_rates")
+        total_rates = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_parents': total_parents,
+            'total_children': total_children,
+            'total_rates': total_rates,
+            'total_items': total_parents + total_children
+        }
+
+
+    def get_pwd_children(self, parent_code=None, limit=100):
+        """Get PWD child items, optionally filtered by parent"""
+        conn = self.get_connection()
+        
+        if parent_code:
+            df = pd.read_sql_query("""
+                SELECT c.pwd_code, c.description, c.unit, c.edition_year,
+                    r.zone_name, r.unit_rate
+                FROM pwd_children c
+                LEFT JOIN pwd_rates r ON c.pwd_code = r.pwd_code
+                WHERE c.parent_code = ?
+                ORDER BY c.pwd_code, r.zone_name
+                LIMIT ?
+            """, conn, params=(parent_code, limit))
+        else:
+            df = pd.read_sql_query("""
+                SELECT c.pwd_code, c.description, c.unit, c.edition_year,
+                    r.zone_name, r.unit_rate
+                FROM pwd_children c
+                LEFT JOIN pwd_rates r ON c.pwd_code = r.pwd_code
+                ORDER BY c.pwd_code, r.zone_name
+                LIMIT ?
+            """, conn, params=(limit,))
+        
+        conn.close()
+        return df
+
+
+    def search_pwd_items(self, search_term, limit=50):
+        """Search PWD items by code or description"""
+        conn = self.get_connection()
+        df = pd.read_sql_query("""
+            SELECT pwd_code, description, unit 
+            FROM pwd_children 
+            WHERE pwd_code LIKE ? OR description LIKE ?
+            LIMIT ?
+        """, conn, params=(f"%{search_term}%", f"%{search_term}%", limit))
+        conn.close()
+
+    def clear_pwd_version_data(self, version_id):
+        """Clear all PWD data for a specific version"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete in correct order (child tables first due to foreign keys)
+            cursor.execute("DELETE FROM pwd_rates WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM pwd_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM pwd_parents WHERE version_id = ?", (version_id,))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ Cleared PWD data for version ID: {version_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error clearing PWD version data: {e}")
+            return False
+
+
+    def clear_lged_version_data(self, version_id):
+        """Clear all LGED data for a specific version"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete in correct order (child tables first due to foreign keys)
+            cursor.execute("DELETE FROM lged_zone_rates WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ Cleared LGED data for version ID: {version_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error clearing LGED version data: {e}")
+            return False
+
+    def _tables_exist(self):
+        """Check if database tables already exist"""
+        conn = self.get_connection()        
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+
+    def get_connection(self):
+        """Get a fresh SQLite connection with FK enforcement"""
+        import os
+        conn = sqlite3.connect(self.db_path)
+        #print(f"🗄️ APP DB PATH: {os.path.abspath(self.db_path)}")  # Adjust variable name to match yours
+        conn.row_factory = sqlite3.Row  # Optional: enables dict-like access
+        #conn.execute("PRAGMA foreign_keys = ON;")        
+        
+        return conn
+        
+    
     
     # ==================== AUTHENTICATION METHODS ====================
     def store_password_reset_token(self, email: str, token: str, expires_in_minutes: int = 60):
@@ -577,7 +2647,7 @@ class DatabaseManager:
         conn.commit()
         conn.close()
     
-    def delete_user(self, user_id):
+    def delete_user_bak(self, user_id):
         """Delete user (non-admin only)"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -737,20 +2807,7 @@ class DatabaseManager:
     def log_team_activity(self, company_id: int, actor_user_id: int, 
                      action_type: str, target_type: str, target_id: str,
                      details: str = None) -> bool:
-        """
-        Log team management activity for audit trail.
-        
-        Args:
-            company_id: Company where action occurred
-            actor_user_id: User who performed the action
-            action_type: e.g., 'registration', 'update', 'delete', 'login'
-            target_type: e.g., 'user', 'tender', 'analysis'
-            target_id: ID of the affected resource
-            details: Optional JSON string with additional context
-        
-        Returns:
-            bool: True if logged successfully
-        """
+        """Log team management activity for audit trail."""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -758,8 +2815,8 @@ class DatabaseManager:
             cursor.execute('''
             INSERT INTO activity_logs (
                 company_id, actor_user_id, action_type, target_type, 
-                target_id, details, ip_address, user_agent, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                target_id, details, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
                 company_id,
                 actor_user_id,
@@ -767,8 +2824,6 @@ class DatabaseManager:
                 target_type,
                 target_id,
                 details,
-                st.context.headers.get("X-Forwarded-For", "unknown") if 'st' in globals() else None,
-                st.context.headers.get("User-Agent", "unknown") if 'st' in globals() else None,
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ))
             
@@ -778,8 +2833,8 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Failed to log activity: {e}")
-            # Don't crash the app if logging fails
             return False
+
     # ==================== TENDER ANALYSIS METHODS ====================
     
     def save_analysis(self, user_id, company_id, analysis_data):
@@ -1044,34 +3099,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to fetch companies: {e}")
             return []
-    def get_company_stats(self, company_id):
-        """Get company statistics"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
         
-        cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
-        total_analyses = cursor.fetchone()[0]
-        
-        cursor.execute('''
-            SELECT COUNT(*) FROM tender_analyses 
-            WHERE company_id = ? AND bid_status = 'Won'
-        ''', (company_id,))
-        won_tenders = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        print(f"📊 Company {company_id} Stats: Users={total_users}, Analyses={total_analyses}, Wins={won_tenders}")
-        
-        return {
-            'total_users': total_users,
-            'total_analyses': total_analyses,
-            'won_tenders': won_tenders,
-            'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
-        }
-
 
     
     # ==================== CONTACT METHODS ====================
@@ -1116,7 +3144,7 @@ class DatabaseManager:
         conn.close()
         return tender_id
     
-    def get_historical_tenders_old(self, company_id, procurement_type=None, winner_type=None, limit=100):
+    def get_historical_tenders(self, company_id, procurement_type=None, winner_type=None, limit=100):
         """Get historical tenders with winner filtering"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -1196,43 +3224,6 @@ class DatabaseManager:
             return [{'competitor': r[0], 'wins': r[1], 'avg_ratio': r[2]} for r in results]
         return []
 
-    def get_historical_tenders(self, company_id, procurement_type=None, winner_type=None, limit=100):
-        """Get historical tenders with winner information"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        query = '''
-        SELECT 
-            h.id, h.tender_id, h.tender_title, h.procuring_entity, h.procurement_type,
-            h.official_estimate, h.awarded_price, h.our_awarded_price, h.num_competitors,
-            h.total_bidders, h.our_rank, h.award_date, h.competitors_data, 
-            h.winning_competitor, h.winning_company_type, h.notes, h.created_at,
-            c.company_name
-        FROM historical_tenders h
-        JOIN companies c ON h.company_id = c.id
-        WHERE h.company_id = ?
-        '''
-        params = [company_id]
-        
-        if procurement_type:
-            query += " AND h.procurement_type = ?"
-            params.append(procurement_type)
-        
-        if winner_type and winner_type != "All":
-            query += " AND h.winning_company_type = ?"
-            params.append(winner_type)
-        
-        query += " ORDER BY h.award_date DESC LIMIT ?"
-        params.append(limit)
-        
-        cursor.execute(query, params)
-        columns = [description[0] for description in cursor.description]
-        data = cursor.fetchall()
-        conn.close()
-        
-        if data:
-            return pd.DataFrame(data, columns=columns)
-        return pd.DataFrame()
 
     def get_winning_statistics(self, company_id, procurement_type=None):
         """Get winning statistics for analysis"""
@@ -2081,6 +4072,22 @@ class DatabaseManager:
             conn.close()
             return []
 
+    def _create_role_permissions_table(self):
+        """Create role_permissions table if it doesn't exist"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT UNIQUE NOT NULL,
+                permissions TEXT,  -- JSON string of permissions
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
     def update_role_permissions(self, role, permissions):
         """Update permissions for a role (permissions is dict)"""
         conn = self.get_connection()
@@ -2216,7 +4223,7 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_company_by_id(self, company_id):
+    def get_company_by_id_bak(self, company_id):
         """Get company by ID as dictionary"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -2410,32 +4417,6 @@ class DatabaseManager:
             })
         
         return users, total
-
-    def get_company_stats_by_id(self, company_id):
-        """Get statistics for a specific company"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
-        total_analyses = cursor.fetchone()[0]
-        
-        cursor.execute('''
-        SELECT COUNT(*) FROM tender_analyses 
-        WHERE company_id = ? AND bid_status = 'Won'
-        ''', (company_id,))
-        won_tenders = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        return {
-            'total_users': total_users,
-            'total_analyses': total_analyses,
-            'won_tenders': won_tenders,
-            'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
-        }
     def get_company_stats(self, company_id):
         """Get company statistics including users and analyses"""
         conn = self.get_connection()
@@ -2462,6 +4443,33 @@ class DatabaseManager:
             'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
         }
 
+    def get_company_stats_by_id(self, company_id):
+        """Get statistics for a specific company"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
+        total_analyses = cursor.fetchone()[0]
+        
+        cursor.execute('''
+        SELECT COUNT(*) FROM tender_analyses 
+        WHERE company_id = ? AND bid_status = 'Won'
+        ''', (company_id,))
+        won_tenders = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            'total_users': total_users,
+            'total_analyses': total_analyses,
+            'won_tenders': won_tenders,
+            'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
+        }
+    
+    
     def get_tender_analyses_by_company(self, company_id, tender_id=None):
         """Get all analyses for a company, optionally for a specific tender"""
         conn = self.get_connection()
@@ -2923,4 +4931,425 @@ class DatabaseManager:
         conn.close()
         print("✅ Tender analyses table migration completed")    
         # Singleton instance
+    
+    def _save_hierarchical_pwd_data(self, hierarchy, edition_year, version_id=None):
+        """Save hierarchical data to database - NO DESCRIPTION TRUNCATION"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Ensure tables exist
+        self.init_pwd_hierarchical_tables()
+        
+        # Get or create version
+        if version_id is None:
+            from datetime import date
+            cursor.execute("""
+                INSERT INTO rate_versions (source, version_name, edition_year, effective_from, is_active)
+                VALUES (?, ?, ?, ?, ?)
+            """, ('PWD', f"PWD Schedule {edition_year}", edition_year, date.today(), True))
+            version_id = cursor.lastrowid
+        
+        # Save parents - NO truncation
+        for parent in hierarchy['parents']:
+            cursor.execute("""
+                INSERT OR REPLACE INTO pwd_parents (pwd_code, description, chapter_number, version_id)
+                VALUES (?, ?, ?, ?)
+            """, (parent['code'], parent['description'], parent['chapter'], version_id))
+        
+        # Save children and rates - NO truncation
+        for child in hierarchy['children']:
+            cursor.execute("""
+                INSERT OR REPLACE INTO pwd_children (pwd_code, parent_code, description, unit, edition_year, version_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (child['pwd_code'], child['parent_code'], child['description'], child['unit'], edition_year, version_id))
+            
+            for zone, rate in child['rates'].items():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pwd_rates (pwd_code, zone_name, unit_rate, edition_year, version_id)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (child['pwd_code'], zone, rate, edition_year, version_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return version_id
+
+     # APPEND THIS TO THE BOTTOM OF YOUR EXISTING database/db_manager.py FILE
+    def get_pwd_stats(self):
+        """Get statistics about imported PWD data."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM pwd_items")
+            total_items = cursor.fetchone()[0] if cursor.fetchone() else 0
+            
+            cursor.execute("SELECT COUNT(*) FROM pwd_rates")
+            total_rates = cursor.fetchone()[0] if cursor.fetchone() else 0
+            
+            cursor.execute("SELECT COUNT(DISTINCT chapter_number) FROM pwd_items")
+            total_chapters = cursor.fetchone()[0] if cursor.fetchone() else 0
+            
+            conn.close()
+            
+            return {
+                "total_items": total_items,
+                "total_rates": total_rates,
+                "total_chapters": total_chapters
+            }
+        except Exception as e:
+            logger.error(f"Error getting PWD stats: {e}")
+            return {"total_items": 0, "total_rates": 0, "total_chapters": 0}
+
+    def get_pwd_rates(self, pwd_code=None, chapter=None, zone=None, limit=None):
+        """
+        Retrieve PWD rates from database.
+        
+        Args:
+            pwd_code: Specific item code (e.g., '01.1.1')
+            chapter: Chapter number (e.g., '01')
+            zone: Zone name (e.g., 'Dhaka', 'Chattogram')
+            limit: Maximum number of rows to return
+        
+        Returns:
+            DataFrame with matching rates
+        """
+        import pandas as pd
+        
+        try:
+            conn = self.get_connection()
+            
+            query = """
+                SELECT i.pwd_code, i.specification_text, i.measurement_unit,
+                    r.zone_name, r.unit_rate, r.edition_year, 
+                    c.chapter_name as chapter_name
+                FROM pwd_items i
+                JOIN pwd_rates r ON i.pwd_code = r.pwd_code
+                JOIN chapters c ON i.chapter_number = c.chapter_number
+                WHERE 1=1
+            """
+            params = []
+            
+            if pwd_code:
+                query += " AND i.pwd_code = ?"
+                params.append(pwd_code)
+            
+            if chapter:
+                query += " AND i.chapter_number = ?"
+                params.append(chapter)
+            
+            if zone:
+                query += " AND r.zone_name = ?"
+                params.append(zone)
+            
+            query += " ORDER BY i.pwd_code, r.zone_name"
+            
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            
+            df = pd.read_sql_query(query, conn, params=params)
+            conn.close()
+            
+            return df
+        except Exception as e:
+            logger.error(f"Error getting PWD rates: {e}")
+            return pd.DataFrame()
+
+    def search_pwd_items(self, search_term, limit=50):
+        """Search PWD items by code or description."""
+        import pandas as pd
+        
+        try:
+            conn = self.get_connection()
+            
+            query = """
+                SELECT DISTINCT i.pwd_code, i.specification_text, i.measurement_unit,
+                    i.chapter_number, c.chapter_name
+                FROM pwd_items i
+                LEFT JOIN chapters c ON i.chapter_number = c.chapter_number
+                WHERE i.pwd_code LIKE ? OR i.specification_text LIKE ?
+                ORDER BY i.pwd_code
+                LIMIT ?
+            """
+            params = [f"%{search_term}%", f"%{search_term}%", limit]
+            
+            df = pd.read_sql_query(query, conn, params=params)
+            conn.close()
+            
+            return df
+        except Exception as e:
+            logger.error(f"Error searching PWD items: {e}")
+            return pd.DataFrame()
+    def update_role_permissions_for_rates(self):
+        """Add rate management permissions to role_permissions table"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Define rate management permissions for each role
+        rate_permissions = {
+            'admin': {
+                'manage_zones': True,
+                'manage_chapters': True,
+                'manage_parents': True,
+                'manage_children': True,
+                'manage_versions': True,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': True
+            },
+            'system_admin': {
+                'manage_zones': True,
+                'manage_chapters': True,
+                'manage_parents': True,
+                'manage_children': True,
+                'manage_versions': True,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': True
+            },
+            'company_admin': {
+                'manage_zones': False,  # Zones are system-wide
+                'manage_chapters': True,
+                'manage_parents': True,
+                'manage_children': True,
+                'manage_versions': True,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': False
+            },
+            'manager': {
+                'manage_zones': False,
+                'manage_chapters': True,
+                'manage_parents': True,
+                'manage_children': True,
+                'manage_versions': False,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': False
+            },
+            'analyst': {
+                'manage_zones': False,
+                'manage_chapters': False,
+                'manage_parents': False,
+                'manage_children': True,
+                'manage_versions': False,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': False
+            },
+            'data_entry': {
+                'manage_zones': False,
+                'manage_chapters': False,
+                'manage_parents': True,
+                'manage_children': True,
+                'manage_versions': False,
+                'view_rates': True,
+                'edit_rates': True,
+                'delete_rates': False
+            },
+            'viewer': {
+                'manage_zones': False,
+                'manage_chapters': False,
+                'manage_parents': False,
+                'manage_children': False,
+                'manage_versions': False,
+                'view_rates': True,
+                'edit_rates': False,
+                'delete_rates': False
+            }
+        }
+        
+        # Update each role's permissions
+        for role, perms in rate_permissions.items():
+            # Get existing permissions
+            existing = self.get_role_permissions(role)
+            # Merge with new permissions
+            existing.update(perms)
+            # Save back
+            self.update_role_permissions(role, existing)
+        
+        print("✅ Rate management permissions added to roles")  
+    def get_lged_sections_by_chapter(self, chapter_number: str) -> pd.DataFrame:
+        """
+        Get LGED sections for a specific chapter from rate_sections table.
+        
+        Args:
+            chapter_number: The chapter number (e.g., "1", "2")
+        
+        Returns:
+            DataFrame with sections
+        """
+        try:
+            conn = self.get_connection()
+            
+            # First get the chapter ID
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id FROM rate_chapters 
+                WHERE source = 'LGED' AND chapter_number = ?
+                ORDER BY id DESC LIMIT 1
+            """, (chapter_number,))
+            
+            chapter_row = cursor.fetchone()
+            
+            if chapter_row:
+                chapter_id = chapter_row[0]
+                df = pd.read_sql_query("""
+                    SELECT section_number, section_name, description
+                    FROM rate_sections 
+                    WHERE source = 'LGED' AND chapter_id = ?
+                    ORDER BY section_number
+                """, conn, params=[chapter_id])
+            else:
+                df = pd.DataFrame()
+            
+            conn.close()
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error getting sections for chapter {chapter_number}: {e}")
+            return pd.DataFrame()
+    
+    def update_lged_chapter_section(self, hierarchy, version_id, edition_year, 
+                                  chapter_num, section_num=None, notes=None):
+        """
+        Update data for a specific chapter/section within an existing version.
+        Only affects items belonging to the specified chapter/section.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Verify version exists
+            cursor.execute("""
+                SELECT id, version_number FROM rate_versions 
+                WHERE id = ? AND source = 'LGED'
+            """, (version_id,))
+            
+            version = cursor.fetchone()
+            if not version:
+                return {
+                    'success': False,
+                    'error': f"Version {version_id} not found",
+                    'message': "Version not found"
+                }
+            
+            version_number = version[1]
+            
+            # Get data from hierarchy
+            section_headers = hierarchy.get('section_headers', [])
+            rate_items = hierarchy.get('rate_items', [])
+            
+            # Delete existing data for this specific chapter/section
+            if section_num:
+                # Delete specific section within chapter
+                cursor.execute("""
+                    DELETE FROM lged_children 
+                    WHERE version_id = ? AND chapter_number = ? AND section_number = ?
+                """, (version_id, chapter_num, section_num))
+                
+                cursor.execute("""
+                    DELETE FROM lged_parents 
+                    WHERE version_id = ? AND chapter_number = ? AND section_number = ?
+                """, (version_id, chapter_num, section_num))
+            else:
+                # Delete entire chapter
+                cursor.execute("""
+                    DELETE FROM lged_children 
+                    WHERE version_id = ? AND chapter_number = ?
+                """, (version_id, chapter_num))
+                
+                cursor.execute("""
+                    DELETE FROM lged_parents 
+                    WHERE version_id = ? AND chapter_number = ?
+                """, (version_id, chapter_num))
+            
+            # Save section headers for this chapter/section
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', '')[:500], 
+                    header.get('chapter_number', chapter_num), 
+                    header.get('section_number', section_num or ''),
+                    1 if header.get('has_children') else 0, version_id))
+            
+            # Save rate items for this chapter/section
+            for item in rate_items:
+                parent_code_val = item.get('parent_code') if item.get('parent_code') else None
+                
+                cursor.execute("""
+                    INSERT INTO lged_children (
+                        code, parent_code, description, unit, 
+                        chapter_number, section_number,
+                        zone_a, zone_b, zone_c, zone_d,
+                        edition_year, version_id, is_parent
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item['code'], 
+                    parent_code_val,
+                    item.get('description', '')[:500], 
+                    item.get('unit', ''),
+                    item.get('chapter_number', chapter_num), 
+                    item.get('section_number', section_num or ''),
+                    item.get('zone_a'), item.get('zone_b'), 
+                    item.get('zone_c'), item.get('zone_d'),
+                    edition_year, version_id, 
+                    1 if item.get('is_parent') else 0
+                ))
+            
+            # Update version statistics (recalculate totals)
+            cursor.execute("""
+                SELECT COUNT(*) FROM lged_parents WHERE version_id = ?
+            """, (version_id,))
+            total_parents = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM lged_children WHERE version_id = ?
+            """, (version_id,))
+            total_children = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM lged_children WHERE version_id = ?
+            """, (version_id,))
+            total_rate_items = cursor.fetchone()[0]
+            total_rates = total_rate_items * 4
+            
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    updated_at = ?, notes = ?
+                WHERE id = ?
+            """, (total_parents, total_children, total_rates, datetime.now(), notes, version_id))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': version_number,
+                'chapter': chapter_num,
+                'section': section_num,
+                'mode': 'update_chapter_section',
+                'total_parents': total_parents,
+                'total_children': total_children,
+                'total_rates': total_rates,
+                'message': f"✅ Updated Chapter {chapter_num}" + (f" Section {section_num}" if section_num else "") + f" in Version {version_number}"
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': str(e),
+                'mode': 'update_chapter_section',
+                'message': f"❌ Failed to update: {e}"
+            }
+        finally:
+            conn.close()
+    
 db = DatabaseManager()
