@@ -3,7 +3,7 @@
 import streamlit as st
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Callable, List, Dict, Any, Optional
 
 class ProgressTracker:
     """Reusable progress tracker for batch imports"""
