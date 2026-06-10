@@ -8,8 +8,13 @@ from modules.boq_generator import BOQGenerator
 from modules.advanced_bid_optimizer import get_three_tier_comparison
 from modules.report_generator import generate_enhanced_report
 from database.db_manager import DatabaseManager
+from modules.rbac import (
+    rbac, can_optimize_bid, can_view_tenders, can_export_data,
+    render_role_badge, require_permission
+)
 
 DB_PATH = "data/tender_system.db"
+
 
 class BOQBidIntegrator:
     """Bridge between BOQ Generator and Bid Optimizer"""
@@ -104,8 +109,9 @@ class BOQBidIntegrator:
         return comparison, opt_input
 
 
+@require_permission('can_optimize_bid')
 def render_boq_bid_integration():
-    """UI for integrating BOQ with Bid Optimizer"""
+    """UI for integrating BOQ with Bid Optimizer with RBAC"""
     
     st.markdown("""
     <div class="main-header">
@@ -114,12 +120,44 @@ def render_boq_bid_integration():
     </div>
     """, unsafe_allow_html=True)
     
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
+    
     # Initialize database connection
     db = DatabaseManager()
     
+    # Get user info
     user_id = st.session_state.get('user_id')
     company_id = st.session_state.get('company_id')
     user_role = st.session_state.get('user_role', 'viewer')
+    permissions = rbac.get_current_user_permissions()
+    
+    # Check if user can optimize bids
+    if not permissions.get('can_optimize_bid', False):
+        st.error("🔒 You don't have permission to run bid optimization.")
+        st.info("Contact your administrator to upgrade your role.")
+        return
+    
+    # Check if user has access to this feature (subscription check)
+    subscription = db.get_user_subscription(user_id)
+    is_premium = subscription.get('plan') in ['professional', 'enterprise'] or user_role in ['admin', 'system_admin']
+    
+    if not is_premium:
+        st.warning("⚠️ Bid optimization is available for Professional and Enterprise plans only.")
+        st.info("💡 Upgrade your plan to access AI-powered bid optimization.")
+        if st.button("💳 Upgrade Now", use_container_width=True):
+            st.session_state.page = "subscription"
+            st.rerun()
+        return
+    
+    # Show permission info
+    if user_role == 'viewer':
+        st.info("👁️ **Viewer Mode:** You can view results but cannot submit bids.")
+    elif user_role == 'analyst':
+        st.info("📈 **Analyst Mode:** You can run optimization and submit bids.")
+    elif user_role in ['manager', 'company_admin']:
+        st.info("📊 **Manager Mode:** Full access to optimization and bid submission.")
     
     # Step 1: Select Tender
     st.markdown("### Step 1: Select Tender")
@@ -144,13 +182,15 @@ def render_boq_bid_integration():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("📋 Tender Management", use_container_width=True):
-                st.session_state.page = "tender_management"
-                st.rerun()
+            if permissions.get('can_create_tender', False):
+                if st.button("📋 Tender Management", use_container_width=True):
+                    st.session_state.page = "tender_management"
+                    st.rerun()
         with col2:
-            if st.button("📄 Generate BOQ", use_container_width=True):
-                st.session_state.page = "boq_generator"
-                st.rerun()
+            if permissions.get('can_create_boq', False):
+                if st.button("📄 Generate BOQ", use_container_width=True):
+                    st.session_state.page = "boq_generator"
+                    st.rerun()
         with col3:
             if st.button("📚 View Tutorial", use_container_width=True):
                 st.session_state.page = "tutorial"
@@ -235,50 +275,59 @@ def render_boq_bid_integration():
         with col2:
             comp_bid = st.number_input("Bid Amount (BDT)", min_value=0.0, step=100000.0, key="comp_bid")
         
-        if st.button("Add Competitor Bid", key="add_comp"):
-            if comp_name and comp_bid > 0:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO competitor_bids (tender_id, competitor_name, total_bid_amount, submission_date)
-                    VALUES (?, ?, ?, ?)
-                """, (selected_tender_id, comp_name, comp_bid, datetime.now()))
-                conn.commit()
-                conn.close()
-                st.success(f"Added competitor: {comp_name}")
-                st.rerun()
+        if permissions.get('can_edit_tender', False):
+            if st.button("Add Competitor Bid", key="add_comp"):
+                if comp_name and comp_bid > 0:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO competitor_bids (tender_id, competitor_name, total_bid_amount, submission_date)
+                        VALUES (?, ?, ?, ?)
+                    """, (selected_tender_id, comp_name, comp_bid, datetime.now()))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Added competitor: {comp_name}")
+                    st.rerun()
+        else:
+            st.info("🔒 You don't have permission to add competitor bids. View-only mode.")
     
     st.markdown("---")
     
     # Create integrator with db
     integrator = BOQBidIntegrator(db)
     
-    if st.button("🚀 Run Bid Optimization", type="primary", use_container_width=True):
-        with st.spinner("Running AI-powered optimization..."):
-            competitor_bids = integrator.get_competitor_bids_for_tender(selected_tender_id)
-            
-            comparison, opt_input = integrator.run_optimization(
-                tender_id=selected_tender_id,
-                official_estimate=tender_row['official_estimate'],
-                competitor_bids=competitor_bids if competitor_bids else None,
-                procurement_type=procurement_type,
-                risk_tolerance=risk_tolerance,
-                company_id=company_id,
-                nppi_factor=nppi_factor if nppi_factor != 0.920 else None
-            )
-            
-            st.session_state.optimization_result = {
-                'comparison': comparison,
-                'tender_id': selected_tender_id,
-                'tender_title': tender_row['tender_title'],
-                'official_estimate': tender_row['official_estimate'],
-                'competitor_count': len(competitor_bids),
-                'boq_cost': opt_input['boq_data']['total_cost'] if opt_input['boq_data'] else None,
-                'analysis_time': datetime.now().isoformat()
-            }
-            
-            st.success("✅ Optimization complete!")
-            st.rerun()
+    # Check if user can run optimization (analyst and above)
+    can_run_opt = permissions.get('can_optimize_bid', False) or user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
+    
+    if can_run_opt:
+        if st.button("🚀 Run Bid Optimization", type="primary", use_container_width=True):
+            with st.spinner("Running AI-powered optimization..."):
+                competitor_bids = integrator.get_competitor_bids_for_tender(selected_tender_id)
+                
+                comparison, opt_input = integrator.run_optimization(
+                    tender_id=selected_tender_id,
+                    official_estimate=tender_row['official_estimate'],
+                    competitor_bids=competitor_bids if competitor_bids else None,
+                    procurement_type=procurement_type,
+                    risk_tolerance=risk_tolerance,
+                    company_id=company_id,
+                    nppi_factor=nppi_factor if nppi_factor != 0.920 else None
+                )
+                
+                st.session_state.optimization_result = {
+                    'comparison': comparison,
+                    'tender_id': selected_tender_id,
+                    'tender_title': tender_row['tender_title'],
+                    'official_estimate': tender_row['official_estimate'],
+                    'competitor_count': len(competitor_bids),
+                    'boq_cost': opt_input['boq_data']['total_cost'] if opt_input['boq_data'] else None,
+                    'analysis_time': datetime.now().isoformat()
+                }
+                
+                st.success("✅ Optimization complete!")
+                st.rerun()
+    else:
+        st.info("🔒 You don't have permission to run bid optimization. Contact your administrator.")
     
     # Display results
     if st.session_state.get('optimization_result'):
@@ -322,54 +371,69 @@ def render_boq_bid_integration():
         
         st.dataframe(pd.DataFrame(tier_data), use_container_width=True, hide_index=True)
         
-        # Actions
+        # Actions based on permissions
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📝 Apply to Tender", use_container_width=True):
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE company_tenders 
-                    SET our_bid_amount = ?, updated_at = ?
-                    WHERE tender_id = ? AND company_id = ?
-                """, (best_bid, datetime.now(), selected_tender_id, company_id))
-                conn.commit()
-                conn.close()
-                st.success(f"✅ Recommended bid BDT {best_bid:,.3f} applied!")
+            # Apply to tender (requires edit permission)
+            if permissions.get('can_edit_tender', False):
+                if st.button("📝 Apply to Tender", use_container_width=True):
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE company_tenders 
+                        SET our_bid_amount = ?, updated_at = ?
+                        WHERE tender_id = ? AND company_id = ?
+                    """, (best_bid, datetime.now(), selected_tender_id, company_id))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ Recommended bid BDT {best_bid:,.3f} applied!")
+            else:
+                st.button("🔒 Apply to Tender", disabled=True, use_container_width=True, 
+                         help="You don't have permission to edit tenders")
         
         with col2:
-            if st.button("📄 Generate Report", use_container_width=True):
-                analysis_record = {
-                    'tender_id': selected_tender_id,
-                    'tender_title': result['tender_title'],
-                    'procuring_entity': tender_row['procuring_entity'],
-                    'official_estimate': result['official_estimate'],
-                    'competitor_bids': integrator.get_competitor_bids_for_tender(selected_tender_id),
-                    'procurement_type': procurement_type,
-                    'risk_tolerance': risk_tolerance,
-                    'nppi_factor': nppi_factor,
-                    'analysis_date': datetime.now()
-                }
-                
-                user_info = {
-                    'full_name': st.session_state.get('full_name', 'User'),
-                    'company_name': st.session_state.get('company_name', 'N/A')
-                }
-                
-                generate_enhanced_report(analysis_record, comparison, user_info, format='html')
+            # Generate report (requires export permission)
+            if permissions.get('can_export_data', False):
+                if st.button("📄 Generate Report", use_container_width=True):
+                    analysis_record = {
+                        'tender_id': selected_tender_id,
+                        'tender_title': result['tender_title'],
+                        'procuring_entity': tender_row['procuring_entity'],
+                        'official_estimate': result['official_estimate'],
+                        'competitor_bids': integrator.get_competitor_bids_for_tender(selected_tender_id),
+                        'procurement_type': procurement_type,
+                        'risk_tolerance': risk_tolerance,
+                        'nppi_factor': nppi_factor,
+                        'analysis_date': datetime.now()
+                    }
+                    
+                    user_info = {
+                        'full_name': st.session_state.get('full_name', 'User'),
+                        'company_name': st.session_state.get('company_name', 'N/A')
+                    }
+                    
+                    generate_enhanced_report(analysis_record, comparison, user_info, format='html')
+            else:
+                st.button("🔒 Generate Report", disabled=True, use_container_width=True,
+                         help="You don't have permission to export reports")
         
         with col3:
-            if st.button("📤 Submit Bid", type="primary", use_container_width=True):
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE company_tenders 
-                    SET our_bid_amount = ?, bid_status = 'submitted', 
-                        bid_submission_date = ?, bid_submitted_by = ?
-                    WHERE tender_id = ? AND company_id = ?
-                """, (best_bid, datetime.now(), user_id, selected_tender_id, company_id))
-                conn.commit()
-                conn.close()
-                st.success(f"✅ Bid BDT {best_bid:,.3f} submitted!")
-                st.balloons()
+            # Submit bid (requires submit permission)
+            if permissions.get('can_submit_bid', False):
+                if st.button("📤 Submit Bid", type="primary", use_container_width=True):
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE company_tenders 
+                        SET our_bid_amount = ?, bid_status = 'submitted', 
+                            bid_submission_date = ?, bid_submitted_by = ?
+                        WHERE tender_id = ? AND company_id = ?
+                    """, (best_bid, datetime.now(), user_id, selected_tender_id, company_id))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"✅ Bid BDT {best_bid:,.3f} submitted!")
+                    st.balloons()
+            else:
+                st.button("🔒 Submit Bid", disabled=True, use_container_width=True, type="primary",
+                         help="You don't have permission to submit bids")

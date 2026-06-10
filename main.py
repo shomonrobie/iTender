@@ -1052,7 +1052,7 @@ def contact_page() -> None:
     
     debug_print("✅ Contact page render complete")
     
-def dashboard_page() -> None:
+def dashboard_page_bak() -> None:
     """Main dashboard for authenticated users"""
     
     # No need for separate header - top navigation handles it
@@ -1607,7 +1607,8 @@ def _render_authenticated_pages() -> None:
          # ========== ADD THESE MISSING HANDLERS ==========
         PageRoutes.RATE_MANAGEMENT: lambda: render_rate_crud_forms(db),
         PageRoutes.IMPORT_WIZARD: lambda: render_unified_import_wizard(db),
-        PageRoutes.RATE_VIEWER: lambda: _import_and_call('modules.rate_viewer', 'render_rate_viewer'),
+        
+        PageRoutes.RATE_VIEWER: lambda: _import_and_call('modules.rate_viewer', 'render_rate_viewer', db),
 
         # Advanced modules (lazy import)
         PageRoutes.TENDER_MANAGEMENT: lambda: _import_and_call('modules.tender_management', 'render_tender_management'),

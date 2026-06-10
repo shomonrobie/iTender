@@ -4,12 +4,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import json
-import sqlite3
 from modules.rbac import (
     rbac, can_view_rates, can_edit_rates, can_delete_rates,
-    can_import_rates, render_role_badge, require_permission,
-    render_protected_button, render_protected_data_editor
+    can_import_rates, render_protected_button, render_protected_data_editor
 )
+
 class RateCRUDForms:
     """Simple CRUD forms for Zones, Chapters, Parents, Children, and Versions"""
     
@@ -71,26 +70,69 @@ class RateCRUDForms:
     def _check_permission(self, permission):
         """
         Check if user has permission for rate management.
-        Uses RBAC module for consistency.
+        Uses both role-based AND subscription-based permissions.
         """
         user_role = st.session_state.get('user_role', 'viewer')
+        company_id = st.session_state.get('company_id')
         
-        # Admin users have full access
+        # Admin users have full access regardless of subscription
         if user_role in ['admin', 'system_admin']:
             return True
         
-        # Use RBAC module for permission checks
-        if permission == 'read':
-            return can_view_rates()
-        elif permission == 'update':
-            return can_edit_rates()
-        elif permission == 'delete':
-            return can_delete_rates()
-        elif permission == 'create':
-            return can_import_rates() or can_edit_rates()
+        # Check company subscription permissions
+        if company_id:
+            from modules.subscription_manager import SubscriptionManager
+            sub_manager = SubscriptionManager(self.db)
+            
+            # Map CRUD permission to subscription permission
+            permission_map = {
+                'create': sub_manager.has_permission(company_id, 'create_versions'),
+                'read': True,  # All users can read
+                'update': sub_manager.has_permission(company_id, 'edit_rates'),
+                'delete': sub_manager.has_permission(company_id, 'delete_rates')
+            }
+            
+            return permission_map.get(permission, False)
+        
+        # Fallback to role-based permissions
+        perms = self.db.get_role_permissions(user_role)
+        permission_map = {
+            'create': ['manage_parents', 'manage_children', 'manage_zones', 'manage_chapters', 'manage_versions'],
+            'read': ['view_rates'],
+            'update': ['edit_rates'],
+            'delete': ['delete_rates']
+        }
+        required_perms = permission_map.get(permission, [])
+        for req_perm in required_perms:
+            if perms.get(req_perm, False):
+                return True
         
         return False
 
+    def _check_permission_bak(self, permission):
+        """Check if user has permission for rate management"""
+        user_role = st.session_state.get('user_role', 'viewer')
+        
+        # Get permissions from database
+        perms = self.db.get_role_permissions(user_role)
+        
+        # Map action to permission key
+        permission_map = {
+            'create': ['manage_parents', 'manage_children', 'manage_zones', 'manage_chapters', 'manage_versions'],
+            'read': ['view_rates'],
+            'update': ['edit_rates'],
+            'delete': ['delete_rates']
+        }
+        
+        # Check if user has any of the required permissions
+        required_perms = permission_map.get(permission, [])
+        for req_perm in required_perms:
+            if perms.get(req_perm, False):
+                return True
+        
+        return False
+
+    
     def render(self):
         """Main interface with separate tabs for each CRUD operation"""
         
@@ -102,17 +144,14 @@ class RateCRUDForms:
         user_role = st.session_state.get('user_role', 'viewer')
         company_id = st.session_state.get('company_id')
         
-        # Render role badge
-        render_role_badge()
-        
         # Show subscription info if company user
         if company_id:
             from modules.subscription_manager import SubscriptionManager
             sub_manager = SubscriptionManager(self.db)
             sub = sub_manager.get_company_subscription(company_id)
             st.info(f"👤 Role: **{user_role.upper()}** | Plan: **{sub['plan_name']}** | "
-                   f"✏️ Edit: {'✅' if can_edit_rates() else '❌'} | "
-                   f"🗑️ Delete: {'✅' if can_delete_rates() else '❌'}")
+                   f"✏️ Edit: {'✅' if sub['can_edit_rates'] else '❌'} | "
+                   f"🗑️ Delete: {'✅' if sub['can_delete_rates'] else '❌'}")
         else:
             st.info(f"👤 Role: **{user_role.upper()}** | Permissions: {', '.join(self._get_user_permissions(user_role))}")
         
@@ -141,33 +180,39 @@ class RateCRUDForms:
             help="Select which version/year these rates belong to"
         )
         
-        # Debug mode toggle (only for admins)
-        show_debug = False
-        if user_role in ['admin', 'system_admin']:
-            show_debug = st.checkbox("🐛 Show Debug Info", value=False, key="debug_mode")
+        # Debug mode toggle
+        show_debug = st.checkbox("🐛 Show Debug Info", value=False, key="debug_mode")
         
         st.markdown("---")
         
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "🗺️ Zones",
             "📚 Chapters",
-            "📑 Sections",
+            "📑 Sections",      # ← NEW TAB FOR LGED SECTIONS
             "📁 Parents",
             "👶 Children", 
             "📦 Versions"
         ])
 
+        
+       # And update the tab assignments:
+
         with tab1:
             self._zone_crud(source, show_debug)
+
         with tab2:
             self._chapter_crud(source, show_debug)
-        with tab3:
+
+        with tab3:  # NEW - Sections tab (LGED only)
             self._section_crud(source, show_debug)
-        with tab4:
+
+        with tab4:  # Was tab3
             self._parent_crud(source, edition_year, show_debug)
-        with tab5:
+
+        with tab5:  # Was tab4
             self._child_crud(source, edition_year, show_debug)
-        with tab6:
+
+        with tab6:  # Was tab5
             self._version_crud(source, show_debug)
     
     def _get_user_permissions(self, role):
@@ -363,27 +408,27 @@ class RateCRUDForms:
                         st.rerun()
                     else:
                         st.error("Please fill both fields")
-    
-    # ========== SECTION CRUD ==========
     def _section_crud(self, source, show_debug=False):
-        """LGED Section CRUD with editable table"""
+        """LGED Section CRUD with editable table (Sections are LGED only)"""
         
+        # Sections are only for LGED
         if source != "LGED":
             st.info("ℹ️ Sections are only applicable for LGED rate schedules")
             return
         
         st.markdown("### 📑 Manage LGED Sections")
-        st.caption("Sections are sub-categories within chapters (e.g., 3.01 - Box Cutting)")
+        st.caption("Sections are sub-categories within chapters (e.g., 3.01 - Box Cutting, 3.02 - Improved Sub-Grade)")
         
         can_edit = self._check_permission('update')
         can_delete = self._check_permission('delete')
         
         if not can_edit:
-            st.info("ℹ️ Sections are view-only. Contact system admin for modifications.")
+            st.info("ℹ️ You have view-only access to sections")
         
         # First, select a chapter
         st.markdown("#### Step 1: Select Chapter")
         
+        # Get chapters from database
         chapters_df = self.db.get_lged_chapters()
         
         if chapters_df.empty:
@@ -405,12 +450,16 @@ class RateCRUDForms:
         if selected_chapter:
             chapter_num = selected_chapter.split(" - ")[0]
             
-            st.markdown(f"#### Step 2: Sections for Chapter {chapter_num}")
+            st.markdown(f"#### Step 2: Manage Sections for Chapter {chapter_num}")
+            st.caption(f"Section format: **{chapter_num}.01**, **{chapter_num}.02**, **{chapter_num}.10**, etc.")
             
-            # Load existing sections
+            # Load existing sections for this chapter
             sections = self._get_sections_for_chapter(chapter_num, show_debug)
             
             if sections:
+                st.markdown("##### Existing Sections (Double-click to edit)")
+                
+                # Convert to DataFrame for editing
                 df = pd.DataFrame([{
                     'Section Number': s['section_number'],
                     'Section Name': s['section_name'],
@@ -418,6 +467,11 @@ class RateCRUDForms:
                     'Display Order': s.get('display_order', 0)
                 } for s in sections])
                 
+                # Debug info
+                if show_debug:
+                    st.write(f"Debug: Loaded {len(sections)} sections for chapter {chapter_num}")
+                
+                # Editable table
                 if can_edit:
                     edited_df = st.data_editor(
                         df,
@@ -432,9 +486,14 @@ class RateCRUDForms:
                         }
                     )
                     
+                    # Check for changes and save
                     if not edited_df.equals(df):
                         for idx in edited_df.index:
                             if not edited_df.loc[idx].equals(df.loc[idx]):
+                                old_data = df.loc[idx].to_dict()
+                                new_data = edited_df.loc[idx].to_dict()
+                                
+                                # Save changes
                                 self._update_section(
                                     chapter_num,
                                     edited_df.loc[idx, 'Section Number'],
@@ -442,39 +501,131 @@ class RateCRUDForms:
                                     edited_df.loc[idx, 'Description'],
                                     edited_df.loc[idx, 'Display Order']
                                 )
+                                
+                                self._log_audit('UPDATE', 'section', edited_df.loc[idx, 'Section Number'], old_data, new_data)
+                                
+                                if show_debug:
+                                    st.success(f"✅ Updated section: {edited_df.loc[idx, 'Section Number']}")
+                        
                         st.rerun()
                 else:
+                    # View-only display
                     st.dataframe(df, use_container_width=True, hide_index=True)
             
-            # Add new section (admin only)
-            if self._check_permission('create'):
-                with st.expander("➕ Add New Section", expanded=False):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        auto_number = st.checkbox("Auto-generate", value=True, key="auto_section_num")
-                        if auto_number:
-                            next_section_num = self._get_next_section_number(chapter_num, sections)
-                            section_number = st.text_input("Section Number", value=next_section_num, disabled=True)
+            # Delete section section (separate from edit table for clarity)
+            if can_delete and sections:
+                st.markdown("---")
+                st.markdown("##### Delete Section")
+                
+                delete_options = [f"{s['section_number']} - {s['section_name']}" for s in sections]
+                selected_delete = st.selectbox(
+                    "Select section to delete",
+                    options=[""] + delete_options,
+                    key=f"delete_section_{chapter_num}"
+                )
+                
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    if selected_delete and st.button("🗑️ Delete Section", key=f"confirm_delete_section_{chapter_num}"):
+                        section_num = selected_delete.split(" - ")[0]
+                        
+                        # Check if section has items
+                        has_items = self._check_section_has_items(chapter_num, section_num)
+                        
+                        if has_items:
+                            st.error(f"❌ Cannot delete Section {section_num} because it has items. Delete or reassign items first.")
                         else:
-                            section_number = st.text_input("Section Number", placeholder=f"{chapter_num}.01")
-                        section_name = st.text_input("Section Name", placeholder="e.g., Box Cutting")
+                            self._delete_section(chapter_num, section_num)
+                            self._log_audit('DELETE', 'section', section_num, None, None)
+                            st.success(f"✅ Deleted section: {section_num}")
+                            st.rerun()
+            
+            # Add new section
+            if self._check_permission('create'):
+                st.markdown("---")
+                st.markdown("##### ➕ Add New Section")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Auto-generate next section number or manual entry
+                    auto_number = st.checkbox("Auto-generate section number", value=True, key="auto_section_num")
                     
-                    with col2:
-                        section_description = st.text_area("Description", height=100)
-                        display_order = st.number_input("Display Order", min_value=0, max_value=999, value=0)
+                    if auto_number:
+                        next_section_num = self._get_next_section_number(chapter_num, sections)
+                        section_number = st.text_input(
+                            "Section Number",
+                            value=next_section_num,
+                            disabled=True,
+                            key="section_number_auto",
+                            help=f"Format: {chapter_num}.XX (e.g., {chapter_num}.01, {chapter_num}.02)"
+                        )
+                    else:
+                        section_number = st.text_input(
+                            "Section Number",
+                            placeholder=f"e.g., {chapter_num}.01, {chapter_num}.02, {chapter_num}.10",
+                            key="section_number_manual",
+                            help=f"Must start with '{chapter_num}.' followed by two-digit number (01-99)"
+                        )
                     
-                    if st.button("Add Section", key=f"add_section_{chapter_num}"):
-                        if section_number and section_name:
-                            if self._validate_lged_section_number(section_number, chapter_num):
-                                self._save_section(chapter_num, section_number, section_name, section_description, display_order)
-                                st.success(f"✅ Added Section: {section_number}")
+                    section_name = st.text_input(
+                        "Section Name",
+                        placeholder="e.g., Box Cutting, Improved Sub-Grade, Sub-Base Course",
+                        key="section_name_input"
+                    )
+                
+                with col2:
+                    section_description = st.text_area(
+                        "Description (Optional)",
+                        placeholder="Detailed description of this section",
+                        height=100,
+                        key="section_description_input"
+                    )
+                    
+                    # Calculate default display order from section number
+                    default_order = 0
+                    if section_number and '.' in section_number:
+                        try:
+                            default_order = int(section_number.split('.')[1])
+                        except:
+                            default_order = len(sections)
+                    
+                    display_order = st.number_input(
+                        "Display Order",
+                        min_value=0,
+                        max_value=999,
+                        value=default_order,
+                        step=1,
+                        key="section_display_order",
+                        help="Lower numbers appear first. Usually same as section number."
+                    )
+                
+                if st.button("➕ Add Section", key=f"add_section_{chapter_num}"):
+                    if section_number and section_name:
+                        # Validate section number format for LGED
+                        if self._validate_lged_section_number(section_number, chapter_num):
+                            if not self._section_exists_in_db(chapter_num, section_number):
+                                self._save_section(
+                                    chapter_num,
+                                    section_number,
+                                    section_name,
+                                    section_description,
+                                    display_order
+                                )
+                                self._log_audit('CREATE', 'section', section_number, None, {
+                                    'section_number': section_number,
+                                    'section_name': section_name,
+                                    'chapter': chapter_num
+                                })
+                                st.success(f"✅ Added Section: {section_number} - {section_name}")
                                 st.rerun()
                             else:
-                                st.error(f"Section number must be format: {chapter_num}.XX")
+                                st.error(f"❌ Section {section_number} already exists in Chapter {chapter_num}")
                         else:
-                            st.error("Please fill required fields")
-    
+                            st.error(f"❌ Section number must be in format: {chapter_num}.XX where XX is 01, 02, 03... (e.g., {chapter_num}.01, {chapter_num}.02)")
+                    else:
+                        st.error("Please fill Section Number and Section Name")
+
     # Add these helper methods to rate_crud_forms.py:
 
     def _validate_lged_section_number(self, section_number: str, chapter_num: str) -> bool:

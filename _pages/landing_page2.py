@@ -6,7 +6,7 @@ from version import get_app_name, get_app_desc
 def show_landing_page():
     """Unified landing page with English and Bangla content - Modern & Professional"""
     
-    st.set_page_config(page_title="iTender BD - AI Tender Intelligence Platform", page_icon="🏗️", layout="wide")
+    st.set_page_config(page_title="TenderAI (BD) - AI Tender Intelligence Platform", page_icon="🏗️", layout="wide")
     
     # Modern CSS with Animations
     st.markdown("""
@@ -1093,7 +1093,7 @@ def show_landing_page():
     # ==================== NAVIGATION BAR ====================
     st.markdown("""
     <div class="navbar">
-        <div class="nav-logo">🏗️ iTender BD</div>
+        <div class="nav-logo">🏗️ TenderAI (BD)</div>
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#pricing">Pricing</a>
@@ -1113,7 +1113,7 @@ def show_landing_page():
                 🚀 AI-Powered • Bangladesh's First • PPR 2025 Compliant
             </div>
             <div class="hero-title">
-                🏗️ <span class="hero-title-gradient">iTender BD</span>
+                🏗️ <span class="hero-title-gradient">TenderAI (BD)</span>
             </div>
             <div class="hero-subtitle">AI Powered Tender Intelligence & Bid Optimization Platform</div>
             <div class="hero-bangla">বাংলাদেশের প্রথম AI-চালিত Tender Intelligence Platform</div>
@@ -1160,12 +1160,12 @@ def show_landing_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # ==================== WHAT iTender BD DOES ====================
+    # ==================== WHAT TenderAI (BD) DOES ====================
     st.markdown("""
     <div class="desc-box">
-        <h2 class="section-title">✨ What is iTender BD?</h2>
+        <h2 class="section-title">✨ What is TenderAI (BD)?</h2>
         <p style="font-size: 1.15rem; text-align: center; color: #475569; max-width: 800px; margin: 0 auto;">
-            <strong>iTender BD</strong> এমন একটি অত্যাধুনিক AI প্ল্যাটফর্ম যা টেন্ডার ডকুমেন্ট, BOQ এবং বাজার পরিস্থিতি বিশ্লেষণ করে 
+            <strong>TenderAI (BD)</strong> এমন একটি অত্যাধুনিক AI প্ল্যাটফর্ম যা টেন্ডার ডকুমেন্ট, BOQ এবং বাজার পরিস্থিতি বিশ্লেষণ করে 
             আপনাকে সবচেয়ে প্রতিযোগিতামূলক এবং লাভজনক বিডিং সিদ্ধান্ত নিতে সাহায্য করে।
         </p>
         <div class="check-list">
@@ -1221,7 +1221,7 @@ def show_landing_page():
         </div>
         <div>
             <div class="solution-section">
-                <h3 style="color: #16a34a; text-align: center; font-size: 1.3rem !important; margin-bottom: 1.5rem;">✨ iTender BD কী করে?</h3>
+                <h3 style="color: #16a34a; text-align: center; font-size: 1.3rem !important; margin-bottom: 1.5rem;">✨ TenderAI (BD) কী করে?</h3>
                 <div style="margin-top: 1rem;">
                     <p style="color: #475569; font-weight: 600;">এক ক্লিকে:</p>
                     <ul style="margin-top: 1rem; color: #64748b; line-height: 2;">
@@ -1458,7 +1458,7 @@ def show_landing_page():
     # ==================== WHO IS USING ====================
     st.markdown("""
     <h2 class="section-title">👥 কারা ব্যবহার করছেন?</h2>
-    <p class="section-subtitle">বাংলাদেশের শীর্ষস্থানীয় প্রতিষ্ঠানগুলো iTender BD ব্যবহার করছে</p>
+    <p class="section-subtitle">বাংলাদেশের শীর্ষস্থানীয় প্রতিষ্ঠানগুলো TenderAI (BD) ব্যবহার করছে</p>
     """, unsafe_allow_html=True)
     
     col1, col2, col3, col4 = st.columns(4)
@@ -1505,7 +1505,7 @@ def show_landing_page():
                 </div>
                 <div style="text-align: center; margin-top: 2rem; padding: 1.5rem; background: rgba(59, 130, 246, 0.1); border-radius: 16px; border: 1px solid rgba(59, 130, 246, 0.3);">
                     <p style="color: #e0e7ff; font-size: 1.1rem !important;">বছরে <strong style="color: #60a5fa; font-size: 1.5rem !important;">শত শত</strong> মানব-ঘণ্টা সাশ্রয় সম্ভব</p>
-                    <p style="color: #a5b4fc; margin-top: 0.5rem; font-size: 0.95rem !important;">iTender BD আপনার টিমকে কম সময়ে আরও বেশি টেন্ডার বিশ্লেষণের সুযোগ দেয়।</p>
+                    <p style="color: #a5b4fc; margin-top: 0.5rem; font-size: 0.95rem !important;">TenderAI (BD) আপনার টিমকে কম সময়ে আরও বেশি টেন্ডার বিশ্লেষণের সুযোগ দেয়।</p>
                 </div>
             </div>
         </div>
@@ -1647,7 +1647,7 @@ def show_landing_page():
     """, unsafe_allow_html=True)
     
     faqs = [
-        ("iTender BD কি e-GP এর বিকল্প?", "না। iTender BD হলো একটি Tender Intelligence Platform যা e-GP ব্যবহারকারীদের টেন্ডার বিশ্লেষণ ও বিডিং সিদ্ধান্ত গ্রহণে সহায়তা করে।"),
+        ("TenderAI (BD) কি e-GP এর বিকল্প?", "না। TenderAI (BD) হলো একটি Tender Intelligence Platform যা e-GP ব্যবহারকারীদের টেন্ডার বিশ্লেষণ ও বিডিং সিদ্ধান্ত গ্রহণে সহায়তা করে।"),
         ("কত দ্রুত টেন্ডার বিশ্লেষণ করা যায়?", "সাধারণত কয়েক সেকেন্ডের মধ্যে সম্পূর্ণ বিশ্লেষণ হয়ে যায়।"),
         ("এটি কি BOQ বিশ্লেষণ করতে পারে?", "হ্যাঁ। হাজার হাজার BOQ Item স্বয়ংক্রিয়ভাবে বিশ্লেষণ করতে পারে এবং abnormal item detect করতে পারে।"),
         ("এটি কি বিড মূল্য সুপারিশ করে?", "হ্যাঁ। Aggressive, Moderate, Conservative এবং Weighted Average Bid Recommendation প্রদান করে।"),
@@ -1703,6 +1703,6 @@ def show_landing_page():
     # Footer
     st.markdown("""
     <div style="text-align: center; padding: 2rem; color: #94a3b8; font-size: 0.85rem !important;">
-        <p>© 2026 iTender BD. All rights reserved. | Bangladesh's First AI-Powered Tender Intelligence Platform</p>
+        <p>© 2026 TenderAI (BD). All rights reserved. | Bangladesh's First AI-Powered Tender Intelligence Platform</p>
     </div>
     """, unsafe_allow_html=True)

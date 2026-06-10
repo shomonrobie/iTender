@@ -3,12 +3,17 @@
 import streamlit as st
 
 def render_top_navigation():
-    """Render top navigation bar for authenticated users"""
+    """Render top navigation bar for authenticated users with role-based access"""
     
     # Get current page and user role
     current_page = st.session_state.get('page', 'dashboard')
     user_role = st.session_state.get('user_role', 'viewer')
+    
+    # Define role-based permissions
     is_admin = user_role in ['admin', 'system_admin']
+    is_company_admin = user_role in ['admin', 'system_admin', 'company_admin']
+    is_analyst = user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
+    is_viewer = user_role == 'viewer'
     
     # CSS for top navigation
     st.markdown("""
@@ -54,6 +59,7 @@ def render_top_navigation():
     
     # Define navigation items based on role
     if is_admin:
+        # Admin navigation - full access
         nav_items = [
             ("🏠 Dashboard", "dashboard"),
             ("📝 Rate Mgmt", "rate_management"),
@@ -63,27 +69,50 @@ def render_top_navigation():
             ("💳 Subscriptions", "subscription"),
             ("⚙️ Admin", "admin_dashboard")
         ]
-    else:
+    elif is_company_admin:
+        # Company Admin navigation
         nav_items = [
             ("🏠 Dashboard", "dashboard"),
             ("📋 Tenders", "tender_management"),
-            ("📊 Rate Viewer", "rate_viewer"), 
+            ("📊 Rate Viewer", "rate_viewer"),
             ("📊 BOQ", "boq_generator"),
             ("🎯 Optimizer", "boq_bid_optimizer"),
             ("📈 Reports", "analysis_history"),
             ("👥 Team", "user_management"),
             ("💳 Plan", "subscription")
         ]
+    elif is_analyst:
+        # Analyst/Manager navigation - no team management
+        nav_items = [
+            ("🏠 Dashboard", "dashboard"),
+            ("📋 Tenders", "tender_management"),
+            ("📊 Rate Viewer", "rate_viewer"),
+            ("📊 BOQ", "boq_generator"),
+            ("🎯 Optimizer", "boq_bid_optimizer"),
+            ("📈 Reports", "analysis_history"),
+            ("💳 Plan", "subscription")
+        ]
+    else:
+        # Viewer navigation - read-only access
+        nav_items = [
+            ("🏠 Dashboard", "dashboard"),
+            ("📋 View Tenders", "tender_management"),
+            ("📊 Rate Viewer", "rate_viewer"),
+            ("📈 Reports", "analysis_history")
+        ]
     
-    # User info and logout
+    # User info
     full_name = st.session_state.get('full_name', 'User')
+    company_name = st.session_state.get('company_name', '')
     
     # Create the navigation bar
     st.markdown('<div class="top-nav-container">', unsafe_allow_html=True)
     
-    # Create buttons in a row
-    cols = st.columns(len(nav_items) + 2)  # +2 for user info and logout
+    # Calculate number of columns needed (nav items + user info + logout)
+    num_cols = len(nav_items) + 2
+    cols = st.columns(num_cols)
     
+    # Navigation buttons
     for i, (label, page) in enumerate(nav_items):
         with cols[i]:
             is_active = current_page == page
@@ -92,10 +121,24 @@ def render_top_navigation():
                 st.session_state.page = page
                 st.rerun()
     
-    # User info
+    # User info with role badge
     with cols[-2]:
-        st.markdown(f"<div style='text-align: right; color: white; padding: 0.3rem;'>👋 {full_name[:15]}</div>", 
-                   unsafe_allow_html=True)
+        role_badge = {
+            'admin': '👑 Admin',
+            'system_admin': '👑 SysAdmin',
+            'company_admin': '🏢 Company Admin',
+            'manager': '📊 Manager',
+            'analyst': '📈 Analyst',
+            'viewer': '👁️ Viewer'
+        }.get(user_role, '👤 User')
+        
+        st.markdown(f"""
+        <div style='text-align: right; padding: 0.3rem;'>
+            <span style='color: white; font-size: 0.8rem;'>
+                👋 {full_name[:15]} | {role_badge}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Logout button
     with cols[-1]:

@@ -702,3 +702,39 @@ def display_analysis_results_with_report(
             "text/csv"
         )
 
+
+def _export_analysis_csv(analysis: Dict) -> None:
+    """Export single analysis to CSV (helper for history page)"""
+    try:
+        import csv
+        import io
+        
+        # Define fields to export
+        fields = [
+            'tender_id', 'tender_title', 'procuring_entity', 'official_estimate',
+            'recommended_bid', 'success_probability', 'risk_level', 'analysis_type',
+            'analysis_date', 'bid_status'
+        ]
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerow({k: analysis.get(k, '') for k in fields})
+        
+        # Trigger download
+        csv_data = output.getvalue()
+        output.close()
+        
+        tender_id = str(analysis.get('tender_id', 'export')).replace('/', '_')
+        st.download_button(
+            label="📥 Download CSV",
+            data=csv_data,
+            file_name=f"analysis_{tender_id}_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    except Exception as e:
+        st.error(f"❌ Export failed: {str(e)}")
+        if DEBUG_MODE:
+            st.code(traceback.format_exc(), language="python")

@@ -21,6 +21,11 @@ DEBUG_MODE = True
 # Initialize logger
 logger = logging.getLogger(__name__)
 db = DatabaseManager()
+from modules.rbac import (
+    rbac, can_view_tenders, can_create_tender, can_edit_tender,
+    can_submit_bid, can_manage_team, can_export_data,
+    render_role_badge, render_protected_button
+)
 
 
 # =============================================================================
@@ -696,28 +701,54 @@ def _render_milestones(tender_id: int, key_prefix: str) -> None:
                     st.rerun()
 
 def render_tender_management() -> None:
-    """Main tender management dashboard with reliable tab rendering"""
-    st.markdown("""
-    <div class="main-header">
-        <h1>📋 Tender Management</h1>
-        <p>Track tenders, manage bids, monitor deadlines</p>
-    </div>
-    """, unsafe_allow_html=True)
+    """Main tender management dashboard with RBAC"""
     
-    # ✅ Standard Streamlit tab pattern (guarantees all tabs render correctly)
-    tab_names = ["📊 Dashboard", "➕ New/Edit Tender", "📋 Active Tenders", "🏆 Awarded Tenders", "📑 Reports"]
-    tabs = st.tabs(tab_names)
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
     
-    with tabs[0]:
+    # Check if user can view tenders
+    if not can_view_tenders():
+        st.error("🔒 You don't have permission to view tenders.")
+        return
+    
+    # Create base tabs
+    tabs = st.tabs(["📊 Dashboard", "📋 Active Tenders", "🏆 Awarded Tenders"])
+    tab_idx = 0
+    
+    # Dashboard tab
+    with tabs[tab_idx]:
         _render_tender_dashboard()
-    with tabs[1]:
-        _render_create_tender_form()
-    with tabs[2]:
+    tab_idx += 1
+    
+    # Active Tenders tab
+    with tabs[tab_idx]:
         _render_active_tenders_table()
-    with tabs[3]:
+    tab_idx += 1
+    
+    # Awarded Tenders tab
+    with tabs[tab_idx]:
         _render_awarded_tenders_table()
-    with tabs[4]:
-        _render_tender_reports()
+    tab_idx += 1
+    
+    # Add extra tabs conditionally after the main ones
+    extra_tabs = []
+    extra_contents = []
+    
+    if can_create_tender():
+        extra_tabs.append("➕ New/Edit Tender")
+        extra_contents.append(_render_create_tender_form)
+    
+    if can_export_data():
+        extra_tabs.append("📑 Reports")
+        extra_contents.append(_render_tender_reports)
+    
+    if extra_tabs:
+        # Create additional tabs
+        more_tabs = st.tabs(extra_tabs)
+        for i, (tab, content_func) in enumerate(zip(more_tabs, extra_contents)):
+            with tab:
+                content_func()
 
 
 def _render_tender_dashboard() -> None:

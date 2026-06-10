@@ -14,7 +14,12 @@ def show():
         <p>{st.session_state.company_name} | {st.session_state.subscription_plan.upper()} Plan</p>
     </div>
     """, unsafe_allow_html=True)
-    
+    user_role = st.session_state.get('user_role', 'viewer')
+    is_admin = user_role in ['admin', 'system_admin']
+    is_company_admin = user_role in ['admin', 'system_admin', 'company_admin']
+    is_analyst = user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
+    can_edit = user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
+
     # Get user statistics
     stats = db.get_company_stats(st.session_state.company_id)
     analyses_df = db.get_user_analyses(
@@ -35,7 +40,7 @@ def show():
         </div>
         """, unsafe_allow_html=True)
     
-    with col2:
+    with col2:  
         st.markdown(f"""
         <div class="metric-card">
             <h3>🏆 Win Rate</h3>
@@ -68,24 +73,35 @@ def show():
     
     # Quick actions
     st.markdown("### 🚀 Quick Actions")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
+        if st.button("📋 Tenders", use_container_width=True):
+            st.session_state.page = "tender_management"
+            st.rerun()
+    with col2:
         if st.button("📊 New Analysis", use_container_width=True):
             st.session_state.page = "new_analysis"
             st.rerun()
     
-    with col2:
+    with col3:
         if st.button("📜 View History", use_container_width=True):
             st.session_state.page = "history"
             st.rerun()
     
-    with col3:
-        if st.button("👥 Manage Team", use_container_width=True):
-            st.session_state.page = "user_management"
-            st.rerun()
-    
     with col4:
+        if is_company_admin:
+            if st.button("👥 Team Management", use_container_width=True):
+                st.session_state.page = "user_management"
+                st.rerun()
+        else:
+            st.button("🔒 Team Management", disabled=True, use_container_width=True,
+                    help="Only company admins can manage team")
+        #if st.button("👥 Manage Team", use_container_width=True):
+        #    st.session_state.page = "user_management"
+        #    st.rerun()
+    
+    with col5:
         if st.button("💳 Upgrade Plan", use_container_width=True):
             st.session_state.page = "subscription"
             st.rerun()

@@ -33,7 +33,7 @@ def get_original_pwd_rate(pwd_code, zone):
     if not pwd_code or pwd_code == "N/A": return None
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT unit_rate FROM regional_rates WHERE pwd_code=? AND zone_name=?", (str(pwd_code).strip(), zone))
+    cursor.execute("SELECT unit_rate FROM pwd_rates=? AND zone_name=?", (str(pwd_code).strip(), zone))
     res = cursor.fetchone()
     conn.close()
     return float(res) if res else None

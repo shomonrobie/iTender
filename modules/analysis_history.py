@@ -1,5 +1,6 @@
 """
 Analysis History Module - Enhanced with Row Buttons & Detailed Reports
+With Role-Based Access Control
 """
 
 import streamlit as st
@@ -8,6 +9,10 @@ import json
 from datetime import datetime
 import traceback
 from database.db_manager import DatabaseManager
+from modules.rbac import (
+    rbac, can_view_tenders, can_export_data, can_run_analysis,
+    render_role_badge, require_permission
+)
 from utils.helpers import (
     format_currency_bd,
     format_percentage,
@@ -19,6 +24,8 @@ from utils.helpers import (
 
 # Initialize database
 db = DatabaseManager()
+
+
 def parse_competitor_bids(competitor_bids_data):
     """Parse competitor bids from various formats"""
     if not competitor_bids_data:
@@ -35,30 +42,34 @@ def parse_competitor_bids(competitor_bids_data):
     
     return []
 
+
+@require_permission('can_view_tenders')
 def show_analysis_history():
     """Tender analysis history page with row buttons and detailed reports"""
     
     st.markdown(get_compact_css(), unsafe_allow_html=True)
 
-    # Page Header
+    # Page Header with role badge
     render_page_header(
         "📜 Tender History", 
-        "View detailed analysis reports",
-        icon="📜"
+        "View detailed analysis reports"        
     )
+    
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
     
     # Get current user's company ID
     company_id = st.session_state.get('company_id')
+    user_role = st.session_state.get('user_role', 'viewer')
+    permissions = rbac.get_current_user_permissions()
+    
+    can_export = permissions.get('can_export_data', False) or user_role in ['admin', 'system_admin', 'company_admin', 'manager']
+    can_run_new_analysis = permissions.get('can_run_analysis', False) or user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
     
     if not company_id:
         st.error("⚠️ Company information not found. Please log in again.")
         return
-    
-    # Debug: Show current session info
-    with st.expander("🔍 Debug Info", expanded=False):
-        st.write(f"User ID: {st.session_state.user_id}")
-        st.write(f"Company ID: {company_id}")
-        st.write(f"User Role: {st.session_state.user_role}")
     
     try:
         # Use the database manager to get analyses
@@ -69,30 +80,33 @@ def show_analysis_history():
             limit=200
         )
         
-        # Debug: Show what was found
-        st.info(f"📊 Found {len(analyses_df)} analyses in database")
+        # Show info for viewers
+        if user_role == 'viewer':
+            st.info("👁️ **Viewer Mode:** You have read-only access to analysis history.")
         
         if analyses_df.empty:
             st.info("📭 No analyses saved yet. Run your first analysis in **Three-Tier Bid Optimization**!")
             
-            # Show direct query results for debugging
-            with st.expander("🔍 Database Debug", expanded=False):
-                conn = db.get_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?", (company_id,))
-                count = cursor.fetchone()[0]
-                st.write(f"Direct query count for company_id={company_id}: {count}")
-                
-                if count > 0:
-                    cursor.execute("SELECT id, tender_id, tender_title, analysis_date FROM tender_analyses WHERE company_id = ? LIMIT 5", (company_id,))
-                    rows = cursor.fetchall()
-                    for row in rows:
-                        st.write(f"  - ID: {row[0]}, Tender: {row[1]}, Title: {row[2][:50]}, Date: {row[3]}")
-                conn.close()
+            # Show direct query results for debugging (only for admins)
+            if user_role in ['admin', 'system_admin']:
+                with st.expander("🔍 Database Debug", expanded=False):
+                    conn = db.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?", (company_id,))
+                    count = cursor.fetchone()[0]
+                    st.write(f"Direct query count for company_id={company_id}: {count}")
+                    
+                    if count > 0:
+                        cursor.execute("SELECT id, tender_id, tender_title, analysis_date FROM tender_analyses WHERE company_id = ? LIMIT 5", (company_id,))
+                        rows = cursor.fetchall()
+                        for row in rows:
+                            st.write(f"  - ID: {row[0]}, Tender: {row[1]}, Title: {row[2][:50]}, Date: {row[3]}")
+                    conn.close()
             
-            if st.button("➕ Run New Analysis", use_container_width=True):
-                st.session_state.page = "new_analysis"
-                st.rerun()
+            if can_run_new_analysis:
+                if st.button("➕ Run New Analysis", use_container_width=True):
+                    st.session_state.page = "new_analysis"
+                    st.rerun()
             return
         
         # Convert DataFrame to list of dicts for easier manipulation
@@ -156,24 +170,19 @@ def show_analysis_history():
         # =============================================================================
         # PAGINATION SETUP
         # =============================================================================
-        # Initialize pagination state
         if 'history_page_num' not in st.session_state:
             st.session_state.history_page_num = 1
 
-        # Pagination settings
         items_per_page = 10
         total_items = len(filtered_analyses)
         total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
 
-        # Ensure current page is valid
         if st.session_state.history_page_num > total_pages:
             st.session_state.history_page_num = total_pages
 
-        # Calculate slice indices
         start_idx = (st.session_state.history_page_num - 1) * items_per_page
         end_idx = min(start_idx + items_per_page, total_items)
 
-        # Get current page items
         current_page_items = filtered_analyses[start_idx:end_idx]
 
         # Display pagination controls
@@ -205,7 +214,6 @@ def show_analysis_history():
             
             st.markdown("---")
 
-        # Display info text
         st.markdown(f"<span style='font-size:0.8rem; color:#666;'>Showing {start_idx + 1}-{end_idx} of {total_items} analyses</span>", unsafe_allow_html=True)
         st.markdown("---")
 
@@ -216,7 +224,6 @@ def show_analysis_history():
             st.warning("No analyses match your filters")
             return
         
-        # Initialize session state for selected analysis
         if 'selected_analysis_id' not in st.session_state:
             st.session_state.selected_analysis_id = None
         
@@ -278,19 +285,18 @@ def show_analysis_history():
         # DETAILED REPORT SECTION (Matches Tender Analysis Page)
         # =========================================================================
         if st.session_state.selected_analysis_id:
-            # Find the selected analysis
             selected = next((a for a in filtered_analyses if a.get('id') == st.session_state.selected_analysis_id), None)
             
             if selected:
                 st.markdown("---")
                 st.markdown("## 📋 Detailed Analysis Report")
                 
-                # Safely get values with proper defaults
+                # Show report (same as before)
                 official_est = selected.get('official_estimate', 1)
                 recommended_bid = selected.get('recommended_bid', 0)
                 slt_threshold = selected.get('slt_threshold')
                 if slt_threshold is None:
-                    slt_threshold = official_est * 0.80  # Default if not set
+                    slt_threshold = official_est * 0.80
                 
                 win_prob = selected.get('success_probability', 0.65)
                 confidence = selected.get('confidence_score', 0.70)
@@ -298,10 +304,8 @@ def show_analysis_history():
                 nppi_factor = selected.get('nppi_factor', 0.92)
                 weighted_avg = selected.get('weighted_average', 0)
                 
-                # Determine risk color
                 risk_color = '🟢' if risk_level == 'LOW' else ('🟡' if risk_level == 'MEDIUM' else '🔴')
                 
-                # Reconstruct comparison data from saved analysis
                 comparison = {
                     'basic': {
                         'method': 'Basic - Simple Average',
@@ -337,20 +341,9 @@ def show_analysis_history():
                     }
                 }
                 
-                # Parse competitor bids
                 competitor_bids_data = selected.get('competitor_bids')
-                parsed_competitor_bids = []
-                if competitor_bids_data:
-                    try:
-                        if isinstance(competitor_bids_data, str):
-                            parsed_competitor_bids = json.loads(competitor_bids_data)
-                        elif isinstance(competitor_bids_data, list):
-                            parsed_competitor_bids = competitor_bids_data
-                    except Exception as e:
-                        print(f"Error parsing competitor bids: {e}")
-                        parsed_competitor_bids = []
+                parsed_competitor_bids = parse_competitor_bids(competitor_bids_data)
                 
-                # Build analysis record for unified report
                 analysis_record = {
                     'tender_id': selected.get('tender_id', 'N/A'),
                     'tender_title': selected.get('tender_title', 'N/A'),
@@ -369,7 +362,6 @@ def show_analysis_history():
                     'company_name': st.session_state.get('company_name', 'N/A')
                 }
                 
-                # Generate unified report (HTML with visualizations)
                 from modules.report_generator import generate_unified_report
                 
                 generate_unified_report(
@@ -379,13 +371,11 @@ def show_analysis_history():
                     format='html'
                 )
                 
-                # Export options
                 st.markdown("---")
                 st.markdown("### 📄 Export Options")
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    # PDF Export from history
                     if st.button("📑 Generate PDF Report", use_container_width=True, type="secondary", key="history_gen_pdf"):
                         with st.spinner("Generating PDF..."):
                             pdf_buffer = generate_unified_report(
@@ -405,14 +395,9 @@ def show_analysis_history():
                                 st.error("PDF generation failed")
                 
                 with col2:
-                    # CSV Export - safely handle None values
                     export_rows = []
                     for tier, result in comparison.items():
-                        # Safely get slt_threshold
-                        comp_slt = result.get('slt_threshold')
-                        if comp_slt is None:
-                            comp_slt = 0
-                        
+                        comp_slt = result.get('slt_threshold', 0)
                         export_rows.append({
                             'Tier': tier.upper(),
                             'Method': result.get('method', ''),
@@ -431,7 +416,6 @@ def show_analysis_history():
                     )
                 
                 with col3:
-                    # JSON Export
                     export_data = {k: v for k, v in selected.items() if v is not None}
                     if 'competitor_bids' in export_data:
                         try:
@@ -453,7 +437,7 @@ def show_analysis_history():
                         st.session_state.selected_analysis_id = None
                         st.rerun()
                 
-                # PDF Download Button (Shows if buffer exists)
+                # PDF Download Button
                 if st.session_state.get('history_pdf_buffer') and st.session_state.get('history_pdf_filename'):
                     st.markdown("---")
                     st.info(f"📄 **PDF Report Ready:** `{st.session_state.history_pdf_filename}`")
@@ -472,7 +456,14 @@ def show_analysis_history():
                             st.session_state.pop('history_pdf_buffer', None)
                             st.session_state.pop('history_pdf_filename', None)
                             st.rerun()
+                    
     except Exception as e:
         st.error(f"Error loading analysis history: {str(e)}")
         print(f"ERROR: {e}")
         traceback.print_exc()
+
+
+# Alternative entry point without decorator (for direct calls)
+def show_analysis_history_page():
+    """Wrapper function for analysis history page"""
+    show_analysis_history()

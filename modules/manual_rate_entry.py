@@ -4,6 +4,10 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
+from modules.rbac import (
+    rbac, can_edit_rates, can_delete_rates, can_import_rates,
+    render_role_badge, require_permission, is_admin, is_company_admin
+)
 
 class ManualRateEntry:
     """Manual data entry interface for PWD and LGED rates with parent-child management"""
@@ -12,7 +16,16 @@ class ManualRateEntry:
         self.db = db
     
     def render(self):
-        """Main manual entry interface"""
+        """Main manual entry interface with RBAC"""
+        
+        # Check permission
+        if not can_edit_rates() and not can_import_rates():
+            st.error("❌ You don't have permission to manually edit rates.")
+            st.info("Contact your administrator to upgrade your permissions.")
+            return
+        
+        # Render role badge
+        render_role_badge()
         
         st.markdown("""
         <div class="main-header">
@@ -20,6 +33,15 @@ class ManualRateEntry:
             <p>Copy-paste rates directly from PDF or Excel into the table below</p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Show permission info
+        user_role = st.session_state.get('user_role', 'viewer')
+        if user_role == 'analyst':
+            st.info("📈 **Analyst Mode:** You can view and suggest edits, but cannot save to database.")
+        elif user_role in ['manager', 'company_admin']:
+            st.info("📊 **Manager Mode:** You can edit and save rate data.")
+        elif is_admin():
+            st.info("👑 **Admin Mode:** Full access to all rate management features.")
         
         # Source selection
         source = st.radio(
@@ -53,21 +75,41 @@ class ManualRateEntry:
             self._render_row_entry_interface(source, edition_year)
         
         with tab2:
-            self.render_edit_interface(source, edition_year)
+            # Only show edit interface if user has edit permission
+            if can_edit_rates():
+                self.render_edit_interface(source, edition_year)
+            else:
+                st.info("🔒 You don't have permission to edit existing items. Contact your administrator.")
         
         with tab3:
-            self._render_paste_interface(source, edition_year)
-
+            if can_import_rates() or can_edit_rates():
+                self._render_paste_interface(source, edition_year)
+            else:
+                st.info("🔒 You don't have permission to import data.")
+        
         with tab4:
-            self._render_parent_child_builder(source, edition_year)
+            if can_edit_rates():
+                self._render_parent_child_builder(source, edition_year)
+            else:
+                st.info("🔒 You don't have permission to manage parent-child relationships.")
+        
         with tab5:
-            self._render_csv_upload_interface(source, edition_year)
+            if can_import_rates() or can_edit_rates():
+                self._render_csv_upload_interface(source, edition_year)
+            else:
+                st.info("🔒 You don't have permission to upload CSV files.")
     
     def _render_parent_child_builder(self, source, edition_year):
-        """Simplified parent-child relationship builder"""
+        """Simplified parent-child relationship builder with RBAC"""
         
         st.markdown("### 🌳 Parent-Child Relationship Builder")
         st.caption("Build hierarchical structure by defining parents and their children")
+        
+        # Check if user can edit (for save operations)
+        can_save = can_edit_rates()
+        
+        if not can_save:
+            st.info("🔒 You have view-only access. Contact your administrator to edit parent-child relationships.")
         
         # Initialize session state
         if 'parent_child_data' not in st.session_state:
@@ -82,7 +124,7 @@ class ManualRateEntry:
         else:
             chapters_df = self.db.get_lged_chapters()
         
-        # Create chapter options with display formatting
+        # Create chapter options
         chapter_options = ["-- Select Chapter --"]
         chapter_map = {}
         for _, row in chapters_df.iterrows():
@@ -97,34 +139,33 @@ class ManualRateEntry:
         with st.container():
             col1, col2 = st.columns([1, 2])
             with col1:
-                parent_code = st.text_input("Parent Code", placeholder="1.01 or 01.1", key="parent_code_simple")
-                # Chapter selection
-                selected_chapter_display = st.selectbox("Chapter", chapter_options, key="parent_chapter_simple")
+                parent_code = st.text_input("Parent Code", placeholder="1.01 or 01.1", key="parent_code_simple", disabled=not can_save)
+                selected_chapter_display = st.selectbox("Chapter", chapter_options, key="parent_chapter_simple", disabled=not can_save)
                 if selected_chapter_display != "-- Select Chapter --":
                     parent_chapter = chapter_map[selected_chapter_display]
                 else:
                     parent_chapter = ""
             
             with col2:
-                parent_desc = st.text_area("Parent Description", placeholder="Full description of the parent item", height=100, key="parent_desc_simple")
+                parent_desc = st.text_area("Parent Description", placeholder="Full description of the parent item", height=100, key="parent_desc_simple", disabled=not can_save)
             
-            if st.button("➕ Add Parent", key="add_parent_simple"):
-                if parent_code and parent_desc and parent_chapter:
-                    # Check if parent already exists
-                    existing = [p for p in st.session_state.parent_child_data['parents'] if p['code'] == parent_code]
-                    if not existing:
-                        st.session_state.parent_child_data['parents'].append({
-                            'code': parent_code,
-                            'description': parent_desc,
-                            'chapter': parent_chapter,
-                            'children_count': 0
-                        })
-                        st.success(f"✅ Added parent: {parent_code}")
-                        st.rerun()
+            if can_save:
+                if st.button("➕ Add Parent", key="add_parent_simple"):
+                    if parent_code and parent_desc and parent_chapter:
+                        existing = [p for p in st.session_state.parent_child_data['parents'] if p['code'] == parent_code]
+                        if not existing:
+                            st.session_state.parent_child_data['parents'].append({
+                                'code': parent_code,
+                                'description': parent_desc,
+                                'chapter': parent_chapter,
+                                'children_count': 0
+                            })
+                            st.success(f"✅ Added parent: {parent_code}")
+                            st.rerun()
+                        else:
+                            st.warning("Parent code already exists!")
                     else:
-                        st.warning("Parent code already exists!")
-                else:
-                    st.error("Please fill all fields")
+                        st.error("Please fill all fields")
         
         st.markdown("---")
         
@@ -132,7 +173,6 @@ class ManualRateEntry:
         st.markdown("#### 👶 Add Child Item")
         st.caption("Child items HAVE rates and belong to a parent")
         
-        # Get parent options from existing parents
         parent_options = [p['code'] for p in st.session_state.parent_child_data['parents']]
         
         if not parent_options:
@@ -142,14 +182,13 @@ class ManualRateEntry:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    child_code = st.text_input("Child Code", placeholder="1.01.01 or 01.1.1", key="child_code_simple")
-                    selected_parent = st.selectbox("Select Parent", parent_options, key="child_parent_simple")
-                    unit = st.selectbox("Unit", ["", "cum", "sqm", "meter", "each", "job", "set", "kg", "hour", "month", "day", "km"], key="child_unit_simple")
+                    child_code = st.text_input("Child Code", placeholder="1.01.01 or 01.1.1", key="child_code_simple", disabled=not can_save)
+                    selected_parent = st.selectbox("Select Parent", parent_options, key="child_parent_simple", disabled=not can_save)
+                    unit = st.selectbox("Unit", ["", "cum", "sqm", "meter", "each", "job", "set", "kg", "hour", "month", "day", "km"], key="child_unit_simple", disabled=not can_save)
                 
                 with col2:
-                    child_desc = st.text_area("Child Description", placeholder="Description of the child item", height=100, key="child_desc_simple")
+                    child_desc = st.text_area("Child Description", placeholder="Description of the child item", height=100, key="child_desc_simple", disabled=not can_save)
                     
-                    # Rate fields
                     if source == "PWD":
                         zone_labels = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
                     else:
@@ -160,35 +199,33 @@ class ManualRateEntry:
                     rates = {}
                     for i, label in enumerate(zone_labels):
                         with rate_cols[i]:
-                            rates[label] = st.number_input(label, value=0.0, step=100.0, format="%.2f", key=f"child_rate_{label}")
+                            rates[label] = st.number_input(label, value=0.0, step=100.0, format="%.2f", key=f"child_rate_{label}", disabled=not can_save)
                 
-                if st.button("➕ Add Child", key="add_child_simple"):
-                    if child_code and child_desc and selected_parent:
-                        # Validate child code format
-                        if not child_code.startswith(selected_parent):
-                            st.warning(f"⚠️ Child code should start with parent code '{selected_parent}'")
-                        else:
-                            # Check if child already exists
-                            existing = [c for c in st.session_state.parent_child_data['children'] if c['code'] == child_code]
-                            if not existing:
-                                st.session_state.parent_child_data['children'].append({
-                                    'code': child_code,
-                                    'parent_code': selected_parent,
-                                    'description': child_desc,
-                                    'unit': unit,
-                                    'rates': rates
-                                })
-                                # Update parent child count
-                                for p in st.session_state.parent_child_data['parents']:
-                                    if p['code'] == selected_parent:
-                                        p['children_count'] += 1
-                                        break
-                                st.success(f"✅ Added child: {child_code} under parent {selected_parent}")
-                                st.rerun()
+                if can_save:
+                    if st.button("➕ Add Child", key="add_child_simple"):
+                        if child_code and child_desc and selected_parent:
+                            if not child_code.startswith(selected_parent):
+                                st.warning(f"⚠️ Child code should start with parent code '{selected_parent}'")
                             else:
-                                st.warning("Child code already exists!")
-                    else:
-                        st.error("Please fill all fields")
+                                existing = [c for c in st.session_state.parent_child_data['children'] if c['code'] == child_code]
+                                if not existing:
+                                    st.session_state.parent_child_data['children'].append({
+                                        'code': child_code,
+                                        'parent_code': selected_parent,
+                                        'description': child_desc,
+                                        'unit': unit,
+                                        'rates': rates
+                                    })
+                                    for p in st.session_state.parent_child_data['parents']:
+                                        if p['code'] == selected_parent:
+                                            p['children_count'] += 1
+                                            break
+                                    st.success(f"✅ Added child: {child_code} under parent {selected_parent}")
+                                    st.rerun()
+                                else:
+                                    st.warning("Child code already exists!")
+                        else:
+                            st.error("Please fill all fields")
         
         st.markdown("---")
         
@@ -196,7 +233,6 @@ class ManualRateEntry:
         if st.session_state.parent_child_data['parents'] or st.session_state.parent_child_data['children']:
             st.markdown("#### 📋 Current Data")
             
-            # Show parents
             if st.session_state.parent_child_data['parents']:
                 st.markdown("**Parents:**")
                 parents_df = pd.DataFrame([{
@@ -207,7 +243,6 @@ class ManualRateEntry:
                 } for p in st.session_state.parent_child_data['parents']])
                 st.dataframe(parents_df, use_container_width=True, hide_index=True)
             
-            # Show children
             if st.session_state.parent_child_data['children']:
                 st.markdown("**Children:**")
                 children_data = []
@@ -253,299 +288,26 @@ class ManualRateEntry:
                 )
         
         with col2:
-            if st.button("💾 Save to Database", type="primary", use_container_width=True):
-                if st.session_state.parent_child_data['parents'] or st.session_state.parent_child_data['children']:
-                    self._save_hierarchy_to_db(st.session_state.parent_child_data, source, edition_year)
-                else:
-                    st.warning("No data to save")
+            if can_save:
+                if st.button("💾 Save to Database", type="primary", use_container_width=True):
+                    if st.session_state.parent_child_data['parents'] or st.session_state.parent_child_data['children']:
+                        self._save_hierarchy_to_db(st.session_state.parent_child_data, source, edition_year)
+                    else:
+                        st.warning("No data to save")
+            else:
+                st.button("🔒 Save to Database", disabled=True, use_container_width=True, help="You don't have permission to save")
         
         with col3:
-            if st.button("🗑️ Clear All", use_container_width=True):
+            if can_save and st.button("🗑️ Clear All", use_container_width=True):
                 st.session_state.parent_child_data = {'parents': [], 'children': []}
                 st.rerun()
-    def _render_parent_child_builder_bak(self, source, edition_year):
-        """Interactive parent-child relationship builder"""
-        
-        st.markdown("### 🌳 Parent-Child Relationship Builder")
-        st.caption("Build hierarchical structure by defining parents and their children")
-        
-        # Initialize session state
-        if 'parent_child_data' not in st.session_state:
-            st.session_state.parent_child_data = {
-                'parents': [],
-                'children': []
-            }
-        
-        # Parent management section
-        st.markdown("#### 📁 Parent Items (No Rates)")
-        
-        with st.expander("➕ Add New Parent", expanded=False):
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                parent_code = st.text_input("Parent Code", placeholder="01.1 or 1.01", key="new_parent_code_1")
-            with col2:
-                parent_desc = st.text_area("Parent Description", placeholder="Full description of the parent item", height=100, key="new_parent_desc_1")
-            
-            if st.button("Add Parent", key="add_parent_btn"):
-                if parent_code and parent_desc:
-                    # Check if parent already exists
-                    existing = [p for p in st.session_state.parent_child_data['parents'] if p['code'] == parent_code]
-                    if not existing:
-                        st.session_state.parent_child_data['parents'].append({
-                            'code': parent_code,
-                            'description': parent_desc,
-                            'children_count': 0
-                        })
-                        st.success(f"✅ Added parent: {parent_code}")
-                        st.rerun()
-                    else:
-                        st.warning("Parent code already exists!")
-        
-        # Display existing parents
-        if st.session_state.parent_child_data['parents']:
-            st.markdown("##### Existing Parents")
-            
-            for idx, parent in enumerate(st.session_state.parent_child_data['parents']):
-                with st.expander(f"📁 {parent['code']}: {parent['description'][:80]}... ({parent['children_count']} children)", expanded=False):
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.text_area("Description", parent['description'], height=80, key=f"edit_parent_desc_{idx}")
-                    with col2:
-                        if st.button(f"✏️ Update", key=f"update_parent_{idx}"):
-                            st.session_state.parent_child_data['parents'][idx]['description'] = st.session_state[f"edit_parent_desc_{idx}"]
-                            st.success("Updated!")
-                            st.rerun()
-                    with col3:
-                        if st.button(f"🗑️ Delete", key=f"delete_parent_{idx}"):
-                            # Check if has children
-                            if parent['children_count'] > 0:
-                                st.warning(f"Cannot delete - has {parent['children_count']} children. Delete children first.")
-                            else:
-                                st.session_state.parent_child_data['parents'].pop(idx)
-                                st.rerun()
-        
-        # Child management section
-        st.markdown("#### 👶 Child Items (With Rates)")
-        
-        with st.expander("➕ Add New Child", expanded=False):
-            # Get parent options
-            parent_options = [p['code'] for p in st.session_state.parent_child_data['parents']]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                child_code = st.text_input("Child Code", placeholder="01.1.1 or 1.01.01", key="new_child_code_1")
-                parent_selection = st.selectbox("Parent", [""] + parent_options, key="child_parent")
-                unit = st.selectbox("Unit", ["", "cum", "sqm", "meter", "each", "job", "set", "kg", "hour", "month", "day", "km"], key="child_unit")
-            with col2:
-                child_desc = st.text_area("Child Description", placeholder="Description of the child item", height=100, key="new_child_desc")
-                
-                if source == "PWD":
-                    zone_labels = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
-                else:
-                    zone_labels = ["Zone-A", "Zone-B", "Zone-C", "Zone-D"]
-                
-                rates = {}
-                rate_cols = st.columns(4)
-                for i, label in enumerate(zone_labels):
-                    with rate_cols[i]:
-                        rates[label] = st.number_input(label, value=0.0, step=100.0, format="%.2f", key=f"new_child_rate_{label}")
-            
-            if st.button("Add Child", key="add_child_btn"):
-                if child_code and child_desc and parent_selection:
-                    # Validate child code format (should start with parent code)
-                    if not child_code.startswith(parent_selection):
-                        st.warning(f"Child code should start with parent code '{parent_selection}'")
-                    else:
-                        # Check if child already exists
-                        existing = [c for c in st.session_state.parent_child_data['children'] if c['code'] == child_code]
-                        if not existing:
-                            st.session_state.parent_child_data['children'].append({
-                                'code': child_code,
-                                'parent_code': parent_selection,
-                                'description': child_desc,
-                                'unit': unit,
-                                'rates': rates
-                            })
-                            # Update parent child count
-                            for p in st.session_state.parent_child_data['parents']:
-                                if p['code'] == parent_selection:
-                                    p['children_count'] += 1
-                                    break
-                            st.success(f"✅ Added child: {child_code} under parent {parent_selection}")
-                            st.rerun()
-                        else:
-                            st.warning("Child code already exists!")
-        
-        # Display existing children
-        if st.session_state.parent_child_data['children']:
-            st.markdown("##### Existing Children")
-            
-            # Filter by parent
-            parent_filter = st.selectbox("Filter by Parent", ["All"] + [p['code'] for p in st.session_state.parent_child_data['parents']])
-            
-            filtered_children = st.session_state.parent_child_data['children']
-            if parent_filter != "All":
-                filtered_children = [c for c in filtered_children if c['parent_code'] == parent_filter]
-            
-            # Display as table
-            child_data = []
-            for child in filtered_children:
-                row = {
-                    'Code': child['code'],
-                    'Parent': child['parent_code'],
-                    'Description': child['description'][:80],
-                    'Unit': child['unit']
-                }
-                for zone, rate in child['rates'].items():
-                    row[zone] = f"৳{rate:,.2f}" if rate > 0 else ""
-                child_data.append(row)
-            
-            if child_data:
-                st.dataframe(pd.DataFrame(child_data), use_container_width=True, hide_index=True)
-                
-                # Delete child option
-                child_to_delete = st.selectbox("Select child to delete", [c['code'] for c in filtered_children])
-                if st.button("🗑️ Delete Selected Child"):
-                    for i, child in enumerate(st.session_state.parent_child_data['children']):
-                        if child['code'] == child_to_delete:
-                            # Update parent child count
-                            for p in st.session_state.parent_child_data['parents']:
-                                if p['code'] == child['parent_code']:
-                                    p['children_count'] -= 1
-                                    break
-                            st.session_state.parent_child_data['children'].pop(i)
-                            st.success(f"Deleted: {child_to_delete}")
-                            st.rerun()
-        
-        # Self-parent option
-        st.markdown("---")
-        st.markdown("#### 🔄 Self-Parent Option")
-        st.caption("For items that are both parent and child (e.g., an item that has its own rates AND sub-items)")
-        
-        with st.expander("Create Self-Parent Item", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                self_parent_code = st.text_input("Item Code", placeholder="01.1", key="self_parent_code")
-                self_parent_has_rates = st.checkbox("This item has its own rates", value=True)
-            with col2:
-                self_parent_desc = st.text_area("Description", placeholder="Item description", height=100, key="self_parent_desc")
-            
-            if self_parent_has_rates:
-                st.markdown("##### Rates for Self-Parent")
-                if source == "PWD":
-                    zone_labels = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
-                else:
-                    zone_labels = ["Zone-A", "Zone-B", "Zone-C", "Zone-D"]
-                
-                self_rates = {}
-                rate_cols = st.columns(4)
-                for i, label in enumerate(zone_labels):
-                    with rate_cols[i]:
-                        self_rates[label] = st.number_input(label, value=0.0, step=100.0, format="%.2f", key=f"self_rate_{label}")
-            
-            if st.button("Create Self-Parent Item", key="create_self_parent"):
-                if self_parent_code and self_parent_desc:
-                    # Add as parent
-                    st.session_state.parent_child_data['parents'].append({
-                        'code': self_parent_code,
-                        'description': self_parent_desc,
-                        'children_count': 0
-                    })
-                    
-                    # If it has its own rates, add as child of itself
-                    if self_parent_has_rates:
-                        st.session_state.parent_child_data['children'].append({
-                            'code': self_parent_code,
-                            'parent_code': self_parent_code,  # Self-reference
-                            'description': f"{self_parent_desc} (Self Rate)",
-                            'unit': "",
-                            'rates': self_rates
-                        })
-                        # Update parent child count
-                        for p in st.session_state.parent_child_data['parents']:
-                            if p['code'] == self_parent_code:
-                                p['children_count'] += 1
-                                break
-                    
-                    st.success(f"✅ Created self-parent item: {self_parent_code}")
-                    st.rerun()
-        
-        # Save all button
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("📥 Export to CSV", use_container_width=True, key="export_to_csv_1"):
-                # Export parents
-                parents_df = pd.DataFrame(st.session_state.parent_child_data['parents'])
-                # Export children
-                children_df = pd.DataFrame(st.session_state.parent_child_data['children'])
-                
-                import io
-                import zipfile
-                
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    zip_file.writestr(f'parents_{source}.csv', parents_df.to_csv(index=False))
-                    zip_file.writestr(f'children_{source}.csv', children_df.to_csv(index=False))
-                
-                st.download_button(
-                    "Download Export (ZIP)",
-                    zip_buffer.getvalue(),
-                    f"parent_child_export_{source}.zip",
-                    "application/zip"
-                )
-        
-        with col2:
-            if st.button("💾 Save to Database", type="primary", use_container_width=True, key="save_to_database_3"):
-                if st.session_state.parent_child_data['parents'] or st.session_state.parent_child_data['children']:
-                    self._save_hierarchy_to_db(st.session_state.parent_child_data, source, edition_year)
-                else:
-                    st.warning("No data to save")
-        
-        with col3:
-            if st.button("🗑️ Clear All", use_container_width=True, key="clear_all"):
-                st.session_state.parent_child_data = {'parents': [], 'children': []}
-                st.rerun()
-    
-    def render_chapter_management(self, source):
-        """Render chapter management interface"""
-        
-        st.markdown("### 📚 Chapter Management")
-        
-        self.db.init_chapters_tables()
-        
-        if source == "PWD":
-            chapters_df = self.db.get_pwd_chapters()
-        else:
-            chapters_df = self.db.get_lged_chapters()
-        
-        # Display existing chapters
-        st.markdown("#### Existing Chapters")
-        st.dataframe(chapters_df, use_container_width=True, hide_index=True)
-        
-        # Add new chapter
-        with st.expander("➕ Add New Chapter", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_chapter_num = st.text_input("Chapter Number", placeholder="01 or 1")
-            with col2:
-                new_chapter_name = st.text_input("Chapter Name", placeholder="Chapter name")
-            
-            new_chapter_desc = st.text_area("Description (optional)", height=80)
-            
-            if st.button("Add Chapter", key="add_chapter_btn"):
-                if new_chapter_num and new_chapter_name:
-                    if source == "PWD":
-                        self.db.add_pwd_chapter(new_chapter_num, new_chapter_name, new_chapter_desc)
-                    else:
-                        self.db.add_lged_chapter(new_chapter_num, new_chapter_name, new_chapter_desc)
-                    st.success(f"Added chapter {new_chapter_num}: {new_chapter_name}")
-                    st.rerun()
-    
-    
     def _save_hierarchy_to_db(self, data, source, edition_year):
-        """Save parent-child hierarchy to database"""
+        """Save parent-child hierarchy to database with RBAC check"""
+        
+        # Double-check permission before saving
+        if not can_edit_rates():
+            st.error("❌ You don't have permission to save rate data.")
+            return
         
         try:
             if source == "PWD":
@@ -569,7 +331,7 @@ class ManualRateEntry:
             
             # Save parents
             for parent in data['parents']:
-                chapter = parent['code'].split('.')[0]
+                chapter = parent.get('chapter', parent['code'].split('.')[0])
                 
                 if source == "PWD":
                     cursor.execute("""
@@ -626,9 +388,43 @@ class ManualRateEntry:
             st.error(f"Error saving: {str(e)}")
             import traceback
             st.code(traceback.format_exc())
-    # modules/manual_rate_entry.py
 
-    # Add these methods inside the ManualRateEntry class
+    def render_chapter_management(self, source):
+        """Render chapter management interface"""
+        
+        st.markdown("### 📚 Chapter Management")
+        
+        self.db.init_chapters_tables()
+        
+        if source == "PWD":
+            chapters_df = self.db.get_pwd_chapters()
+        else:
+            chapters_df = self.db.get_lged_chapters()
+        
+        # Display existing chapters
+        st.markdown("#### Existing Chapters")
+        st.dataframe(chapters_df, use_container_width=True, hide_index=True)
+        
+        # Add new chapter
+        with st.expander("➕ Add New Chapter", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_chapter_num = st.text_input("Chapter Number", placeholder="01 or 1")
+            with col2:
+                new_chapter_name = st.text_input("Chapter Name", placeholder="Chapter name")
+            
+            new_chapter_desc = st.text_area("Description (optional)", height=80)
+            
+            if st.button("Add Chapter", key="add_chapter_btn"):
+                if new_chapter_num and new_chapter_name:
+                    if source == "PWD":
+                        self.db.add_pwd_chapter(new_chapter_num, new_chapter_name, new_chapter_desc)
+                    else:
+                        self.db.add_lged_chapter(new_chapter_num, new_chapter_name, new_chapter_desc)
+                    st.success(f"Added chapter {new_chapter_num}: {new_chapter_name}")
+                    st.rerun()
+    
+    
 
     def _render_paste_interface(self, source, edition_year):
         """Interface for pasting tabular data"""
@@ -1642,7 +1438,10 @@ class ManualRateEntry:
 
     def _save_row_data_to_db(self, rows, source, edition_year):
         """Save row-by-row entered data to database"""
-        
+         # Double-check permission
+        if not can_edit_rates():
+            st.error("❌ You don't have permission to save rate data.")
+            return
         try:
             if source == "PWD":
                 self.db.init_pwd_hierarchical_tables()
@@ -2091,7 +1890,12 @@ class ManualRateEntry:
             return False                
 def render_quick_entry(db):
     """Quick single-item entry form"""
+    if not can_edit_rates():
+        st.error("❌ You don't have permission to add rates.")
+        return
     
+    render_role_badge()
+
     st.markdown("### ⚡ Quick Single Item Entry")
     st.caption("Quickly add a single rate item - automatically handles parent-child relationships")
     

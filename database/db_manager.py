@@ -3025,6 +3025,7 @@ class DatabaseManager:
         if result:
             return result[0] == 1 and result[1] == 1
         return False
+    
     def get_user_analyses(self, user_id, company_id, role, limit=50):
         """Get user's tender analyses with role-based filtering"""
         conn = self.get_connection()

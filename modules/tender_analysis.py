@@ -13,13 +13,59 @@ from utils.bid_generators import _generate_competitor_bids
 from utils.helpers import render_page_header
 from config import DEBUG_MODE, debug_print
 from database.db_manager import DatabaseManager
+from modules.rbac import (
+    rbac, can_run_analysis, can_export_data, can_view_tenders,
+    render_role_badge, require_permission, is_analyst
+)
+
 
 db = DatabaseManager()
+@require_permission('can_run_analysis')
 def render_tender_analysis() -> None:
-    """Three-Tier Tender Analysis Page - Refactored with proper state management"""
+    """Three-Tier Tender Analysis Page with RBAC"""
     debug_print("🎯 Rendering tender analysis page")
     
-    # Initialize tender form data model
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
+    
+    # Get user permissions
+    permissions = rbac.get_current_user_permissions()
+    user_role = st.session_state.get('user_role', 'viewer')
+    can_export = permissions.get('can_export_data', False)
+    can_view_tenders_permission = permissions.get('can_view_tenders', False)
+    
+    # Check subscription limit
+    sub = db.get_effective_subscription(
+        st.session_state.user_id, 
+        st.session_state.company_id if st.session_state.get('account_type') == 'company' else None
+    )
+    st.session_state.subscription_plan = sub.get('plan', 'free')
+    st.session_state.analyses_used = sub.get('analyses_used', 0)
+    st.session_state.analyses_limit = sub.get('analyses_limit', 5)
+    st.session_state.sub_owner_type = sub.get('owner_type', 'free')
+    
+    # Show role-based info
+    if user_role == 'viewer':
+        st.info("👁️ **Viewer Mode:** You can view analysis results but cannot run new analyses.")
+    elif user_role == 'analyst':
+        st.info("📈 **Analyst Mode:** You can run analyses and save results.")
+    elif user_role in ['manager', 'company_admin']:
+        st.info("📊 **Manager Mode:** Full access to analysis features.")
+    
+    if st.session_state.analyses_limit > 0 and st.session_state.analyses_used >= st.session_state.analyses_limit:
+        st.warning(f"🔒 {st.session_state.sub_owner_type.title()} analysis limit reached.")
+        if st.button("💳 Upgrade Plan", type="primary"):
+            st.session_state.page = "subscription"
+            st.rerun()
+        return
+    
+    is_premium = st.session_state.subscription_plan in ['professional', 'enterprise'] or st.session_state.user_role == 'admin'
+    
+    # Check if user can run analysis (Analyst and above)
+    can_run = is_analyst() or user_role in ['admin', 'system_admin', 'company_admin', 'manager']
+    
+    # Initialize session state (same as before)
     if 'tender_form_data' not in st.session_state:
         st.session_state.tender_form_data = {
             'tender_id': '',
@@ -113,60 +159,61 @@ def render_tender_analysis() -> None:
     # =============================================================================
     # 🔹 TENDER SELECTOR SECTION
     # =============================================================================
-    st.markdown("### 🔍 Select Tender for Analysis")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        search_id = st.text_input("Tender ID", key="analysis_search_id", placeholder="e.g., 1265809")
-    with col2:
-        search_title = st.text_input("Title/Entity", key="analysis_search_title", placeholder="Search...")
-    with col3:
-        filter_type = st.selectbox("Type", ["All", "works", "goods", "services"], key="analysis_filter_type")
-    
-    all_tenders = get_company_tenders_cached(st.session_state.company_id)
-    filtered = all_tenders.copy()
-    
-    if search_id:
-        filtered = filtered[filtered['tender_id'].str.contains(search_id, case=False, na=False)]
-    if search_title:
-        filtered = filtered[
-            filtered['tender_title'].str.contains(search_title, case=False, na=False) | 
-            filtered['procuring_entity'].str.contains(search_title, case=False, na=False)
-        ]
-    if filter_type != "All":
-        filtered = filtered[filtered['procurement_type'] == filter_type]
-    
-    if not filtered.empty:
-        display_df = filtered[['id', 'tender_id', 'tender_title', 'procuring_entity', 
-                              'procurement_type', 'official_estimate', 'submission_deadline', 
-                              'is_locked', 'is_copy']].copy()
+    if can_view_tenders_permission:
+        st.markdown("### 🔍 Select Tender for Analysis")
         
-        display_df['estimate_fmt'] = display_df['official_estimate'].apply(lambda x: f"BDT {x:,.0f}" if pd.notna(x) else "N/A")
-        display_df['deadline_fmt'] = pd.to_datetime(display_df['submission_deadline'], errors='coerce').dt.strftime('%d %b %Y')
-        display_df['status'] = display_df.apply(lambda r: "🔒 LOCKED" if r['is_locked'] else ("📋 COPY" if r['is_copy'] else "🔓 Open"), axis=1)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            search_id = st.text_input("Tender ID", key="analysis_search_id", placeholder="e.g., 1265809")
+        with col2:
+            search_title = st.text_input("Title/Entity", key="analysis_search_title", placeholder="Search...")
+        with col3:
+            filter_type = st.selectbox("Type", ["All", "works", "goods", "services"], key="analysis_filter_type")
         
-        st.dataframe(
-            display_df[['tender_id', 'tender_title', 'procuring_entity', 'procurement_type', 'estimate_fmt', 'deadline_fmt', 'status']],
-            use_container_width=True,
-            height=250
-        )
+        all_tenders = get_company_tenders_cached(st.session_state.company_id)
+        filtered = all_tenders.copy()
         
-        tender_options = {f"{row['tender_id']} • {str(row['tender_title'])[:50]}...": row.to_dict() for _, row in filtered.iterrows()}
-        selected_label = st.selectbox("Select tender to analyze:", options=["-- Create New Analysis --"] + list(tender_options.keys()), key="analysis_selector")
+        if search_id:
+            filtered = filtered[filtered['tender_id'].str.contains(search_id, case=False, na=False)]
+        if search_title:
+            filtered = filtered[
+                filtered['tender_title'].str.contains(search_title, case=False, na=False) | 
+                filtered['procuring_entity'].str.contains(search_title, case=False, na=False)
+            ]
+        if filter_type != "All":
+            filtered = filtered[filtered['procurement_type'] == filter_type]
         
-        if selected_label != "-- Create New Analysis --" and selected_label in tender_options:
-            selected_data = tender_options[selected_label]
+        if not filtered.empty:
+            display_df = filtered[['id', 'tender_id', 'tender_title', 'procuring_entity', 
+                                  'procurement_type', 'official_estimate', 'submission_deadline', 
+                                  'is_locked', 'is_copy']].copy()
             
-            if st.button("📥 Load Tender for Analysis", type="primary", key="load_analysis_tender"):
-                load_tender_into_form(selected_data)
-                model_to_form()
-                st.session_state.selected_tender_for_analysis = selected_data
-                is_locked = bool(selected_data.get('is_locked', False))
-                st.session_state.tender_lock_status = 'locked' if is_locked else 'unlocked'
-                st.toast(f"✅ Loaded: {selected_data['tender_title'][:40]}", icon="📋")
-                st.rerun()
-    else:
-        st.info("📭 No tenders found. Create a tender first or adjust your search.")
+            display_df['estimate_fmt'] = display_df['official_estimate'].apply(lambda x: f"BDT {x:,.0f}" if pd.notna(x) else "N/A")
+            display_df['deadline_fmt'] = pd.to_datetime(display_df['submission_deadline'], errors='coerce').dt.strftime('%d %b %Y')
+            display_df['status'] = display_df.apply(lambda r: "🔒 LOCKED" if r['is_locked'] else ("📋 COPY" if r['is_copy'] else "🔓 Open"), axis=1)
+            
+            st.dataframe(
+                display_df[['tender_id', 'tender_title', 'procuring_entity', 'procurement_type', 'estimate_fmt', 'deadline_fmt', 'status']],
+                use_container_width=True,
+                height=250
+            )
+            
+            tender_options = {f"{row['tender_id']} • {str(row['tender_title'])[:50]}...": row.to_dict() for _, row in filtered.iterrows()}
+            selected_label = st.selectbox("Select tender to analyze:", options=["-- Create New Analysis --"] + list(tender_options.keys()), key="analysis_selector")
+            
+            if selected_label != "-- Create New Analysis --" and selected_label in tender_options:
+                selected_data = tender_options[selected_label]
+                
+                if st.button("📥 Load Tender for Analysis", type="primary", key="load_analysis_tender"):
+                    load_tender_into_form(selected_data)
+                    model_to_form()
+                    st.session_state.selected_tender_for_analysis = selected_data
+                    is_locked = bool(selected_data.get('is_locked', False))
+                    st.session_state.tender_lock_status = 'locked' if is_locked else 'unlocked'
+                    st.toast(f"✅ Loaded: {selected_data['tender_title'][:40]}", icon="📋")
+                    st.rerun()
+        else:
+            st.info("📭 No tenders found. Create a tender first or adjust your search.")
     
     # Show loaded tender summary
     if st.session_state.get('selected_tender_for_analysis'):
@@ -299,6 +346,12 @@ def render_tender_analysis() -> None:
     if form_disabled:
         st.warning("🔒 Tender is locked. Only admin can edit.")
     
+    # Disable analysis if user doesn't have permission
+    if not can_run:
+        st.error("🔒 You don't have permission to run analysis. Contact your administrator.")
+        st.info("Upgrade to Analyst role or higher to run bid optimization.")
+        return
+    
     bid_source = st.radio(
         "Provide competitor bids:",
         ["🤖 Auto-generate realistic bids", "✍️ Enter manually from known competitors"],
@@ -308,6 +361,7 @@ def render_tender_analysis() -> None:
     )
     
     is_manual_mode = "manually" in bid_source.lower() or "manual" in bid_source.lower()
+
     
     # =============================================================================
     # 🔹 COMPETITOR SELECTION UI (Manual Mode Only)
@@ -573,7 +627,8 @@ def render_tender_analysis() -> None:
         else:
             has_competitor_bids = (st.session_state.get('input_official_estimate', 0) or 0) > 0
         
-        submit_disabled = not form_complete or not has_competitor_bids or form_disabled
+        
+        submit_disabled = not form_complete or not has_competitor_bids or form_disabled or not can_run
         form_submitted = st.form_submit_button("🚀 Run Three-Tier Analysis", type="primary", use_container_width=True, disabled=submit_disabled)
         
         if not form_complete and not form_disabled:
@@ -583,11 +638,13 @@ def render_tender_analysis() -> None:
                 st.caption("⚠️ Add at least one competitor using the selection above")
             else:
                 st.caption("⚠️ Enter Official Estimate first")
+        elif not can_run:
+            st.caption("🔒 You need higher permissions to run analysis")
     
     # =============================================================================
     # 🔹 RUN ANALYSIS
     # =============================================================================
-    if form_submitted and not form_disabled:
+    if form_submitted and not form_disabled and can_run:
         try:
             sync_form_to_model()
             
@@ -722,135 +779,152 @@ def render_tender_analysis() -> None:
         col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
 
         with col1:
-            if st.button("📑 Generate PDF Report", use_container_width=True, key="gen_pdf_btn"):
-                try:
-                    pdf_buffer = generate_unified_report(
-                        analysis_record=analysis_record_for_report,
-                        comparison=comparison,
-                        user_info=user_info,
-                        format='pdf'  # Return PDF buffer
-                    )
-                    
-                    if pdf_buffer and pdf_buffer.getbuffer().nbytes > 0:
-                        safe_tid = str(analysis_record.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
-                        filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                        st.session_state.analysis_state['_pdf_buffer'] = pdf_buffer
-                        st.session_state.analysis_state['_pdf_filename'] = filename
-                        st.success(f"✅ PDF generated!")
-                        st.rerun()
-                    else:
-                        st.error("❌ PDF generation failed - empty buffer")
-                except Exception as e:
-                    st.error(f"❌ PDF Error: {str(e)}")
-
+            if can_export:
+                if st.button("📑 Generate PDF Report", use_container_width=True, key="gen_pdf_btn"):
+                    try:
+                        pdf_buffer = generate_unified_report(
+                            analysis_record=analysis_record_for_report,
+                            comparison=comparison,
+                            user_info=user_info,
+                            format='pdf'  # Return PDF buffer
+                        )
+                        
+                        if pdf_buffer and pdf_buffer.getbuffer().nbytes > 0:
+                            safe_tid = str(analysis_record.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
+                            filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                            st.session_state.analysis_state['_pdf_buffer'] = pdf_buffer
+                            st.session_state.analysis_state['_pdf_filename'] = filename
+                            st.success(f"✅ PDF generated!")
+                            st.rerun()
+                        else:
+                            st.error("❌ PDF generation failed - empty buffer")
+                    except Exception as e:
+                        st.error(f"❌ PDF Error: {str(e)}")
+                    pass
+            else:
+                st.button("🔒 PDF Report", disabled=True, use_container_width=True, 
+                         help="Upgrade to export reports")
         with col2:
-            if st.button("📄 Save as HTML", use_container_width=True, key="save_html_btn"):
-                try:
-                    # Import the new function
-                    
-                    
-                    # Generate HTML content as string
-                    html_content = generate_html_content_only(
-                        analysis_record=analysis_record_for_report,
-                        comparison=comparison,
-                        user_info=user_info
-                    )
-                    
-                    if html_content and len(html_content) > 0:
-                        safe_tid = str(analysis_record.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
-                        filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                        st.session_state.analysis_state['_html_buffer'] = html_content.encode('utf-8')
-                        st.session_state.analysis_state['_html_filename'] = filename
-                        st.success(f"✅ HTML report generated!")
-                        st.rerun()
-                    else:
-                        st.error("❌ HTML generation failed - empty content")
-                except Exception as e:
-                    st.error(f"❌ HTML Error: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-
-
-
+            if can_export:
+                if st.button("📄 Save as HTML", use_container_width=True, key="save_html_btn"):
+                    try:
+                        # Import the new function
+                        
+                        
+                        # Generate HTML content as string
+                        html_content = generate_html_content_only(
+                            analysis_record=analysis_record_for_report,
+                            comparison=comparison,
+                            user_info=user_info
+                        )
+                        
+                        if html_content and len(html_content) > 0:
+                            safe_tid = str(analysis_record.get('tender_id', 'report')).replace('/', '_').replace(' ', '_')
+                            filename = f"Babui_TenderAI_{safe_tid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                            st.session_state.analysis_state['_html_buffer'] = html_content.encode('utf-8')
+                            st.session_state.analysis_state['_html_filename'] = filename
+                            st.success(f"✅ HTML report generated!")
+                            st.rerun()
+                        else:
+                            st.error("❌ HTML generation failed - empty content")
+                    except Exception as e:
+                        st.error(f"❌ HTML Error: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                    pass
+            else:
+                st.button("🔒 HTML Report", disabled=True, use_container_width=True,
+                         help="Upgrade to export reports")
+                
         with col3:
-            # CSV Export
-            export_rows = []
-            for tier, result in comparison.items():
-                export_rows.append({
-                    'Tier': tier.upper(),
-                    'Method': result.get('method', ''),
-                    'Optimal_Bid_BDT': result['optimal_bid'],
-                    'Win_Probability_%': round(result['win_probability'] * 100, 1),
-                    'Confidence_%': round(result.get('confidence_score', 0.7) * 100, 1),
-                    'PPR_Compliant': 'Yes' if result.get('optimal_bid', 0) >= result.get('slt_threshold', 0) else 'No'
-                })
-            csv = pd.DataFrame(export_rows).to_csv(index=False)
-            st.download_button(
-                "📥 Export CSV", 
-                data=csv, 
-                file_name=f"analysis_{analysis_record['tender_id']}_{datetime.now().strftime('%Y%m%d')}.csv", 
-                mime="text/csv", 
-                use_container_width=True
-            )
-
+            if can_export:
+                # ... CSV export code ...
+                # CSV Export
+                export_rows = []
+                for tier, result in comparison.items():
+                    export_rows.append({
+                        'Tier': tier.upper(),
+                        'Method': result.get('method', ''),
+                        'Optimal_Bid_BDT': result['optimal_bid'],
+                        'Win_Probability_%': round(result['win_probability'] * 100, 1),
+                        'Confidence_%': round(result.get('confidence_score', 0.7) * 100, 1),
+                        'PPR_Compliant': 'Yes' if result.get('optimal_bid', 0) >= result.get('slt_threshold', 0) else 'No'
+                    })
+                csv = pd.DataFrame(export_rows).to_csv(index=False)
+                st.download_button(
+                    "📥 Export CSV", 
+                    data=csv, 
+                    file_name=f"analysis_{analysis_record['tender_id']}_{datetime.now().strftime('%Y%m%d')}.csv", 
+                    mime="text/csv", 
+                    use_container_width=True
+                )
+                pass
+            else:
+                st.button("🔒 CSV Export", disabled=True, use_container_width=True,
+                         help="Upgrade to export data")
         with col4:
             has_valid_data = st.session_state.analysis_state.get('current_record') is not None
-            st.button(
-                "💾 Save to History", 
-                key="save_analysis_main_btn", 
-                use_container_width=True, 
-                type="primary", 
-                disabled=not has_valid_data, 
-                on_click=_save_analysis_callback
-            )
+            if can_run:
+                st.button(
+                    "💾 Save to History", 
+                    key="save_analysis_main_btn", 
+                    use_container_width=True, 
+                    type="primary", 
+                    disabled=not has_valid_data, 
+                    on_click=_save_analysis_callback
+                )
+            else:
+                st.button("🔒 Save to History", disabled=True, use_container_width=True,
+                         help="You don't have permission to save analyses")            
 
-        with col5:
+        with col5:            
             if st.button("🔄 New Analysis", use_container_width=True, type="secondary"):
                 sync_form_to_model()
                 for key in ['current_record', 'current_comparison', 'current_best_result', '_pdf_buffer', '_pdf_filename', '_html_buffer', '_html_filename']:
                     if key in st.session_state.analysis_state:
                         st.session_state.analysis_state[key] = None
                 st.rerun()
+                pass
 
         # Download section for generated files
-        st.markdown("---")
-        st.markdown("### 📁 Download Ready Files")
+        if can_export:
+            st.markdown("---")
+            st.markdown("### 📁 Download Ready Files")
 
-        # Create columns for downloads
-        col_d1, col_d2, col_d3 = st.columns(3)
+            # Create columns for downloads
+            col_d1, col_d2, col_d3 = st.columns(3)
 
-        with col_d1:
-            if st.session_state.analysis_state.get('_pdf_buffer') and st.session_state.analysis_state.get('_pdf_filename'):
-                st.download_button(
-                    "💾 Download PDF Report",
-                    data=st.session_state.analysis_state['_pdf_buffer'],
-                    file_name=st.session_state.analysis_state['_pdf_filename'],
-                    mime="application/pdf",
-                    use_container_width=True,
-                    key="download_pdf_report"
-                )
+            with col_d1:
+                if st.session_state.analysis_state.get('_pdf_buffer') and st.session_state.analysis_state.get('_pdf_filename'):
+                    st.download_button(
+                        "💾 Download PDF Report",
+                        data=st.session_state.analysis_state['_pdf_buffer'],
+                        file_name=st.session_state.analysis_state['_pdf_filename'],
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="download_pdf_report"
+                    )
 
-        with col_d2:
-            if st.session_state.analysis_state.get('_html_buffer') and st.session_state.analysis_state.get('_html_filename'):
-                st.download_button(
-                    "📄 Download HTML Report",
-                    data=st.session_state.analysis_state['_html_buffer'],
-                    file_name=st.session_state.analysis_state['_html_filename'],
-                    mime="text/html",
-                    use_container_width=True,
-                    key="download_html_report"
-                )
+            with col_d2:
+                if st.session_state.analysis_state.get('_html_buffer') and st.session_state.analysis_state.get('_html_filename'):
+                    st.download_button(
+                        "📄 Download HTML Report",
+                        data=st.session_state.analysis_state['_html_buffer'],
+                        file_name=st.session_state.analysis_state['_html_filename'],
+                        mime="text/html",
+                        use_container_width=True,
+                        key="download_html_report"
+                    )
 
-        with col_d3:
-            # Clear files button
-            if st.button("🗑️ Clear All Reports", use_container_width=True, key="clear_reports"):
-                st.session_state.analysis_state['_pdf_buffer'] = None
-                st.session_state.analysis_state['_pdf_filename'] = None
-                st.session_state.analysis_state['_html_buffer'] = None
-                st.session_state.analysis_state['_html_filename'] = None
-                st.rerun()
-        
+            with col_d3:
+                # Clear files button
+                if st.button("🗑️ Clear All Reports", use_container_width=True, key="clear_reports"):
+                    st.session_state.analysis_state['_pdf_buffer'] = None
+                    st.session_state.analysis_state['_pdf_filename'] = None
+                    st.session_state.analysis_state['_html_buffer'] = None
+                    st.session_state.analysis_state['_html_filename'] = None
+                    st.rerun()
+            
         # Show recently saved status
         if st.session_state.analysis_state.get('last_saved_analysis_id'):
             saved_id = st.session_state.analysis_state['last_saved_analysis_id']

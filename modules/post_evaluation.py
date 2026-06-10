@@ -10,9 +10,16 @@ from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 from database.db_manager import DatabaseManager
+from modules.rbac import (
+    rbac, can_view_tenders, can_edit_tender, can_view_reports,
+    can_export_data, render_role_badge, require_permission,
+    is_analyst, is_manager, is_company_admin
+)
 
 db = DatabaseManager()
 
+
+@require_permission('can_view_tenders')
 def render_post_evaluation_page():
     """Post-evaluation page to record actual tender results"""
     
@@ -22,6 +29,23 @@ def render_post_evaluation_page():
         <p>Record actual tender results and generate intelligent suggestions for future bids</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
+    
+    # Get user permissions
+    permissions = rbac.get_current_user_permissions()
+    user_role = st.session_state.get('user_role', 'viewer')
+    can_edit = permissions.get('can_edit_tender', False) or user_role in ['admin', 'system_admin', 'company_admin', 'manager']
+    
+    # Show permission info
+    if user_role == 'viewer':
+        st.info("👁️ **Viewer Mode:** You can view post-evaluation data but cannot edit.")
+    elif user_role == 'analyst':
+        st.info("📈 **Analyst Mode:** You can view post-evaluation data.")
+    elif user_role in ['manager', 'company_admin']:
+        st.info("📊 **Manager Mode:** You can view and record post-evaluation data.")
     
     # Get all analyses where final submitted bid exists
     conn = db.get_connection()
@@ -41,9 +65,10 @@ def render_post_evaluation_page():
     
     if not analyses:
         st.info("No final submitted bids found. Complete a Three-Tier Analysis and mark a bid as final first.")
-        if st.button("Go to Bid Optimization"):
-            st.session_state.page = "new_analysis"
-            st.rerun()
+        if permissions.get('can_run_analysis', False):
+            if st.button("Go to Bid Optimization"):
+                st.session_state.page = "new_analysis"
+                st.rerun()
         return
     
     # Selection for post-evaluation
@@ -70,81 +95,97 @@ def render_post_evaluation_page():
         st.markdown("---")
         st.markdown("### 🏆 Post-Evaluation Results")
         
-        with st.form("post_evaluation_form"):
-            col1, col2 = st.columns(2)
+        # Check if user can edit
+        if not can_edit:
+            st.info("🔒 Post-evaluation data is view-only. Contact your admin to edit.")
             
-            with col1:
-                actual_winning_bid = st.number_input(
-                    "Actual Winning Bid (BDT)*",
-                    min_value=0.0,
-                    step=100000.0,
-                    format="%.0f",
-                    value=float(selected[10]) if selected[10] else 0.0
-                )
+            # Display existing data if any
+            if selected[10] and selected[10] > 0:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Actual Winning Bid", f"BDT {selected[10]:,.0f}")
+                    st.metric("Winner", selected[11] if selected[11] else "N/A")
+                    st.metric("Our Rank", selected[12] if selected[12] else "N/A")
+                with col2:
+                    st.metric("Total Bidders", selected[12] if selected[12] else "N/A")
+                    st.metric("Bid Status", selected[9] if selected[9] else "N/A")
+        else:
+            # Editable form
+            with st.form("post_evaluation_form"):
+                col1, col2 = st.columns(2)
                 
-                actual_winner = st.text_input(
-                    "Winner Name*",
-                    value=selected[11] if selected[11] else ""
-                )
+                with col1:
+                    actual_winning_bid = st.number_input(
+                        "Actual Winning Bid (BDT)*",
+                        min_value=0.0,
+                        step=100000.0,
+                        format="%.0f",
+                        value=float(selected[10]) if selected[10] else 0.0
+                    )
+                    
+                    actual_winner = st.text_input(
+                        "Winner Name*",
+                        value=selected[11] if selected[11] else ""
+                    )
+                    
+                    our_rank = st.number_input(
+                        "Our Rank",
+                        min_value=1,
+                        max_value=50,
+                        value=int(selected[12]) if selected[12] else 1,
+                        help="1 = Winner"
+                    )
                 
-                our_rank = st.number_input(
-                    "Our Rank",
-                    min_value=1,
-                    max_value=50,
-                    value=int(selected[12]) if selected[12] else 1,
-                    help="1 = Winner"
-                )
-            
-            with col2:
-                total_bidders = st.number_input(
-                    "Total Number of Bidders",
-                    min_value=1,
-                    max_value=100,
-                    value=1
-                )
+                with col2:
+                    total_bidders = st.number_input(
+                        "Total Number of Bidders",
+                        min_value=1,
+                        max_value=100,
+                        value=1
+                    )
+                    
+                    bid_status = st.selectbox(
+                        "Bid Status",
+                        ["Won", "Lost"],
+                        index=0 if selected[9] == "Won" else 1
+                    )
+                    
+                    lessons_learned = st.text_area(
+                        "Lessons Learned / Notes",
+                        value="",
+                        height=100,
+                        placeholder="What worked? What could be improved for future bids?"
+                    )
                 
-                bid_status = st.selectbox(
-                    "Bid Status",
-                    ["Won", "Lost"],
-                    index=0 if selected[9] == "Won" else 1
-                )
+                submitted = st.form_submit_button("💾 Save Post-Evaluation", type="primary")
                 
-                lessons_learned = st.text_area(
-                    "Lessons Learned / Notes",
-                    value="",
-                    height=100,
-                    placeholder="What worked? What could be improved for future bids?"
-                )
-            
-            submitted = st.form_submit_button("💾 Save Post-Evaluation", type="primary")
-            
-            if submitted:
-                if actual_winning_bid <= 0 or not actual_winner:
-                    st.error("Please fill all required fields")
-                else:
-                    # Calculate accuracy score
-                    final_bid = selected[6] if selected[6] else selected[5]
-                    accuracy_score = 1 - (abs(final_bid - actual_winning_bid) / actual_winning_bid)
-                    accuracy_score = max(0, min(1, accuracy_score))
-                    
-                    conn = db.get_connection()
-                    cursor = conn.cursor()
-                    
-                    cursor.execute('''
-                    UPDATE tender_analyses 
-                    SET actual_winning_bid = ?, actual_winner = ?, our_rank_actual = ?,
-                        total_bidders_actual = ?, bid_status = ?, lessons_learned = ?,
-                        bid_accuracy_score = ?, post_evaluation_date = ?
-                    WHERE id = ?
-                    ''', (actual_winning_bid, actual_winner, our_rank, total_bidders,
-                          bid_status, lessons_learned, accuracy_score, datetime.now(), analysis_id))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    st.success("✅ Post-evaluation saved successfully!")
-                    st.balloons()
-                    st.rerun()
+                if submitted:
+                    if actual_winning_bid <= 0 or not actual_winner:
+                        st.error("Please fill all required fields")
+                    else:
+                        # Calculate accuracy score
+                        final_bid = selected[6] if selected[6] else selected[5]
+                        accuracy_score = 1 - (abs(final_bid - actual_winning_bid) / actual_winning_bid)
+                        accuracy_score = max(0, min(1, accuracy_score))
+                        
+                        conn = db.get_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute('''
+                        UPDATE tender_analyses 
+                        SET actual_winning_bid = ?, actual_winner = ?, our_rank_actual = ?,
+                            total_bidders_actual = ?, bid_status = ?, lessons_learned = ?,
+                            bid_accuracy_score = ?, post_evaluation_date = ?
+                        WHERE id = ?
+                        ''', (actual_winning_bid, actual_winner, our_rank, total_bidders,
+                              bid_status, lessons_learned, accuracy_score, datetime.now(), analysis_id))
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success("✅ Post-evaluation saved successfully!")
+                        st.balloons()
+                        st.rerun()
         
         # Display accuracy if already exists
         if selected[10] and selected[10] > 0:
@@ -168,6 +209,7 @@ def render_post_evaluation_page():
                     st.error("❌ We Lost")
 
 
+@require_permission('can_view_reports')
 def render_intelligent_suggestions():
     """Generate intelligent suggestions based on historical performance"""
     
@@ -177,6 +219,15 @@ def render_intelligent_suggestions():
         <p>AI-powered recommendations based on your historical bidding performance</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Render role badge
+    render_role_badge()
+    st.markdown("---")
+    
+    # Get user permissions
+    permissions = rbac.get_current_user_permissions()
+    user_role = st.session_state.get('user_role', 'viewer')
+    can_export = permissions.get('can_export_data', False)
     
     # Get all completed analyses with post-evaluation
     conn = db.get_connection()
@@ -246,36 +297,53 @@ def render_intelligent_suggestions():
     perf_df = pd.DataFrame(perf_data)
     st.dataframe(perf_df, use_container_width=True, hide_index=True)
     
+    # Export option
+    if can_export:
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("📥 Export Report", use_container_width=True):
+                csv = perf_df.to_csv(index=False)
+                st.download_button(
+                    "💾 Download CSV",
+                    csv,
+                    f"bid_performance_report_{datetime.now().strftime('%Y%m%d')}.csv",
+                    "text/csv"
+                )
+    
     # Intelligent recommendations
     st.markdown("---")
     st.markdown("### 💡 Intelligent Recommendations")
     
     # Find best performing analysis type
-    best_type = max(analysis_types.items(), 
-                   key=lambda x: (x[1]['wins'] / x[1]['count']) if x[1]['count'] > 0 else 0)
-    
-    st.info(f"🎯 **Best Performing Analysis Type:** {best_type[0].upper()} with {best_type[1]['wins']} wins out of {best_type[1]['count']} bids")
+    if analysis_types:
+        best_type = max(analysis_types.items(), 
+                       key=lambda x: (x[1]['wins'] / x[1]['count']) if x[1]['count'] > 0 else 0)
+        
+        st.info(f"🎯 **Best Performing Analysis Type:** {best_type[0].upper()} with {best_type[1]['wins']} wins out of {best_type[1]['count']} bids")
     
     # Calculate optimal bid adjustment
     successful_bids = [h for h in historical_data if h[8] == "Won"]
     if successful_bids:
-        bid_ratios = [(h[5] if h[5] else h[4]) / h[10] for h in successful_bids]
-        avg_successful_ratio = np.mean(bid_ratios)
-        st.success(f"📈 **Optimal Bid Ratio (based on wins):** {avg_successful_ratio*100:.1f}% of official estimate")
-        
-        # Compare with recommended vs actual
-        diff_ratios = []
-        for h in historical_data:
-            recommended = h[4]
-            actual = h[5] if h[5] else recommended
-            diff_ratio = (actual - recommended) / recommended if recommended > 0 else 0
-            diff_ratios.append(diff_ratio)
-        
-        avg_diff = np.mean(diff_ratios) * 100
-        if avg_diff > 0:
-            st.warning(f"⚠️ **Bid Adjustment Pattern:** On average, your final bids are {avg_diff:.1f}% HIGHER than recommended")
-        else:
-            st.info(f"📉 **Bid Adjustment Pattern:** On average, your final bids are {abs(avg_diff):.1f}% LOWER than recommended")
+        bid_ratios = [(h[5] if h[5] else h[4]) / h[10] for h in successful_bids if h[10] > 0]
+        if bid_ratios:
+            avg_successful_ratio = np.mean(bid_ratios)
+            st.success(f"📈 **Optimal Bid Ratio (based on wins):** {avg_successful_ratio*100:.1f}% of official estimate")
+            
+            # Compare with recommended vs actual
+            diff_ratios = []
+            for h in historical_data:
+                recommended = h[4]
+                actual = h[5] if h[5] else recommended
+                if recommended > 0:
+                    diff_ratio = (actual - recommended) / recommended
+                    diff_ratios.append(diff_ratio)
+            
+            if diff_ratios:
+                avg_diff = np.mean(diff_ratios) * 100
+                if avg_diff > 0:
+                    st.warning(f"⚠️ **Bid Adjustment Pattern:** On average, your final bids are {avg_diff:.1f}% HIGHER than recommended")
+                else:
+                    st.info(f"📉 **Bid Adjustment Pattern:** On average, your final bids are {abs(avg_diff):.1f}% LOWER than recommended")
     
     # Lessons learned
     st.markdown("---")
@@ -288,7 +356,7 @@ def render_intelligent_suggestions():
     else:
         st.info("No lessons recorded yet. Add lessons when doing post-evaluation.")
     
-    # Visualization
+    # Visualization (available to all)
     st.markdown("### 📊 Bid Accuracy Trend")
     
     accuracy_data = []
