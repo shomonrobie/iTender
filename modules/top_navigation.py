@@ -15,6 +15,11 @@ def render_top_navigation():
     is_analyst = user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst']
     is_viewer = user_role == 'viewer'
     
+    # Check subscription for premium features
+    sub = st.session_state.get('subscription', {})
+    plan = sub.get('plan', 'free')
+    is_premium = plan in ['professional', 'enterprise'] or is_admin
+    
     # CSS for top navigation
     st.markdown("""
     <style>
@@ -66,6 +71,8 @@ def render_top_navigation():
             ("📥 Import", "import_wizard"),
             ("👥 Users", "user_management"),
             ("📋 Tenders", "tender_management"),
+            ("🎯 Bid Optimizer", "boq_bid_optimizer"),
+            ("🔮 Scenario Gen", "scenario_generator"),  # ✅ Added
             ("💳 Subscriptions", "subscription"),
             ("⚙️ Admin", "admin_dashboard")
         ]
@@ -77,6 +84,7 @@ def render_top_navigation():
             ("📊 Rate Viewer", "rate_viewer"),
             ("📊 BOQ", "boq_generator"),
             ("🎯 Optimizer", "boq_bid_optimizer"),
+            ("🔮 Scenario Gen", "scenario_generator"),  # ✅ Added
             ("📈 Reports", "analysis_history"),
             ("👥 Team", "user_management"),
             ("💳 Plan", "subscription")
@@ -89,10 +97,13 @@ def render_top_navigation():
             ("📊 Rate Viewer", "rate_viewer"),
             ("📊 BOQ", "boq_generator"),
             ("🎯 Optimizer", "boq_bid_optimizer"),
+            ("🔮 Scenario Gen", "scenario_generator") if is_premium else None,  # ✅ Premium only
             ("📈 Reports", "analysis_history"),
             ("💳 Plan", "subscription")
         ]
-    else:
+        # Remove None items
+        nav_items = [item for item in nav_items if item is not None]
+    elif is_viewer:
         # Viewer navigation - read-only access
         nav_items = [
             ("🏠 Dashboard", "dashboard"),
@@ -100,6 +111,15 @@ def render_top_navigation():
             ("📊 Rate Viewer", "rate_viewer"),
             ("📈 Reports", "analysis_history")
         ]
+    else:
+        # Default for other roles
+        nav_items = [
+            ("🏠 Dashboard", "dashboard"),
+            ("📊 BOQ", "boq_generator"),
+            ("🎯 Optimizer", "boq_bid_optimizer"),
+            ("🔮 Scenario Gen", "scenario_generator") if is_premium else None,
+        ]
+        nav_items = [item for item in nav_items if item is not None]
     
     # User info
     full_name = st.session_state.get('full_name', 'User')
@@ -116,7 +136,13 @@ def render_top_navigation():
     for i, (label, page) in enumerate(nav_items):
         with cols[i]:
             is_active = current_page == page
-            if st.button(label, key=f"top_nav_{page}", use_container_width=True, 
+            # Special styling for Scenario Generator
+            if page == "scenario_generator":
+                button_label = f"✨ {label}"
+            else:
+                button_label = label
+                
+            if st.button(button_label, key=f"top_nav_{page}", use_container_width=True, 
                         type="primary" if is_active else "secondary"):
                 st.session_state.page = page
                 st.rerun()
@@ -129,13 +155,17 @@ def render_top_navigation():
             'company_admin': '🏢 Company Admin',
             'manager': '📊 Manager',
             'analyst': '📈 Analyst',
+            'data_entry': '📝 Data Entry',
             'viewer': '👁️ Viewer'
         }.get(user_role, '👤 User')
+        
+        # Add premium badge for eligible users
+        premium_badge = " ✨" if is_premium and not is_admin else ""
         
         st.markdown(f"""
         <div style='text-align: right; padding: 0.3rem;'>
             <span style='color: white; font-size: 0.8rem;'>
-                👋 {full_name[:15]} | {role_badge}
+                👋 {full_name[:15]} | {role_badge}{premium_badge}
             </span>
         </div>
         """, unsafe_allow_html=True)

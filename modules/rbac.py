@@ -11,6 +11,12 @@ from functools import wraps
 ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
     # System Admin - Full access to everything
     'system_admin': {
+        
+        # ========== Scenario Generator Permissions ==========
+        'can_access_scenario_generator': True,
+        'can_generate_scenarios': True,
+        'can_export_scenarios': True,
+
         # Rate Management
         'can_view_rates': True,
         'can_edit_rates': True,
@@ -136,6 +142,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': True,
+        'can_access_scenario_generator': True,
+        'can_generate_scenarios': True,
+        'can_export_scenarios': True,
+
     },
     
     # Manager - Operational access
@@ -174,6 +184,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': False,
+        'can_access_scenario_generator': True,
+        'can_generate_scenarios': True,
+        'can_export_scenarios': True,
+
     },
     
     # Analyst - Can run analysis and create BOQ
@@ -212,6 +226,9 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': False,
+        'can_access_scenario_generator': True,
+        'can_generate_scenarios': True,
+        'can_export_scenarios': True,
     },
     
     # Data Entry - Can enter data but not run analysis
@@ -250,6 +267,9 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': False,
+        'can_access_scenario_generator': True,   # Can view existing scenarios
+        'can_generate_scenarios': False,          # Cannot generate new ones
+        'can_export_scenarios': False,            # Cannot export
     },
     
     # Viewer - Read-only access
@@ -288,6 +308,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': False,
+        'can_access_scenario_generator': False,
+        'can_generate_scenarios': False,
+        'can_export_scenarios': False,
+
     },
 }
 
@@ -539,6 +563,20 @@ def can_view_profile() -> bool:
 def can_change_settings() -> bool:
     return _rbac.has_permission('can_change_settings')
 
+# ========== Scenario Generator Permissions ==========
+def can_access_scenario_generator() -> bool:
+    """Check if user can access the scenario generator module"""
+    return _rbac.has_permission('can_access_scenario_generator')
+
+
+def can_generate_scenarios() -> bool:
+    """Check if user can generate new scenarios"""
+    return _rbac.has_permission('can_generate_scenarios')
+
+
+def can_export_scenarios() -> bool:
+    """Check if user can export scenario results"""
+    return _rbac.has_permission('can_export_scenarios')
 
 # ========== Role Check Functions ==========
 def is_admin() -> bool:

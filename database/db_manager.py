@@ -5352,5 +5352,341 @@ class DatabaseManager:
             }
         finally:
             conn.close()
+    def save_scenario(self, company_id: int, user_id: int, scenario_data: dict) -> Optional[int]:
+        """
+        Save a generated scenario to database.
+        
+        Args:
+            company_id: Company ID
+            user_id: User ID
+            scenario_data: Dictionary with scenario data
+            
+        Returns:
+            scenario_id if successful, None otherwise
+        """
+        import uuid
+        
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            scenario_uuid = str(uuid.uuid4())
+            
+            cursor.execute("""
+                INSERT INTO saved_scenarios (
+                    scenario_uuid, company_id, user_id, tender_id, scenario_name, description,
+                    official_estimate, procurement_type, min_price_pct, max_price_pct,
+                    competitor_counts, bidding_pattern, ai_strategy, random_seed,
+                    recommended_bid, bid_ratio, confidence_score, expected_win_probability,
+                    scenarios_data, competitor_stats
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                scenario_uuid,
+                company_id,
+                user_id,
+                scenario_data.get('tender_id'),
+                scenario_data.get('scenario_name', f"Scenario {datetime.now().strftime('%Y-%m-%d %H:%M')}"),
+                scenario_data.get('description', ''),
+                scenario_data['official_estimate'],
+                scenario_data['procurement_type'],
+                scenario_data.get('min_price_pct', 0.88),
+                scenario_data.get('max_price_pct', 1.08),
+                json.dumps(scenario_data['competitor_counts']),
+                scenario_data.get('bidding_pattern', 'realistic'),
+                scenario_data.get('ai_strategy', 'weighted_ensemble'),
+                scenario_data.get('random_seed', 42),
+                scenario_data['recommended_bid'],
+                scenario_data['bid_ratio'],
+                scenario_data['confidence_score'],
+                scenario_data.get('expected_win_probability'),
+                json.dumps(scenario_data['scenarios']),
+                json.dumps(scenario_data.get('competitor_stats', {}))
+            ))
+            
+            scenario_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            return scenario_id
+            
+        except Exception as e:
+            logger.error(f"Error saving scenario: {e}")
+            return None
+
+    def get_user_scenarios(self, company_id: int, user_id: int = None, 
+                        limit: int = 50, offset: int = 0,
+                        search: str = "", is_favorite: bool = None) -> tuple:
+        """
+        Get scenarios for a company/user with pagination.
+        
+        Args:
+            company_id: Company ID
+            user_id: Optional user ID to filter by user
+            limit: Max records to return
+            offset: Pagination offset
+            search: Search term for scenario name
+            is_favorite: Filter by favorite status
+            
+        Returns:
+            (scenarios_list, total_count)
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = """
+                SELECT s.*, u.full_name as created_by_name
+                FROM saved_scenarios s
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.company_id = ?
+            """
+            params = [company_id]
+            
+            if user_id:
+                query += " AND s.user_id = ?"
+                params.append(user_id)
+            
+            if search:
+                query += " AND (s.scenario_name LIKE ? OR s.description LIKE ?)"
+                params.extend([f"%{search}%", f"%{search}%"])
+            
+            if is_favorite is not None:
+                query += " AND s.is_favorite = ?"
+                params.append(1 if is_favorite else 0)
+            
+            # Count total
+            count_query = query.replace("SELECT s.*, u.full_name as created_by_name", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+            
+            # Get paginated results
+            query += " ORDER BY s.created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
+            
+            scenarios = []
+            for row in rows:
+                scenarios.append({
+                    'id': row[0],
+                    'scenario_uuid': row[1],
+                    'company_id': row[2],
+                    'user_id': row[3],
+                    'tender_id': row[4],
+                    'scenario_name': row[5],
+                    'description': row[6],
+                    'official_estimate': row[7],
+                    'procurement_type': row[8],
+                    'recommended_bid': row[15],
+                    'bid_ratio': row[16],
+                    'confidence_score': row[17],
+                    'expected_win_probability': row[18],
+                    'is_favorite': row[21],
+                    'view_count': row[22],
+                    'created_at': row[24],
+                    'created_by_name': row[26] if len(row) > 26 else None
+                })
+            
+            return scenarios, total
+            
+        except Exception as e:
+            logger.error(f"Error getting scenarios: {e}")
+            return [], 0
+
+    def get_scenario_by_id(self, scenario_id: int, company_id: int) -> Optional[dict]:
+        """Get a specific scenario by ID with company verification"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT s.*, u.full_name as created_by_name
+                FROM saved_scenarios s
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.id = ? AND s.company_id = ?
+            """, (scenario_id, company_id))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                # Increment view count
+                cursor.execute("""
+                    UPDATE saved_scenarios 
+                    SET view_count = view_count + 1
+                    WHERE id = ?
+                """, (scenario_id,))
+                conn.commit()
+                
+                scenario = {
+                    'id': row[0],
+                    'scenario_uuid': row[1],
+                    'company_id': row[2],
+                    'user_id': row[3],
+                    'tender_id': row[4],
+                    'scenario_name': row[5],
+                    'description': row[6],
+                    'official_estimate': row[7],
+                    'procurement_type': row[8],
+                    'min_price_pct': row[9],
+                    'max_price_pct': row[10],
+                    'competitor_counts': json.loads(row[11]) if row[11] else [],
+                    'bidding_pattern': row[12],
+                    'ai_strategy': row[13],
+                    'random_seed': row[14],
+                    'recommended_bid': row[15],
+                    'bid_ratio': row[16],
+                    'confidence_score': row[17],
+                    'expected_win_probability': row[18],
+                    'scenarios_data': json.loads(row[19]) if row[19] else [],
+                    'competitor_stats': json.loads(row[20]) if row[20] else {},
+                    'is_favorite': row[21],
+                    'view_count': row[22],
+                    'share_token': row[23],
+                    'created_at': row[24],
+                    'updated_at': row[25],
+                    'created_by_name': row[26] if len(row) > 26 else None
+                }
+                conn.close()
+                return scenario
+            
+            conn.close()
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting scenario by ID: {e}")
+            return None
+
+    def delete_scenario(self, scenario_id: int, company_id: int) -> bool:
+        """Delete a scenario (company-scoped)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM saved_scenarios 
+                WHERE id = ? AND company_id = ?
+            """, (scenario_id, company_id))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            return affected > 0
+            
+        except Exception as e:
+            logger.error(f"Error deleting scenario: {e}")
+            return False
+
+    def toggle_favorite_scenario(self, scenario_id: int, company_id: int, is_favorite: bool) -> bool:
+        """Mark/unmark scenario as favorite"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE saved_scenarios 
+                SET is_favorite = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND company_id = ?
+            """, (1 if is_favorite else 0, scenario_id, company_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error toggling favorite: {e}")
+            return False
+
+    def update_scenario_name(self, scenario_id: int, company_id: int, new_name: str) -> bool:
+        """Update scenario name"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE saved_scenarios 
+                SET scenario_name = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND company_id = ?
+            """, (new_name, scenario_id, company_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating scenario name: {e}")
+            return False
+
+    def share_scenario(self, scenario_id: int, user_id: int, share_with_email: str, 
+                    permission: str = 'view', expires_days: int = 7) -> Optional[str]:
+        """Generate share token for a scenario"""
+        import uuid
+        
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            share_token = str(uuid.uuid4()).replace('-', '')[:16]
+            expires_at = datetime.now() + timedelta(days=expires_days)
+            
+            cursor.execute("""
+                INSERT INTO scenario_shares (
+                    scenario_id, shared_by_user_id, shared_with_email, 
+                    permission, share_token, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (scenario_id, user_id, share_with_email, permission, share_token, expires_at))
+            
+            # Also update the share_token in saved_scenarios
+            cursor.execute("""
+                UPDATE saved_scenarios 
+                SET share_token = ?
+                WHERE id = ?
+            """, (share_token, scenario_id))
+            
+            conn.commit()
+            conn.close()
+            
+            return share_token
+            
+        except Exception as e:
+            logger.error(f"Error sharing scenario: {e}")
+            return None
+
+    def get_shared_scenario_by_token(self, share_token: str) -> Optional[dict]:
+        """Get a shared scenario by token"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT s.*, u.full_name as created_by_name
+                FROM saved_scenarios s
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.share_token = ? AND s.is_favorite IS NOT NULL
+            """, (share_token,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {
+                    'id': row[0],
+                    'scenario_uuid': row[1],
+                    'scenario_name': row[5],
+                    'description': row[6],
+                    'official_estimate': row[7],
+                    'recommended_bid': row[15],
+                    'scenarios_data': json.loads(row[19]) if row[19] else [],
+                    'created_at': row[24],
+                    'created_by_name': row[26] if len(row) > 26 else None
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting shared scenario: {e}")
+            return None
+        
     
 db = DatabaseManager()

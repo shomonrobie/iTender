@@ -114,6 +114,9 @@ from modules.ui_components import (
     render_footer
 )
 from modules.tender_analysis import render_tender_analysis
+from modules.bid_scenario_generator import render_bid_scenario_generator_ui
+from modules.subscription_manager import SubscriptionManager
+from modules.rbac import init_rbac
 
 
 
@@ -155,6 +158,7 @@ from modules.user_management import render_user_management
 
 # Initialize database
 db = DatabaseManager()
+init_rbac()
 
 
 if 'logged_in' not in st.session_state:
@@ -507,8 +511,8 @@ class PageRoutes:
     COMPETITOR_MASTER = 'competitor_master'
     BOQ_GENERATOR = "boq_generator"
     BOQ_ADMIN_REPORT = "boq_admin_report"
-    BOQ_BID_OPTIMIZER = "boq_bid_optimizer"
-
+    BOQ_BID_OPTIMIZER = "boq_bid_optimizer"    
+    SCENARIO_GENERATOR = "scenario_generator"
     # ─── Admin System Pages ──────────────────────────────────────────────────
     ADMIN_DASHBOARD = 'admin_dashboard'
     USER_APPROVAL = 'user_approval'
@@ -605,6 +609,7 @@ def home_page() -> None:
     
     debug_print("✅ Home page render complete")
 
+
 def login_page() -> None:
     """Updated Login Page with URL-Based Remember Me & Better Integration"""
     debug_print("🔐 Rendering login page")
@@ -697,43 +702,43 @@ def login_page() -> None:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             # Individual Email Login
-            with st.expander("📧 Login with Email", expanded=True):
-                with st.form("individual_login_form", clear_on_submit=True):
-                    email = st.text_input("Email Address", key="ind_login_email")
-                    password = st.text_input("Password", type="password", key="ind_login_password")
-                    remember_me_ind = st.checkbox("Remember me (stay logged in for 30 days)", key="ind_remember_me")
-                    
-                    submitted_ind = st.form_submit_button("Login", use_container_width=True, type="primary")
-                    
-                    if submitted_ind:
-                        if not email or not password:
-                            st.error("Please enter both email and password")
-                        else:
-                            user = authenticate_individual_user(email, password)
-                            if user:
-                                from modules.email_verification import send_verification_email
-                                if send_verification_email(email, user.get('full_name', 'User'), 'login'):
-                                    # Store remember_me preference for 2FA completion
-                                    st.session_state.pending_2fa = {
-                                        'user': user, 
-                                        'email': email,
-                                        'remember_me': remember_me_ind
-                                    }
-                                    st.session_state.show_2fa = True
-                                    st.success("Verification code sent to your email!")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to send verification code")
+            
+            with st.form("individual_login_form", clear_on_submit=True):
+                email = st.text_input("Email Address", key="ind_login_email")
+                password = st.text_input("Password", type="password", key="ind_login_password")
+                remember_me_ind = st.checkbox("Remember me (stay logged in for 30 days)", key="ind_remember_me")
+                
+                submitted_ind = st.form_submit_button("Login", use_container_width=True, type="primary")
+                
+                if submitted_ind:
+                    if not email or not password:
+                        st.error("Please enter both email and password")
+                    else:
+                        user = authenticate_individual_user(email, password)
+                        if user:
+                            from modules.email_verification import send_verification_email
+                            if send_verification_email(email, user.get('full_name', 'User'), 'login'):
+                                # Store remember_me preference for 2FA completion
+                                st.session_state.pending_2fa = {
+                                    'user': user, 
+                                    'email': email,
+                                    'remember_me': remember_me_ind
+                                }
+                                st.session_state.show_2fa = True
+                                st.success("Verification code sent to your email!")
+                                st.rerun()
                             else:
-                                st.error("❌ Invalid email or password.")
+                                st.error("Failed to send verification code")
+                        else:
+                            st.error("❌ Invalid email or password.")
 
             st.markdown("---")
             st.markdown("<p style='text-align: center; color: #666;'>OR</p>", unsafe_allow_html=True)
             
             # Google Sign-In
-            with st.expander("🔐 Sign in with Google", expanded=False):
-                st.caption("For consultants, freelancers, and individual users")
-                render_google_login_button()
+            
+            st.caption("For consultants, freelancers, and individual users")
+            render_google_login_button()
             
             st.markdown("---")
             
@@ -859,8 +864,148 @@ def login_page() -> None:
                 st.session_state.show_forgot_password = False
                 st.rerun()
 
-
 def register_page() -> None:
+    """Refactored Registration Page – Company & Individual flows with clear UX"""
+    debug_print("📝 Rendering registration page")
+
+    # Page header
+    st.markdown("""
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h1>📝 Create New Account</h1>
+            <p style="color: #555;">Choose the account type that fits you best</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Two tabs: Company (requires approval) vs Individual (auto-approved)
+    tab1, tab2 = st.tabs(["🏢 **Company Registration**", "👤 **Individual Registration**"])
+
+    # ========================= COMPANY REGISTRATION =========================
+    with tab1:
+        st.markdown("### 🏢 Register as a Company")
+        st.caption("For construction companies, contractors, and organisations (requires admin approval)")
+
+        with st.form("company_register_form", clear_on_submit=True):
+            # --- Company Information ---
+            st.markdown("#### 📌 Company Information")
+            col1, col2 = st.columns(2)
+            with col1:
+                company_name = st.text_input("Company Name *", placeholder="e.g., ABC Construction Ltd.")
+                company_email = st.text_input("Company Email *", placeholder="info@company.com")
+            with col2:
+                company_phone = st.text_input("Company Phone *", placeholder="+880 1XXX XXXXXX")
+                division = st.selectbox(
+                    "Division / Region *",
+                    ["Dhaka", "Chittagong", "Rajshahi", "Khulna", "Barisal", "Sylhet", "Rangpur", "Mymensingh"]
+                )
+
+            st.markdown("#### 👤 Admin Account Details")
+            col3, col4 = st.columns(2)
+            with col3:
+                full_name = st.text_input("Full Name (Admin) *", placeholder="John Doe")
+                username = st.text_input("Username *", placeholder="johndoe")
+            with col4:
+                email = st.text_input("Admin Email *", placeholder="john@company.com")
+                # No separate phone for admin – reuse company phone
+
+            col5, col6 = st.columns(2)
+            with col5:
+                password = st.text_input("Password *", type="password", placeholder="••••••••")
+            with col6:
+                confirm_password = st.text_input("Confirm Password *", type="password", placeholder="••••••••")
+
+            # Password strength meter
+            if password:
+                score, message, color = validate_password_strength(password)
+                st.progress(score / 100, text=f"Strength: {score}%")
+                st.markdown(f"<span style='color:{color};'>{message}</span>", unsafe_allow_html=True)
+
+            terms = st.checkbox("I agree to the **Terms of Service** and **Privacy Policy** *", key="comp_reg_terms")
+
+            submitted = st.form_submit_button("🚀 Submit Company Registration", type="primary", use_container_width=True)
+
+            if submitted:
+                # Validation
+                errors = []
+                if not all([company_name, company_email, full_name, email, username, password, division]):
+                    errors.append("All fields marked * are required.")
+                if password != confirm_password:
+                    errors.append("Passwords do not match.")
+                if len(password) < 8:
+                    errors.append("Password must be at least 8 characters.")
+                if score < 60:
+                    errors.append("Password is too weak. Please choose a stronger password.")
+                if not terms:
+                    errors.append("You must accept the Terms of Service.")
+
+                if errors:
+                    for err in errors:
+                        st.error(f"❌ {err}")
+                else:
+                    try:
+                        # Create company first
+                        company_data = {
+                            'company_name': company_name.strip(),
+                            'email': company_email.strip(),
+                            'phone': company_phone.strip(),
+                            'division': division
+                        }
+                        success, result = db.create_company(company_data)
+                        if success:
+                            company_id = result
+                            # Then create admin user
+                            user_data = {
+                                'username': username.strip(),
+                                'password': password,
+                                'email': email.strip(),
+                                'full_name': full_name.strip(),
+                                'phone': company_phone.strip(),
+                                'role': 'company_admin',
+                                'account_type': 'company',
+                                'is_approved': False
+                            }
+                            user_success, user_result = db.create_user(company_id, user_data, None)
+                            if user_success:
+                                st.success("✅ Company registration submitted successfully!")
+                                st.info("📧 Your account is under review. You will receive an email once approved (usually within 24‑48 hours).")
+                                st.balloons()
+                                navigate_to("login")
+                            else:
+                                st.error(f"❌ User creation failed: {user_result}")
+                        else:
+                            st.error(f"❌ Company creation failed: {result}")
+                    except Exception as e:
+                        logger.error("Company registration error", exc_info=True)
+                        st.error("❌ An unexpected error occurred. Please try again later.")
+
+    # ========================= INDIVIDUAL REGISTRATION =========================
+    with tab2:
+        st.markdown("### 👤 Register as an Individual")
+        st.caption("For freelancers, consultants, and sole proprietors (auto‑approved)")
+
+        # Import and render the existing individual registration module
+        from modules.individual_registration import render_individual_registration
+        render_individual_registration()
+
+    # ========================= SIDEBAR – Helpful info =========================
+    with st.sidebar:
+        st.markdown("### 📋 Registration Guidelines")
+        st.markdown("""
+        **🏢 Company Accounts**
+        - Requires admin approval
+        - Suitable for teams and organisations
+        - Full platform access after approval
+
+        **👤 Individual Accounts**
+        - Faster activation (auto‑approved)
+        - Ideal for freelancers & consultants
+        - Email verification required
+        """)
+        st.info("💡 Already have an account?")
+        if st.button("→ Login Instead", use_container_width=True):
+            navigate_to("login")
+
+    debug_print("✅ Registration page render complete")
+def register_page_bak() -> None:
     """Registration Page - Separate flows for Company vs Individual"""
     debug_print("📝 Rendering registration page")
     
@@ -1303,7 +1448,7 @@ def _nav_button(label: str, page_key: str, badge: str = None):
         "competitor_master": "competitor_master",
         "post_evaluation": "post_evaluation",
         "intelligent_suggestions": "intelligent_suggestions",
-        
+        "scenario_generator": "scenario_generator",
         # Company Management
         "company_dashboard": "company_dashboard",
         "egp_boq_workspace": "egp_boq_workspace",
@@ -1355,7 +1500,6 @@ def _nav_button(label: str, page_key: str, badge: str = None):
 
 def render_sidebar() -> None:
     """Optimized sidebar with role-based navigation - ONLY for logged-in users"""
-    # Only show sidebar if user is logged in
     if not st.session_state.get('logged_in'):
         return
     
@@ -1363,8 +1507,6 @@ def render_sidebar() -> None:
     
     with st.sidebar:
         # Clear extracted data if leaving tender management page
-                
-                
         if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
             st.session_state.extracted_data = None
             st.session_state.skip_review = False
@@ -1410,7 +1552,7 @@ def render_sidebar() -> None:
             
             st.markdown("---")
         
-        # ========== LOGOUT BUTTON (MOVED TO TOP FOR VISIBILITY) ==========
+        # ========== LOGOUT BUTTON (TOP) ==========
         col1, col2 = st.columns([3, 1])
         with col1:
             st.markdown("### 👤 Account")
@@ -1431,14 +1573,11 @@ def render_sidebar() -> None:
         
         st.markdown("### 🚀 Core Workflow")
         
-        # 1. Tender Management (Everyone)
         _nav_button("📋 Tender Management", "tender_management")
         
-        # 2. BOQ Generator (Everyone except viewer)
         if user_role != 'viewer':
             _nav_button("📄 BOQ Generator", "boq_generator")
         
-        # 3. BOQ to Bid Optimizer (Everyone except viewer)
         if user_role != 'viewer':
             _nav_button("🎯 BOQ to Bid Optimizer", "boq_bid_optimizer")
         
@@ -1451,43 +1590,40 @@ def render_sidebar() -> None:
         _nav_button("🎯 New Analysis", "new_analysis")
         _nav_button("📜 History", "history")
         
-        # Premium features
-        if is_premium:
+        # Premium features (requires is_premium defined)
+        is_system_admin = st.session_state.get('user_role') == 'system_admin'
+
+        if is_premium or is_system_admin:
             _nav_button("📊 Historical Data", "historical_data")
             _nav_button("👥 Competitor Tracking", "competitor_tracking")
             _nav_button("🗂️ Competitor Master", "competitor_master")
             _nav_button("📋 Post-Evaluation", "post_evaluation")
             _nav_button("🧠 AI Suggestions", "intelligent_suggestions")
+            _nav_button("🧠 Scenario Generator", "scenario_generator")  # Fixed!
         
         st.markdown("---")
         
         # ========== SECTION 3: COMPANY MANAGEMENT ==========
         if user_role in ['company_admin', 'admin', 'system_admin']:
             st.markdown("### 🏢 Company Management")
-            
             _nav_button("🏢 Company Dashboard", "company_dashboard")
             _nav_button("🏗️ e-GP BOQ Workspace", "egp_boq_workspace")
             _nav_button("👥 Team Management", "user_management")
-            
             st.markdown("---")
         
         # ========== SECTION 4: RATE MANAGEMENT ==========
         if user_role in ['admin', 'system_admin', 'company_admin', 'manager', 'analyst', 'data_entry']:
             st.markdown("### 🏗️ Rate Management")
-            
             _nav_button("📝 Rate Management", "rate_management")
             _nav_button("📊 Rate Viewer", "rate_viewer")
-            
             st.markdown("---")
         
         # ========== SECTION 5: ADMINISTRATION ==========
         if user_role in ['admin', 'system_admin']:
             st.markdown("### 👑 Administration")
-            
             _nav_button("📊 Admin Dashboard", "admin_dashboard")
             _nav_button("📊 BOQ Report", "boq_admin_report")
             
-            # Badge for pending approvals
             pending_count = 0
             try:
                 if hasattr(db, 'get_pending_users'):
@@ -1498,13 +1634,11 @@ def render_sidebar() -> None:
             _nav_button("👥 User Approvals", "user_approval", badge=pending_count if pending_count > 0 else None)
             _nav_button("🔐 Role Permissions", "role_management")
             _nav_button("🏢 All Companies", "company_management")
-            
             st.markdown("---")
         
         # ========== SECTION 6: SYSTEM TOOLS ==========
         st.markdown("### ⚙️ System Tools")
         
-        # Version Management (Admins only)
         if user_role in ['admin', 'system_admin']:
             _nav_button("📦 Version Management", "version_management")
             _nav_button("🔄 Rollback Management", "rollback_management")
@@ -1516,9 +1650,7 @@ def render_sidebar() -> None:
         
         # ========== SECTION 7: HELP & SUPPORT ==========
         st.markdown("### 📚 Help & Support")
-        
         _nav_button("📖 Tutorial", "tutorial")
-        
         st.markdown("---")
         
         # ========== USAGE STATS ==========
@@ -1556,12 +1688,9 @@ def render_sidebar() -> None:
         st.caption(f"📌 Version {__version__} | {__version_date__}")
         st.caption("💡 Need help? [Contact Support](mailto:support@tenderai.com)")
         
-        # Debug mode indicator
         if DEBUG_MODE:
             st.markdown("---")
             st.caption("🐛 Debug Mode Active")
-
-
 
 # =============================================================================
 # 🎬 MAIN APP ROUTER (Refactored + Optimized)
@@ -1625,7 +1754,10 @@ def _render_authenticated_pages() -> None:
         PageRoutes.TUTORIAL: lambda: _import_and_call('modules.tutorials', 'render_tutorial'),
         PageRoutes.BOQ_GENERATOR: lambda: _import_and_call('modules.boq_generator_ui', 'render_boq_generator'),
         PageRoutes.BOQ_ADMIN_REPORT: lambda: _import_and_call('modules.boq_admin_report', 'render_boq_admin_report'),
-        PageRoutes.BOQ_BID_OPTIMIZER: lambda: _import_and_call('modules.boq_bid_bridge', 'render_boq_bid_integration')
+        PageRoutes.BOQ_BID_OPTIMIZER: lambda: _import_and_call('modules.boq_bid_bridge', 'render_boq_bid_integration'),
+        PageRoutes.SCENARIO_GENERATOR: lambda: render_bid_scenario_generator_ui(db, SubscriptionManager(db))
+
+
     }
     
     # Get handler with fallback to dashboard for unknown routes
@@ -2045,7 +2177,7 @@ if __name__ == "__main__":
                 'home', 'login', 'register', 'pricing', 'about', 'contact',
                 'dashboard', 'new_analysis', 'history', 'profile', 'subscription',
                 'user_management', 'tender_management', 'post_evaluation', 'intelligent_suggestions',
-                'historical_data', 'analysis_history', 'competitor_tracking', 'competitor_master',
+                'historical_data', 'analysis_history', 'competitor_tracking', 'scenario_generator,' 'competitor_master',
                 'admin_dashboard', 'user_approval', 'role_management', 'tutorial'
             ]
             
