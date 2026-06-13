@@ -7,6 +7,7 @@ import jwt
 import os
 from datetime import datetime, timedelta
 import logging
+from typing import Dict, List, Optional, Tuple, Any
 
 logger = logging.getLogger(__name__)
 

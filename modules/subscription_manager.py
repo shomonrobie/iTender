@@ -3,6 +3,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from typing import Tuple, Dict, Any, Optional  # ← ADD THIS LINE
+
 
 # Plan definitions with limits and permissions
 PLANS = {
