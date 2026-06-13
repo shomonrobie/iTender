@@ -71,6 +71,35 @@ def show():
         </div>
         """, unsafe_allow_html=True)
     
+        st.markdown("### 🤖 Extension Status")
+    
+    # Get extension usage
+    from database.enhanced_db_manager import enhanced_db
+    usage = enhanced_db.get_extension_fill_usage(st.session_state.company_id)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if usage['is_unlimited']:
+            st.info("🎯 **Extension Auto-Fill**: Unlimited")
+        else:
+            remaining = usage['remaining']
+            if remaining > 0:
+                st.success(f"🎯 **Extension Auto-Fill**: {remaining} fills remaining this month")
+            else:
+                st.warning(f"🎯 **Extension Auto-Fill**: 0 fills remaining - Please upgrade")
+    
+    with col2:
+        st.caption("📥 **Install Extension**")
+        if st.button("Get Chrome Extension", use_container_width=True):
+            st.info("Contact admin for extension download link")
+    
+    with col3:
+        if usage['remaining'] == 0 and not usage['is_unlimited']:
+            if st.button("💳 Upgrade for More", use_container_width=True):
+                st.session_state.page = "subscription"
+                st.rerun()
+
     # Quick actions
     st.markdown("### 🚀 Quick Actions")
     col1, col2, col3, col4, col5 = st.columns(5)

@@ -671,7 +671,7 @@ def render_bid_scenario_generator_ui(db=None, subscription_manager=None):
         )
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-        auto_save = st.checkbox("Auto-save to database", value=True, key="auto_save")
+        auto_save = st.checkbox("Auto-save to database", value=False, key="auto_save")
     
     # ========== GENERATE BUTTON ==========
     col1, col2, col3 = st.columns([1, 2, 1])

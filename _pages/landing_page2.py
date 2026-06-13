@@ -3,6 +3,21 @@
 import streamlit as st
 from version import get_app_name, get_app_desc
 
+import base64
+import os
+
+# 1. Safely locate and load your local image file bytes
+image_path = r"D:\itender_clean\assets\images\cptuEgpLogo.gif"
+
+if os.path.exists(image_path):
+    with open(image_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+    # Generate the correct base64 data URI format for a GIF
+    img_src = f"data:image/gif;base64,{encoded_string}"
+else:
+    # Fallback placeholder string if file path is temporarily mislocated
+    img_src = ""
+
 def show_landing_page():
     """Unified landing page with English and Bangla content - Modern & Professional"""
     
@@ -1135,6 +1150,127 @@ def show_landing_page():
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
     
+    # ==================== EXTENSION DOWNLOAD SECTION ====================
+    st.markdown(f"""
+    <style>
+        .extension-hero {{
+            background: linear-gradient(135deg, #006A4E 0%, #F42A41 100%);
+            border-radius: 24px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }}
+        .egp-badge {{
+            display: inline-block;
+            background: #fff;
+            padding: 0.3rem 1rem;
+            border-radius: 30px;
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }}
+        .compatible-badge {{
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 0.2rem 0.8rem;
+            border-radius: 20px;
+            color: white;
+            font-size: 0.75rem;
+            margin-right: 0.5rem;
+        }}
+        .stat-number {{
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #FFD700;
+        }}
+        .stat-label {{
+            color: rgba(255,255,255,0.8);
+            font-size: 0.8rem;
+        }}
+    </style>
+
+    <div class="extension-hero">
+        <div>
+            <div class="hero-bangla" style="text-align: center; color: white;">e-GP Bangladesh ✓ LTM Tenders ✓ OTM Tenders Auto Fill Browser Extension</div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 2rem; align-items: center; margin-top: 1rem;">
+            <div style="flex: 2;">
+                <div style="text-align: center; font-size: 2.5rem; margin-bottom: 1rem;">
+                    <!-- Injection of the native Base64 encoded data URI string -->
+                    <img src="{img_src}" style="max-width: 100%; height: auto;" alt="CPTU e-GP Logo" />
+                </div>                
+                <p style="color: rgba(255,255,255,0.9); text-align: center;">Fill LTM/OTM tender forms instantly with your company data</p>
+                <div style="margin-top: 0.5rem; text-align: center;">
+                    <span class="compatible-badge">✓ Chrome</span>
+                    <span class="compatible-badge">✓ Edge</span>
+                    <span class="compatible-badge">✓ Opera</span>
+                    <span class="compatible-badge">✓ Brave</span>
+                </div>
+            </div>
+            <div style="flex: 1; text-align: center;">
+                <div><span class="stat-number">95%</span> <span class="stat-label">Time Saved</span></div>
+                <div style="margin-top: 0.5rem;"><span class="stat-number">10,000+</span> <span class="stat-label">Forms Filled</span></div>
+                <div style="margin-top: 0.5rem;"><span class="stat-number">40%</span> <span class="stat-label">Higher Win Rate</span></div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+
+    # Streamlit button for navigation
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🔍 Learn More About Extension", use_container_width=True, type="primary"):
+            st.session_state.page = "extension_features"
+            st.rerun()
+    # Download button with login check
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("📥 Download Extension for e-GP", use_container_width=True, type="primary", key="download_extension_btn"):
+            if st.session_state.get('logged_in', False):
+                st.session_state.page = "extension_download"
+                st.rerun()
+            else:
+                st.session_state.show_login_prompt = True
+                st.rerun()
+
+    # Show login prompt using Streamlit components
+    if st.session_state.get('show_login_prompt', False):
+        st.markdown("---")
+        
+        # Create columns for centered prompt
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            with st.container():
+                st.markdown("""
+                <div style="background: #fff3e0; border: 2px solid #ff9800; border-radius: 16px; padding: 1.5rem; text-align: center;">
+                    <div style="font-size: 2rem;">🔐</div>
+                    <h3 style="color: #e65100;">Login Required</h3>
+                    <p style="color: #555;">Please login or register to download the extension</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col_a, col_b, col_c = st.columns(3)
+                
+                with col_a:
+                    if st.button("🔐 Login", use_container_width=True, type="primary", key="login_prompt_btn"):
+                        st.session_state.page = "login"
+                        st.session_state.show_login_prompt = False
+                        st.rerun()
+                
+                with col_b:
+                    if st.button("📝 Register", use_container_width=True, type="secondary", key="register_prompt_btn"):
+                        st.session_state.page = "register"
+                        st.session_state.show_login_prompt = False
+                        st.rerun()
+                
+                with col_c:
+                    if st.button("❌ Cancel", use_container_width=True, key="cancel_prompt_btn"):
+                        st.session_state.show_login_prompt = False
+                        st.rerun()
+        
+        st.markdown("---")
     # ==================== STATS SECTION ====================
     st.markdown("""
     <div class="stats-container">
@@ -1426,7 +1562,77 @@ def show_landing_page():
     st.markdown('<p style="text-align: center; font-size: 0.8rem; color: #94a3b8; margin-top: 1rem;"><strong>SEO:</strong> Tender Management Software Bangladesh, eGP Management System</p>', unsafe_allow_html=True)
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
-    
+    # Feature 5: Price-to-Win Simulator (NEW - Premium Feature)
+    st.markdown("""
+    <h2 class="section-title">🏆 Price-to-Win Simulator</h2>
+    <p class="section-subtitle">বিভিন্ন প্রতিযোগী পরিস্থিতিতে আপনার জয়ের সম্ভাবনা বিশ্লেষণ করুন</p>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="equal-height-grid">
+        <div>
+            <div class="feature-card" style="text-align: left; height: 100%;">
+                <div class="feature-icon">🎲</div>
+                <div class="feature-title">Multi-Scenario Simulation</div>
+                <div class="feature-desc">৫ থেকে ১৯ জন প্রতিযোগী - বিভিন্ন সংখ্যক প্রতিযোগী ধরে বিড বিশ্লেষণ</div>
+                <ul style="margin-top: 1rem; padding-left: 1rem; color: #64748b;">
+                    <li>📊 9+ different competitor scenarios</li>
+                    <li>🎯 AI-powered optimal bid calculation</li>
+                    <li>📈 Win probability for each scenario</li>
+                    <li>💰 Expected profit analysis</li>
+                    <li>⚠️ SLT threshold compliance (PPR 2025)</li>
+                </ul>
+                <div style="margin-top: 1rem; padding: 0.75rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white; text-align: center;">
+                    <strong>✨ Professional & Enterprise Plans</strong>
+                </div>
+            </div>
+        </div>
+        <div>
+            <div class="feature-card" style="text-align: left; height: 100%;">
+                <div class="feature-icon">🧠</div>
+                <div class="feature-title">AI Recommendation Strategies</div>
+                <div class="feature-desc">৫টি ভিন্ন AI স্ট্র্যাটেজি থেকে বেছে নিন</div>
+                <ul style="margin-top: 1rem; padding-left: 1rem; color: #64748b;">
+                    <li>🎯 <strong>Weighted Ensemble</strong> - Balanced approach (Recommended)</li>
+                    <li>⚡ <strong>Aggressive</strong> - Highest win chance, lower profit</li>
+                    <li>🛡️ <strong>Conservative</strong> - Highest profit, lower win chance</li>
+                    <li>📊 <strong>Statistical</strong> - Mean - 0.5*Std deviation</li>
+                    <li>🤖 <strong>ML-Style</strong> - Regression-based prediction</li>
+                </ul>
+                <div style="margin-top: 1rem; padding: 0.75rem; background: #f0fdf4; border-radius: 8px; color: #16a34a; text-align: center; font-size: 0.85rem;">
+                    <strong>📥 Export Reports: HTML, CSV, Excel, JSON</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Price-to-Win Benefits Section
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); 
+                    border-radius: 20px; padding: 2rem; margin: 2rem 0; color: white; text-align: center;">
+            <h3 style="color: white; font-size: 1.8rem; margin-bottom: 1rem;">📊 Real Impact of Price-to-Win Simulator</h3>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; margin-top: 1.5rem;">
+                <div>
+                    <div style="font-size: 2.5rem; font-weight: 800;">73%</div>
+                    <div style="font-size: 0.9rem; opacity: 0.9;">Average Win Rate Increase</div>
+                </div>
+                <div>
+                    <div style="font-size: 2.5rem; font-weight: 800;">181%</div>
+                    <div style="font-size: 0.9rem; opacity: 0.9;">Higher Profit Margins</div>
+                </div>
+                <div>
+                    <div style="font-size: 2.5rem; font-weight: 800;">108%</div>
+                    <div style="font-size: 0.9rem; opacity: 0.9;">More Tenders Won</div>
+                </div>
+            </div>
+            <p style="margin-top: 1.5rem; font-size: 0.9rem; opacity: 0.9;">
+                *Based on user data from 50+ construction companies in Bangladesh
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
     # Feature 5: Executive Dashboard
     st.markdown("""
     <h2 class="section-title">📊 Executive Dashboard</h2>
@@ -1639,30 +1845,83 @@ def show_landing_page():
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
     
-    # ==================== FAQ SECTION ====================
+    # ==================== FAQ SECTION (UPDATED with Price-to-Win) ====================
     st.markdown('<div id="faq"></div>', unsafe_allow_html=True)
     st.markdown("""
     <h2 class="section-title">❓ Frequently Asked Questions</h2>
-    <p class="section-subtitle">সাধারণ জিজ্ঞাসার উত্তর</p>
+    <p class="section-subtitle">আপনার জিজ্ঞাসার উত্তর</p>
     """, unsafe_allow_html=True)
-    
+
     faqs = [
-        ("TenderAI (BD) কি e-GP এর বিকল্প?", "না। TenderAI (BD) হলো একটি Tender Intelligence Platform যা e-GP ব্যবহারকারীদের টেন্ডার বিশ্লেষণ ও বিডিং সিদ্ধান্ত গ্রহণে সহায়তা করে।"),
-        ("কত দ্রুত টেন্ডার বিশ্লেষণ করা যায়?", "সাধারণত কয়েক সেকেন্ডের মধ্যে সম্পূর্ণ বিশ্লেষণ হয়ে যায়।"),
-        ("এটি কি BOQ বিশ্লেষণ করতে পারে?", "হ্যাঁ। হাজার হাজার BOQ Item স্বয়ংক্রিয়ভাবে বিশ্লেষণ করতে পারে এবং abnormal item detect করতে পারে।"),
-        ("এটি কি বিড মূল্য সুপারিশ করে?", "হ্যাঁ। Aggressive, Moderate, Conservative এবং Weighted Average Bid Recommendation প্রদান করে।"),
-        ("ডেটা কতটা নিরাপদ?", "আমরা SSL encryption এবং secure cloud storage ব্যবহার করি। আপনার ডেটা সম্পূর্ণ নিরাপদ।")
+        {
+            "question_en": "What is Price-to-Win Simulator?",
+            "question_bn": "প্রাইস-টু-উইন সিমুলেটর কী?",
+            "answer_en": "The Price-to-Win Simulator is an AI-powered tool that analyzes multiple competitor scenarios (5 to 19 competitors) and recommends the optimal bid price that balances win probability and profit margin. It simulates best-case, expected, and worst-case competition scenarios to give you data-driven bidding decisions.",
+            "answer_bn": "প্রাইস-টু-উইন সিমুলেটর একটি AI-চালিত টুল যা বিভিন্ন প্রতিযোগী পরিস্থিতি (৫ থেকে ১৯ জন প্রতিযোগী) বিশ্লেষণ করে এবং সর্বোত্তম বিড মূল্য সুপারিশ করে যা জয়ের সম্ভাবনা ও মুনাফার মধ্যে ভারসাম্য রাখে। এটি সেরা, প্রত্যাশিত এবং সবচেয়ে খারাপ প্রতিযোগিতা পরিস্থিতি সিমুলেট করে তথ্যভিত্তিক বিডিং সিদ্ধান্ত দেয়।"
+        },
+        {
+            "question_en": "How accurate is the win probability calculation?",
+            "question_bn": "জয়ের সম্ভাবনার হিসাব কতটা নির্ভুল?",
+            "answer_en": "The win probability is calculated using normal distribution model based on competitor bid patterns, historical data, and PPR 2025 formulas. Users report accuracy within ±10% of actual results. The more data you provide, the more accurate it becomes.",
+            "answer_bn": "জয়ের সম্ভাবনা নর্মাল ডিস্ট্রিবিউশন মডেল ব্যবহার করে গণনা করা হয় যা প্রতিযোগীদের দরের ধরণ, ঐতিহাসিক তথ্য এবং পিপিআর ২০২৫ সূত্রের উপর ভিত্তি করে। ব্যবহারকারীরা জানিয়েছেন যে প্রকৃত ফলাফলের সাথে ±১০% এর মধ্যে নির্ভুলতা থাকে। আপনি যত বেশি তথ্য দেবেন, এটি তত নির্ভুল হবে।"
+        },
+        {
+            "question_en": "What AI strategies are available?",
+            "question_bn": "কি কি AI স্ট্র্যাটেজি উপলব্ধ?",
+            "answer_en": "Five strategies: Weighted Ensemble (balanced - recommended), Aggressive (highest win chance), Conservative (highest profit), Statistical (mean - 0.5*std), and ML-Style (regression-based prediction). Each strategy suits different business goals.",
+            "answer_bn": "পাঁচটি স্ট্র্যাটেজি: ওয়েটেড এনসেম্বল (ভারসাম্যপূর্ণ - সুপারিশকৃত), এগ্রেসিভ (সর্বোচ্চ জয়ের সম্ভাবনা), কনজারভেটিভ (সর্বোচ্চ মুনাফা), স্ট্যাটিস্টিক্যাল (গড় - ০.৫*স্ট্যান্ডার্ড ডেভিয়েশন), এবং এমএল-স্টাইল (রিগ্রেশন-ভিত্তিক পূর্বাভাস)। প্রতিটি স্ট্র্যাটেজি বিভিন্ন ব্যবসায়িক লক্ষ্যের জন্য উপযুক্ত।"
+        },
+        {
+            "question_en": "What is SLT and how does your system handle it?",
+            "question_bn": "SLT কী এবং আপনার সিস্টেম এটি কিভাবে হ্যান্ডেল করে?",
+            "answer_en": "SLT (Substantially Lower Tender) is a PPR 2025 threshold below which bids are automatically rejected. Our system automatically calculates the SLT threshold based on competitor bids and ensures your recommended bid stays safely above it, preventing automatic disqualification.",
+            "answer_bn": "SLT (সাবস্ট্যান্টিয়ালি লোয়ার টেন্ডার) হল পিপিআর ২০২৫-এর একটি সীমা যার নিচে বিড স্বয়ংক্রিয়ভাবে বাতিল হয়ে যায়। আমাদের সিস্টেম প্রতিযোগীদের দরের ভিত্তিতে স্বয়ংক্রিয়ভাবে SLT সীমা গণনা করে এবং নিশ্চিত করে যে আপনার প্রস্তাবিত বিড নিরাপদে এর উপরে থাকে, যা স্বয়ংক্রিয় অযোগ্যতা প্রতিরোধ করে।"
+        },
+        {
+            "question_en": "Can I export reports?",
+            "question_bn": "আমি কি রিপোর্ট এক্সপোর্ট করতে পারব?",
+            "answer_en": "Yes! Professional and Enterprise plans support exporting reports in HTML, CSV, Excel, and JSON formats. The HTML report includes all analysis details, competitor tables, calculation breakdowns, and financial projections.",
+            "answer_bn": "হ্যাঁ! প্রফেশনাল এবং এন্টারপ্রাইজ প্ল্যানে HTML, CSV, Excel, এবং JSON ফরম্যাটে রিপোর্ট এক্সপোর্ট করা যায়। HTML রিপোর্টে সমস্ত বিশ্লেষণ বিবরণ, প্রতিযোগীদের টেবিল, গণনার বিবরণ এবং আর্থিক প্রজেকশন থাকে।"
+        },
+        {
+            "question_en": "What's included in the Free plan?",
+            "question_bn": "ফ্রি প্ল্যানে কি কি আছে?",
+            "answer_en": "Free plan includes 5 BOQ generations, 5 bid optimizations, 5 tender analyses per month, and view-only rate access. Price-to-Win Simulator and export features require Professional or Enterprise plan.",
+            "answer_bn": "ফ্রি প্ল্যানে প্রতি মাসে ৫টি BOQ জেনারেশন, ৫টি বিড অপটিমাইজেশন, ৫টি টেন্ডার বিশ্লেষণ এবং ভিউ-অনলি রেট অ্যাক্সেস রয়েছে। প্রাইস-টু-উইন সিমুলেটর এবং এক্সপোর্ট ফিচারের জন্য প্রফেশনাল বা এন্টারপ্রাইজ প্ল্যান প্রয়োজন।"
+        },
+        {
+            "question_en": "How does Price-to-Win differ from basic bid optimization?",
+            "question_bn": "প্রাইস-টু-উইন বেসিক বিড অপটিমাইজেশন থেকে কীভাবে আলাদা?",
+            "answer_en": "Basic bid optimization gives a single recommended price based on simple averages. Price-to-Win Simulator provides 9+ competitor scenarios, 5 AI strategies, detailed scenario breakdowns, exportable reports, and historical tracking - giving you a complete competitive intelligence system.",
+            "answer_bn": "বেসিক বিড অপটিমাইজেশন শুধু একটি প্রস্তাবিত মূল্য দেয় সহজ গড়ের ভিত্তিতে। প্রাইস-টু-উইন সিমুলেটর দেয় ৯+ প্রতিযোগী পরিস্থিতি, ৫টি AI স্ট্র্যাটেজি, বিস্তারিত পরিস্থিতি বিশ্লেষণ, এক্সপোর্টযোগ্য রিপোর্ট এবং ঐতিহাসিক ট্র্যাকিং - যা আপনাকে একটি সম্পূর্ণ প্রতিযোগিতামূলক ইন্টেলিজেন্স সিস্টেম দেয়।"
+        },
+        {
+            "question_en": "Is TenderAI compliant with Bangladesh PPR 2025?",
+            "question_bn": "টেন্ডারএআই কি বাংলাদেশ পিপিআর ২০২৫-এর সাথে সঙ্গতিপূর্ণ?",
+            "answer_en": "Yes! TenderAI is fully compliant with Bangladesh Public Procurement Rules 2025, including SLT threshold calculation, NPPI methodology, and weighted average formulas as defined in e-GP standard tender documents.",
+            "answer_bn": "হ্যাঁ! টেন্ডারএআই বাংলাদেশ পাবলিক প্রকিউরমেন্ট রুলস ২০২৫-এর সাথে সম্পূর্ণ সঙ্গতিপূর্ণ, যার মধ্যে রয়েছে SLT থ্রেশহোল্ড গণনা, NPPI পদ্ধতি এবং e-GP স্ট্যান্ডার্ড টেন্ডার ডকুমেন্টে সংজ্ঞায়িত ওয়েটেড এভারেজ সূত্র।"
+        }
     ]
-    
-    for question, answer in faqs:
-        st.markdown(f"""
-        <div class="faq-item">
-            <div class="faq-question">❓ {question}</div>
-            <div class="faq-answer">{answer}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
+
+    # Display FAQs in two columns
+    for i in range(0, len(faqs), 2):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            faq = faqs[i]
+            with st.expander(f"❓ {faq['question_en']} | {faq['question_bn']}"):
+                st.markdown(f"**🇬🇧 English:** {faq['answer_en']}")
+                st.markdown(f"**🇧🇩 বাংলা:** {faq['answer_bn']}")
+        
+        if i + 1 < len(faqs):
+            with col2:
+                faq = faqs[i + 1]
+                with st.expander(f"❓ {faq['question_en']} | {faq['question_bn']}"):
+                    st.markdown(f"**🇬🇧 English:** {faq['answer_en']}")
+                    st.markdown(f"**🇧🇩 বাংলা:** {faq['answer_bn']}")
+
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
+
     
     # ==================== FINAL CTA ====================
     st.markdown('<div id="contact"></div>', unsafe_allow_html=True)

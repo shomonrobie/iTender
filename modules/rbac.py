@@ -66,6 +66,11 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': True,
+
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': True,
+
     },
     
     # Admin - Full access to own company
@@ -104,6 +109,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_view_dashboard': True,
         'can_view_profile': True,
         'can_change_settings': True,
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': True,
+
     },
     
     # Company Admin - Full access to own company's data
@@ -145,6 +154,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': True,
         'can_generate_scenarios': True,
         'can_export_scenarios': True,
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': True,
+
 
     },
     
@@ -187,6 +200,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': True,
         'can_generate_scenarios': True,
         'can_export_scenarios': True,
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': True,
+
 
     },
     
@@ -229,6 +246,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': True,
         'can_generate_scenarios': True,
         'can_export_scenarios': True,
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': True,
+
     },
     
     # Data Entry - Can enter data but not run analysis
@@ -270,6 +291,10 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': True,   # Can view existing scenarios
         'can_generate_scenarios': False,          # Cannot generate new ones
         'can_export_scenarios': False,            # Cannot export
+        #extnesion 
+        'can_use_extension': True,
+        'can_view_extension_usage': False,
+
     },
     
     # Viewer - Read-only access
@@ -311,6 +336,8 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': False,
         'can_generate_scenarios': False,
         'can_export_scenarios': False,
+        'can_use_extension': False,
+        'can_view_extension_usage': False,
 
     },
 }
@@ -577,6 +604,16 @@ def can_generate_scenarios() -> bool:
 def can_export_scenarios() -> bool:
     """Check if user can export scenario results"""
     return _rbac.has_permission('can_export_scenarios')
+
+# ========== Extension Permissions ==========
+def can_use_extension() -> bool:
+    """Check if user can use the Chrome extension"""
+    return _rbac.has_permission('can_use_extension')
+
+
+def can_view_extension_usage() -> bool:
+    """Check if user can view extension usage statistics"""
+    return _rbac.has_permission('can_view_extension_usage')
 
 # ========== Role Check Functions ==========
 def is_admin() -> bool:

@@ -595,7 +595,7 @@ def render_tender_analysis() -> None:
             )
             st.session_state.tender_form_data['risk_tolerance'] = risk_tolerance
        
-        with st.expander("⚙️ Auto-Bid Calculation Settings", expanded=False):
+        with st.expander("⚙️ Auto-Bid Calculation Settings", expanded=True):
             auto_disabled = is_manual_mode or form_disabled
             if is_manual_mode:
                 st.info("🔒 Auto-bid settings are disabled in Manual mode.")

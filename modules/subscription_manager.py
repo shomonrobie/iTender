@@ -13,6 +13,7 @@ PLANS = {
         'analyses_limit': 5,
         'max_boq_generations': 5,
         'max_bid_optimizations': 5,
+        'extension_auto_fills': 5,  # ← ADD THIS LINE
         'users_limit': 1,
         'can_edit_rates': False,
         'can_delete_rates': False,
@@ -36,6 +37,7 @@ PLANS = {
         'analyses_limit': 30,
         'max_boq_generations': 30,
         'max_bid_optimizations': 30,
+        'extension_auto_fills': 30,  # ← ADD THIS LINE
         'users_limit': 3,
         'can_edit_rates': False,
         'can_delete_rates': False,
@@ -60,6 +62,7 @@ PLANS = {
         'analyses_limit': -1,
         'max_boq_generations': 100,
         'max_bid_optimizations': 100,
+        'extension_auto_fills': 100,  # ← ADD THIS LINE
         'users_limit': 10,
         'can_edit_rates': True,
         'can_delete_rates': False,
@@ -85,6 +88,7 @@ PLANS = {
         'analyses_limit': -1,
         'max_boq_generations': -1,
         'max_bid_optimizations': -1,
+        'extension_auto_fills': -1,  # ← ADD THIS LINE (unlimited)
         'users_limit': -1,
         'can_edit_rates': True,
         'can_delete_rates': True,
@@ -185,7 +189,37 @@ class SubscriptionManager:
         except Exception as e:
             print(f"Error getting subscription: {e}")
             return self._get_default_free_plan()
+    def get_extension_limit_for_plan(self, plan_name: str) -> int:
+        """Get extension auto-fill limit for a plan (configurable by admin)"""
+        # This can be stored in database or config file
+        # For now, use hardcoded limits
+        plan_limits = {
+            'free': 5,
+            'basic': 30,
+            'professional': 100,
+            'enterprise': -1  # Unlimited
+        }
+        return plan_limits.get(plan_name, 5)
     
+    def update_extension_limit_for_plan(self, plan_name: str, new_limit: int) -> bool:
+        """Update extension limit for a plan (admin only)"""
+        # Store in database
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE subscription_plans 
+                SET extension_auto_fills = ? 
+                WHERE plan_name = ?
+            """, (new_limit, plan_name))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error updating plan limit: {e}")
+            return False
     def _get_default_free_plan(self):
         """Return default free plan"""
         free_plan = PLANS['free']
@@ -207,7 +241,51 @@ class SubscriptionManager:
             'can_manage_team': free_plan['can_manage_team'],
             'end_date': None
         }
-    
+    def check_extension_limit(self, company_id: int) -> Tuple[bool, int, str]:
+        """
+        Check if company has reached its extension auto-fill limit.
+        
+        Returns:
+            (can_proceed, remaining, message)
+        """
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # Get subscription plan
+            sub = self.get_company_subscription(company_id)
+            plan = sub.get('plan', 'free')
+            
+            # Get limit from plan
+            plan_config = PLANS.get(plan, PLANS['free'])
+            limit = plan_config.get('extension_auto_fills', 5)
+            
+            # Get current month usage
+            now = datetime.now()
+            start_of_month = datetime(now.year, now.month, 1)
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM extension_auto_fill_log
+                WHERE company_id = ? AND filled_at >= ?
+            """, (company_id, start_of_month))
+            
+            used = cursor.fetchone()[0] or 0
+            conn.close()
+            
+            if limit == -1:
+                return True, -1, "Unlimited auto-fills"
+            
+            remaining = max(0, limit - used)
+            
+            if remaining > 0:
+                return True, remaining, f"{remaining} auto-fills remaining this month"
+            else:
+                return False, 0, f"You've used all {limit} auto-fills this month. Please upgrade your plan."
+                
+        except Exception as e:
+            print(f"Error checking extension limit: {e}")
+            return True, -1, "Unable to check limit, proceeding anyway"
+
     def check_limit(self, company_id, resource_type):
         """
         Check if company has reached its limit for a resource.

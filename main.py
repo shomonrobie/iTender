@@ -76,7 +76,7 @@ from modules.advanced_bid_optimizer import get_three_tier_comparison
 from modules.forgot_password import render_forgot_password
 from modules.reset_password import render_reset_password
 from _pages.admin_dashboard import show as admin_dashboard_page
-from _pages.landing_page2 import show_landing_page
+from _pages.landing_page2 import show_landing_page as landing_page
 from _pages.about import show_about_page
 import random
 from modules.report_generator import generate_unified_report, generate_html_content_only
@@ -114,13 +114,24 @@ from modules.ui_components import (
     render_footer
 )
 from modules.tender_analysis import render_tender_analysis
-from modules.bid_scenario_generator import render_bid_scenario_generator_ui
+
 from modules.subscription_manager import SubscriptionManager
 from modules.rbac import init_rbac
 
-
-
-
+#from _pages.enhanced_company_dashboard import show as show_enhanced_company_dashboard
+from _pages.extension_admin import show as show_extension_admin
+from _pages.extension_usage import show as show_extension_usage
+from modules.company_knowledge_repo import render_company_knowledge_repo
+from _pages.company_profile_management import show as show_enhanced_company_dashboard 
+if st.query_params.get("health") == "check":
+    st.json({"status": "healthy", "timestamp": datetime.now().isoformat()})
+    st.stop()
+from _pages.login_page import show as login_page
+from _pages.registration_page import show as register_page
+from _pages.pricing_page import show as pricing_page
+from _pages.contact_page import show as contact_page
+from _pages.extension_features import show as auto_fill_extension_features
+from modules.price_to_win_simulator import render_price_to_win_simulator_ui
 
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
@@ -155,11 +166,157 @@ from database.db_manager import DatabaseManager
 from modules.auth import login_user, logout_user, is_admin, is_company_admin, authenticate_user, has_permission, get_current_user
 from modules.subscription import render_subscription_page, render_checkout
 from modules.user_management import render_user_management
+from migrations import run_migrations
 
 # Initialize database
 db = DatabaseManager()
 init_rbac()
+# ========== START FLASK API FOR EXTENSION ==========
+try:
+    from api.flask_api import start_flask_api
+    start_flask_api(db, port=5000)
+except ImportError as e:
+    print(f"⚠️ Flask API not available: {e}")
+    print("Extension features will not work. Run: pip install flask flask-cors")
+except Exception as e:
+    print(f"⚠️ Failed to start Flask API: {e}")
+# ===================================================
 
+# =============================================================================
+# UNIFIED MIGRATION SYSTEM - Run ONCE at startup
+# =============================================================================
+
+def run_unified_migrations(db):
+    """
+    Run ALL migrations in one place.
+    - Complex migrations (new tables) use the migration system
+    - Simple migrations (columns, indexes) run here (idempotent)
+    """
+    try:
+        # STEP 1: Run complex migrations from migrations folder
+        run_complex_migrations()
+        
+        # STEP 2: Run simple schema fixes (always runs, idempotent)
+        run_simple_migrations(db)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        if DEBUG_MODE:
+            st.warning(f"⚠️ Migration error: {e}")
+        return False
+
+def run_complex_migrations():
+    """Run complex migrations (new tables, constraints) using migration system"""
+    try:
+        import sys
+        from pathlib import Path
+        
+        # Add migrations directory to path
+        migrations_path = Path(__file__).parent / "migrations"
+        if str(migrations_path) not in sys.path:
+            sys.path.insert(0, str(migrations_path))
+        
+        # Import migration manager
+        from migrations.run_migrations import MigrationManager
+        
+        print("🔍 Checking for pending complex migrations...")
+        manager = MigrationManager(db.db_path)
+        success = manager.run_all_migrations()
+        
+        if success:
+            print("✅ Complex migrations up to date")
+        return success
+    except ImportError as e:
+        print(f"⚠️ Migration module not found (first time run): {e}")
+        return True
+    except Exception as e:
+        print(f"⚠️ Migration check failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return True
+
+def run_simple_migrations(db):
+    """Run simple schema fixes (add columns, indexes) - ALWAYS runs, idempotent"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        print("🔧 Running simple schema checks...")
+        
+        # ========== FIX COMPANIES TABLE ==========
+        cursor.execute("PRAGMA table_info(companies)")
+        company_columns = [col[1] for col in cursor.fetchall()]
+        
+        columns_to_add = {
+            'district': 'TEXT',
+            'upazila': 'TEXT', 
+            'post_code': 'TEXT',
+            'is_individual': 'BOOLEAN DEFAULT 0',
+            'status': "TEXT DEFAULT 'active'",
+            'registration_number': 'TEXT',
+            'vat_number': 'TEXT',
+            'website': 'TEXT'
+        }
+        
+        for col_name, col_type in columns_to_add.items():
+            if col_name not in company_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+                    print(f"  ✅ Added column: {col_name}")
+                except Exception as e:
+                    print(f"  ⚠️ Could not add {col_name}: {e}")
+        
+        # ========== FIX USERS TABLE ==========
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = [col[1] for col in cursor.fetchall()]
+        
+        user_columns_to_add = {
+            'auth_provider': "TEXT DEFAULT 'email'",
+            'email_verified': "BOOLEAN DEFAULT 0",
+            'email_verified_at': "TIMESTAMP",
+            'verification_token': "TEXT",
+            'reset_token': "TEXT",
+            'reset_token_expires': "TIMESTAMP",
+            'specialization': "TEXT",
+            'years_experience': "INTEGER"
+        }
+        
+        for col_name, col_type in user_columns_to_add.items():
+            if col_name not in user_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                    print(f"  ✅ Added column to users: {col_name}")
+                except Exception as e:
+                    print(f"  ⚠️ Could not add {col_name} to users: {e}")
+        
+        # ========== CREATE INDEXES ==========
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
+            "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)",
+            "CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider)",
+            "CREATE INDEX IF NOT EXISTS idx_companies_is_individual ON companies(is_individual)",
+        ]
+        
+        for index in indexes:
+            try:
+                cursor.execute(index)
+                print(f"  ✅ Index ready: {index.split('ON')[1].strip() if 'ON' in index else index}")
+            except Exception as e:
+                # Table might not exist yet (handled by complex migrations)
+                pass
+        
+        conn.commit()
+        conn.close()
+        print("✅ Simple schema checks complete")
+        
+    except Exception as e:
+        logger.error(f"Simple migration failed: {e}")
+        if DEBUG_MODE:
+            st.warning(f"⚠️ Simple migration error: {e}")
+
+run_unified_migrations(db)
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -188,110 +345,7 @@ else:
 print("=" * 60)
 
 st.markdown(get_compact_css(), unsafe_allow_html=True)
-def check_and_run_migrations(db):
-    """Check database schema and run migrations if needed"""
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        
-        # =========================================================================
-        # MIGRATION 1: Add district column to companies (existing)
-        # =========================================================================
-        cursor.execute("PRAGMA table_info(companies)")
-        company_columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'district' not in company_columns:
-            debug_print("🔧 Running schema migration: city → district")
-            cursor.executescript("""
-            ALTER TABLE companies ADD COLUMN district TEXT;
-            UPDATE companies SET district = city WHERE city IS NOT NULL;
-            """)
-            conn.commit()
-            debug_print("✅ Migration 1 complete: district column added")
-        
-        # =========================================================================
-        # MIGRATION 2: Add individual user support columns to users table
-        # =========================================================================
-        cursor.execute("PRAGMA table_info(users)")
-        user_columns = [col[1] for col in cursor.fetchall()]
-        
-        # Define new columns for users table
-        user_new_columns = {
-            'auth_provider': "TEXT DEFAULT 'email'",
-            'email_verified': "BOOLEAN DEFAULT 0",
-            'email_verified_at': "TIMESTAMP",
-            'verification_token': "TEXT",
-            'reset_token': "TEXT",
-            'reset_token_expires': "TIMESTAMP",
-            'specialization': "TEXT",
-            'years_experience': "INTEGER"
-        }
-        
-        migration_2_needed = False
-        for col_name in user_new_columns.keys():
-            if col_name not in user_columns:
-                migration_2_needed = True
-                break
-        
-        if migration_2_needed:
-            debug_print("🔧 Running schema migration: adding individual user support columns")
-            
-            for col_name, col_type in user_new_columns.items():
-                if col_name not in user_columns:
-                    try:
-                        cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
-                        debug_print(f"  ✅ Added column: {col_name}")
-                    except Exception as e:
-                        debug_print(f"  ⚠️ Could not add {col_name}: {e}")
-            
-            conn.commit()
-            debug_print("✅ Migration 2 complete: individual user columns added")
-        
-        # =========================================================================
-        # MIGRATION 3: Add is_individual column to companies table
-        # =========================================================================
-        cursor.execute("PRAGMA table_info(companies)")
-        company_columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'is_individual' not in company_columns:
-            debug_print("🔧 Running schema migration: adding is_individual column")
-            cursor.execute("ALTER TABLE companies ADD COLUMN is_individual BOOLEAN DEFAULT 0")
-            conn.commit()
-            debug_print("✅ Migration 3 complete: is_individual column added")
-        
-        # =========================================================================
-        # MIGRATION 4: Create indexes for better performance
-        # =========================================================================
-        debug_print("🔧 Creating indexes for better performance...")
-        
-        indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
-            "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
-            "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)",
-            "CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider)",
-            "CREATE INDEX IF NOT EXISTS idx_companies_is_individual ON companies(is_individual)"
-        ]
-        
-        for index in indexes:
-            try:
-                cursor.execute(index)
-                debug_print(f"  ✅ Index created: {index.split('ON')[1].strip() if 'ON' in index else index}")
-            except Exception as e:
-                debug_print(f"  ⚠️ Could not create index: {e}")
-        
-        conn.commit()
-        debug_print("✅ All migrations completed successfully!")
-        
-        conn.close()
-        
-    except Exception as e:
-        logger.error(f"Migration check failed: {e}")
-        if DEBUG_MODE:
-            st.warning(f"⚠️ Database migration check failed: {e}")
-
-# Call at startup
-check_and_run_migrations(db)
-
+    
 # Try to import advanced optimizer
 try:
     from modules.advanced_bid_optimizer import calculate_optimal_bid_ppr2025
@@ -512,7 +566,7 @@ class PageRoutes:
     BOQ_GENERATOR = "boq_generator"
     BOQ_ADMIN_REPORT = "boq_admin_report"
     BOQ_BID_OPTIMIZER = "boq_bid_optimizer"    
-    SCENARIO_GENERATOR = "scenario_generator"
+    PRICE_TO_WIN_SIMULATOR = 'price_to_win_simulator'
     # ─── Admin System Pages ──────────────────────────────────────────────────
     ADMIN_DASHBOARD = 'admin_dashboard'
     USER_APPROVAL = 'user_approval'
@@ -520,6 +574,11 @@ class PageRoutes:
     RATE_MANAGEMENT = 'rate_management'
     IMPORT_WIZARD = 'import_wizard'
     SUBSCRIBER_DASHBOARD = 'subscriber_dashboard'
+    COMPANY_KNOWLEDGE = 'company_knowledge'
+    AUTO_FILL_EXTENSION_ADMIN = 'extension_admin'
+    AUTO_FILL_EXTENSION_USAGE = 'extension_usage'
+    AUTO_FILL_EXTENSION_DOWNLOAD = 'extension_download'
+    AUTO_FILL_EXTENSION_FEATURES = 'auto_fill_extension_features'
     
     # ─── Utility Routes ──────────────────────────────────────────────────────
     CHECKOUT = 'checkout'
@@ -536,790 +595,11 @@ class PageRoutes:
     def is_valid_route(cls, route: str) -> bool:
         """Check if a route string is valid"""
         return route in cls.get_all_routes()
-    
-def _render_unauthenticated_pages() -> None:
-    """Render pages for users who are not logged in"""
-    
-    # Define unauthenticated page handlers
-    UNAUTH_PAGE_HANDLERS = {
-        'home': home_page,
-        'login': login_page,
-        'register': register_page,
-        'pricing': pricing_page,
-        'about': about_page,
-        'contact': contact_page,
-        'forgot_password': render_forgot_password,
-        'reset_password': lambda: render_reset_password(st.query_params.get("token", "")),
-    }
-    
-    # Get current page from session state
-    current_page = st.session_state.get('page', 'login')
-    
-    # Get the handler function
-    handler = UNAUTH_PAGE_HANDLERS.get(current_page, login_page)
-    
-    # Call the handler
-    try:
-        handler()
-    except Exception as e:
-        debug_print(f"❌ Unauthenticated page render error: {e}")
-        st.error("⚠️ Unable to load this page. Please try again.")
-
 
 
 # =============================================================================
 # 📄 PAGE RENDERING FUNCTIONS
 # =============================================================================
-
-def home_page() -> None:
-    """Render the public home/landing page"""
-    debug_print("🏠 Rendering home page")
-    
-    # Hero section
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
-                padding: 2.5rem 1.5rem; border-radius: 16px; text-align: center; margin-bottom: 1.5rem;">
-        <h1 style="color: white; font-size: 2.4rem; margin: 0 0 0.8rem 0;">🏗️ TenderAI</h1>
-        <p style="color: white; font-size: 1.15rem; margin: 0; opacity: 0.95;">
-            AI-Powered Tender Management & Bid Optimization for Bangladesh Construction
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Features grid
-    st.markdown("### ✨ Why TenderAI?")
-    col1, col2, col3 = st.columns(3)
-    features = [
-        ("🤖", "AI Predictions", "85% accurate winning bid predictions using machine learning"),
-        ("📊", "Market Intelligence", "Real-time competitor tracking & historical analysis"),
-        ("👥", "Team Collaboration", "Role-based access control for your organization"),
-    ]
-    for idx, (icon, title, desc) in enumerate(features):
-        with [col1, col2, col3][idx]:
-            render_feature_card(icon, title, desc)
-    
-    # CTA section
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 Start Free 14-Day Trial", use_container_width=True, type="primary"):
-            navigate_to("register")
-        if st.button("💰 View Pricing Plans", use_container_width=True):
-            navigate_to("pricing")
-    
-    debug_print("✅ Home page render complete")
-
-
-def login_page() -> None:
-    """Updated Login Page with URL-Based Remember Me & Better Integration"""
-    debug_print("🔐 Rendering login page")
-    
-    # Initialize session state variables
-    if 'show_forgot_password' not in st.session_state:
-        st.session_state.show_forgot_password = False
-    if 'forgot_password_email' not in st.session_state:
-        st.session_state.forgot_password_email = ''
-    if 'remember_me' not in st.session_state:
-        st.session_state.remember_me = False
-
-    # Import required modules
-    from modules.google_auth import render_google_login_button, handle_google_callback
-    from modules.individual_registration import authenticate_individual_user
-    from modules.auth import login_user, restore_session_from_url
-    
-    # ✅ Try to restore session from URL (no cookie complexity)
-    if not st.session_state.get('logged_in', False):
-        try:
-            if restore_session_from_url():
-                debug_print("Session restored from URL, redirecting to dashboard")
-                navigate_to("dashboard")
-                st.rerun()
-                return
-        except Exception as e:
-            debug_print(f"Session restore error: {e}")
-    
-    # Handle Google OAuth callback
-    handle_google_callback()
-    
-    # Check if showing Google registration
-    if st.session_state.get('show_google_registration'):
-        from modules.google_auth import render_google_registration_form
-        render_google_registration_form(db)
-        return
-    
-    render_page_header("🔐 Login", "Access your TenderAI account")
-    
-    # Display session persistence tip
-    if not st.session_state.get('logged_in', False):
-        st.info("💡 **Tip:** Check 'Remember me' to stay logged in across browser sessions for 30 days.")
-    
-    # Create tabs for different login types
-    tab1, tab2 = st.tabs(["🏢 Company Login", "👤 Individual Login"])
-    
-    with tab1:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            with st.form("company_login_form", clear_on_submit=True):
-                username = st.text_input("Username or Email", key="comp_login_username")
-                password = st.text_input("Password", type="password", key="comp_login_password")
-                remember_me = st.checkbox("Remember me (stay logged in for 30 days)", key="comp_remember_me")
-                
-                submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
-                
-                if submitted:
-                    if not username or not password:
-                        st.error("Please enter both username and password")
-                    else:
-                        debug_print(f"[LOGIN] Username: {username}, Remember me: {remember_me}")
-                        user, status, message = authenticate_user(username, password)
-                        debug_print(f"[LOGIN] Auth result: status={status}, user={user is not None}")
-                        
-                        if status == "pending_approval":
-                            st.warning("⚠️ Your account is pending approval by an administrator.")
-                        elif user and status == "approved":
-                            debug_print(f"[LOGIN] Calling login_user with remember_me={remember_me}")
-                            # ✅ Pass cookies=None since we're using URL params
-                            if login_user(user, password, remember_me):
-                                full_name = user[3] if len(user) > 3 else username
-                                debug_print("[LOGIN] Login successful!")
-                                st.success(f"Welcome back, {full_name}! 👋")
-                                
-                                if remember_me:
-                                    st.info("✅ Session saved to URL! You'll stay logged in even after browser refresh.")
-                                
-                                navigate_to("dashboard")
-                                st.rerun()
-                            else:
-                                st.error("❌ Login failed. Please try again.")
-                        else:
-                            st.error(message or "❌ Invalid credentials. Please try again.")
-            
-            st.markdown("---")
-            if st.button("➕ Register New Company Account", use_container_width=True):
-                navigate_to("register")
-
-    with tab2:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            # Individual Email Login
-            
-            with st.form("individual_login_form", clear_on_submit=True):
-                email = st.text_input("Email Address", key="ind_login_email")
-                password = st.text_input("Password", type="password", key="ind_login_password")
-                remember_me_ind = st.checkbox("Remember me (stay logged in for 30 days)", key="ind_remember_me")
-                
-                submitted_ind = st.form_submit_button("Login", use_container_width=True, type="primary")
-                
-                if submitted_ind:
-                    if not email or not password:
-                        st.error("Please enter both email and password")
-                    else:
-                        user = authenticate_individual_user(email, password)
-                        if user:
-                            from modules.email_verification import send_verification_email
-                            if send_verification_email(email, user.get('full_name', 'User'), 'login'):
-                                # Store remember_me preference for 2FA completion
-                                st.session_state.pending_2fa = {
-                                    'user': user, 
-                                    'email': email,
-                                    'remember_me': remember_me_ind
-                                }
-                                st.session_state.show_2fa = True
-                                st.success("Verification code sent to your email!")
-                                st.rerun()
-                            else:
-                                st.error("Failed to send verification code")
-                        else:
-                            st.error("❌ Invalid email or password.")
-
-            st.markdown("---")
-            st.markdown("<p style='text-align: center; color: #666;'>OR</p>", unsafe_allow_html=True)
-            
-            # Google Sign-In
-            
-            st.caption("For consultants, freelancers, and individual users")
-            render_google_login_button()
-            
-            st.markdown("---")
-            
-            # Registration & Forgot Password Links
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("📝 Register as Individual", use_container_width=True):
-                    navigate_to(PageRoutes.INDIVIDUAL_REGISTER)
-            with col_b:
-                if st.button("🔒 Forgot Password?", use_container_width=True, type="secondary"):
-                    st.session_state.show_forgot_password = True
-                    st.rerun()
-
-    # ====================== 2FA Verification ======================
-    if st.session_state.get('show_2fa'):
-        st.markdown("---")
-        st.markdown("### 🔐 Two-Factor Authentication")
-        st.info(f"A verification code has been sent to **{st.session_state.pending_2fa['email']}**")
-        
-        with st.form("2fa_verification_form"):
-            otp = st.text_input("Enter 6-digit verification code", max_chars=6, type="password")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.form_submit_button("Verify", type="primary", use_container_width=True):
-                    from modules.email_verification import verify_otp
-                    success, message = verify_otp(st.session_state.pending_2fa['email'], otp)
-                    
-                    if success:
-                        user = st.session_state.pending_2fa['user']
-                        remember_me = st.session_state.pending_2fa.get('remember_me', False)
-                        
-                        # Convert user dict to the expected format for login_user
-                        user_tuple = (
-                            user.get('id'),
-                            user.get('username'),
-                            user.get('email'),
-                            user.get('full_name'),
-                            'individual',
-                            1,
-                            user.get('company_id'),
-                            '',
-                            None,
-                            1,
-                            'individual'
-                        )
-                        
-                        # ✅ Login with remember me option (no cookies parameter)
-                        if login_user(user_tuple, None, remember_me):
-                            st.session_state.show_2fa = False
-                            st.session_state.pending_2fa = None
-                            
-                            if remember_me:
-                                st.info("✅ Session saved to URL! You'll stay logged in even after browser refresh.")
-                            
-                            navigate_to("dashboard", success_msg=f"Welcome back, {user.get('full_name', 'User')}! 👋")
-                            st.rerun()
-                        else:
-                            st.error("Login failed. Please try again.")
-                    else:
-                        st.error(message)
-            
-            with col2:
-                if st.form_submit_button("Resend Code", use_container_width=True):
-                    from modules.email_verification import send_verification_email
-                    if send_verification_email(
-                        st.session_state.pending_2fa['email'], 
-                        st.session_state.pending_2fa['user'].get('full_name', 'User'), 
-                        'login'
-                    ):
-                        st.success("New verification code sent!")
-                    else:
-                        st.error("Failed to resend code")
-    
-    # ====================== Forgot Password Modal ======================
-    if st.session_state.get('show_forgot_password'):
-        st.markdown("---")
-        st.markdown("### 🔒 Reset Your Password")
-        
-        with st.form("forgot_password_form", clear_on_submit=True):
-            email_input = st.text_input(
-                "Enter your registered email", 
-                value=st.session_state.get('forgot_password_email', '')
-            )
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                send_clicked = st.form_submit_button("Send Reset Link", 
-                                                   use_container_width=True, 
-                                                   type="primary")
-            
-            with col2:
-                cancel_clicked = st.form_submit_button("Cancel", 
-                                                     use_container_width=True, 
-                                                     type="secondary")
-            
-            if send_clicked:
-                if not email_input or "@" not in email_input:
-                    st.error("Please enter a valid email address")
-                else:
-                    user = db.get_user_by_email(email_input)
-                    if user:
-                        import secrets
-                        reset_token = secrets.token_urlsafe(32)
-                        
-                        if db.store_password_reset_token(email_input, reset_token):
-                            reset_link = f"https://itender-bd.streamlit.app/reset-password?token={reset_token}"
-                            from modules.email_verification import send_password_reset_email
-                            
-                            if send_password_reset_email(email_input, reset_link):
-                                st.success(f"✅ Password reset link sent to **{email_input}**")
-                                st.session_state.show_forgot_password = False
-                                st.rerun()
-                            else:
-                                st.error("Failed to send reset email. Please try again.")
-                        else:
-                            st.error("System error. Please try again later.")
-                    else:
-                        st.error("No account found with this email.")
-            
-            if cancel_clicked:
-                st.session_state.show_forgot_password = False
-                st.rerun()
-
-def register_page() -> None:
-    """Refactored Registration Page – Company & Individual flows with clear UX"""
-    debug_print("📝 Rendering registration page")
-
-    # Page header
-    st.markdown("""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <h1>📝 Create New Account</h1>
-            <p style="color: #555;">Choose the account type that fits you best</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # Two tabs: Company (requires approval) vs Individual (auto-approved)
-    tab1, tab2 = st.tabs(["🏢 **Company Registration**", "👤 **Individual Registration**"])
-
-    # ========================= COMPANY REGISTRATION =========================
-    with tab1:
-        st.markdown("### 🏢 Register as a Company")
-        st.caption("For construction companies, contractors, and organisations (requires admin approval)")
-
-        with st.form("company_register_form", clear_on_submit=True):
-            # --- Company Information ---
-            st.markdown("#### 📌 Company Information")
-            col1, col2 = st.columns(2)
-            with col1:
-                company_name = st.text_input("Company Name *", placeholder="e.g., ABC Construction Ltd.")
-                company_email = st.text_input("Company Email *", placeholder="info@company.com")
-            with col2:
-                company_phone = st.text_input("Company Phone *", placeholder="+880 1XXX XXXXXX")
-                division = st.selectbox(
-                    "Division / Region *",
-                    ["Dhaka", "Chittagong", "Rajshahi", "Khulna", "Barisal", "Sylhet", "Rangpur", "Mymensingh"]
-                )
-
-            st.markdown("#### 👤 Admin Account Details")
-            col3, col4 = st.columns(2)
-            with col3:
-                full_name = st.text_input("Full Name (Admin) *", placeholder="John Doe")
-                username = st.text_input("Username *", placeholder="johndoe")
-            with col4:
-                email = st.text_input("Admin Email *", placeholder="john@company.com")
-                # No separate phone for admin – reuse company phone
-
-            col5, col6 = st.columns(2)
-            with col5:
-                password = st.text_input("Password *", type="password", placeholder="••••••••")
-            with col6:
-                confirm_password = st.text_input("Confirm Password *", type="password", placeholder="••••••••")
-
-            # Password strength meter
-            if password:
-                score, message, color = validate_password_strength(password)
-                st.progress(score / 100, text=f"Strength: {score}%")
-                st.markdown(f"<span style='color:{color};'>{message}</span>", unsafe_allow_html=True)
-
-            terms = st.checkbox("I agree to the **Terms of Service** and **Privacy Policy** *", key="comp_reg_terms")
-
-            submitted = st.form_submit_button("🚀 Submit Company Registration", type="primary", use_container_width=True)
-
-            if submitted:
-                # Validation
-                errors = []
-                if not all([company_name, company_email, full_name, email, username, password, division]):
-                    errors.append("All fields marked * are required.")
-                if password != confirm_password:
-                    errors.append("Passwords do not match.")
-                if len(password) < 8:
-                    errors.append("Password must be at least 8 characters.")
-                if score < 60:
-                    errors.append("Password is too weak. Please choose a stronger password.")
-                if not terms:
-                    errors.append("You must accept the Terms of Service.")
-
-                if errors:
-                    for err in errors:
-                        st.error(f"❌ {err}")
-                else:
-                    try:
-                        # Create company first
-                        company_data = {
-                            'company_name': company_name.strip(),
-                            'email': company_email.strip(),
-                            'phone': company_phone.strip(),
-                            'division': division
-                        }
-                        success, result = db.create_company(company_data)
-                        if success:
-                            company_id = result
-                            # Then create admin user
-                            user_data = {
-                                'username': username.strip(),
-                                'password': password,
-                                'email': email.strip(),
-                                'full_name': full_name.strip(),
-                                'phone': company_phone.strip(),
-                                'role': 'company_admin',
-                                'account_type': 'company',
-                                'is_approved': False
-                            }
-                            user_success, user_result = db.create_user(company_id, user_data, None)
-                            if user_success:
-                                st.success("✅ Company registration submitted successfully!")
-                                st.info("📧 Your account is under review. You will receive an email once approved (usually within 24‑48 hours).")
-                                st.balloons()
-                                navigate_to("login")
-                            else:
-                                st.error(f"❌ User creation failed: {user_result}")
-                        else:
-                            st.error(f"❌ Company creation failed: {result}")
-                    except Exception as e:
-                        logger.error("Company registration error", exc_info=True)
-                        st.error("❌ An unexpected error occurred. Please try again later.")
-
-    # ========================= INDIVIDUAL REGISTRATION =========================
-    with tab2:
-        st.markdown("### 👤 Register as an Individual")
-        st.caption("For freelancers, consultants, and sole proprietors (auto‑approved)")
-
-        # Import and render the existing individual registration module
-        from modules.individual_registration import render_individual_registration
-        render_individual_registration()
-
-    # ========================= SIDEBAR – Helpful info =========================
-    with st.sidebar:
-        st.markdown("### 📋 Registration Guidelines")
-        st.markdown("""
-        **🏢 Company Accounts**
-        - Requires admin approval
-        - Suitable for teams and organisations
-        - Full platform access after approval
-
-        **👤 Individual Accounts**
-        - Faster activation (auto‑approved)
-        - Ideal for freelancers & consultants
-        - Email verification required
-        """)
-        st.info("💡 Already have an account?")
-        if st.button("→ Login Instead", use_container_width=True):
-            navigate_to("login")
-
-    debug_print("✅ Registration page render complete")
-def register_page_bak() -> None:
-    """Registration Page - Separate flows for Company vs Individual"""
-    debug_print("📝 Rendering registration page")
-    
-    render_page_header("📝 Create New Account", "Choose the account type that best fits you")
-    
-    # Tabs for clear separation
-    tab1, tab2 = st.tabs(["🏢 Company Registration", "👤 Individual Registration"])
-    
-    # ====================== COMPANY REGISTRATION ======================
-    with tab1:
-        st.markdown("### 🏢 Register as a Company")
-        st.caption("For construction companies, contractors, and organizations (requires admin approval)")
-        
-        with st.form("company_register_form", clear_on_submit=True):
-            st.markdown("#### Company Information")
-            company_name = st.text_input("Company Name *", key="comp_reg_name")
-            company_email = st.text_input("Company Email *", key="comp_reg_email")
-            company_phone = st.text_input("Company Phone *", key="comp_reg_phone")
-            division = st.selectbox("Division / Region *", 
-                ["Dhaka", "Chittagong", "Rajshahi", "Khulna", "Barisal", "Sylhet", "Rangpur", "Mymensingh"],
-                key="comp_reg_division"
-            )
-            
-            st.markdown("#### Admin Account Details")
-            full_name = st.text_input("Full Name (Admin) *", key="comp_reg_fullname")
-            email = st.text_input("Admin Email *", key="comp_reg_admin_email")
-            username = st.text_input("Username *", key="comp_reg_username")
-            
-            password = st.text_input("Password *", type="password", key="comp_reg_password")
-            confirm_password = st.text_input("Confirm Password *", type="password", key="comp_reg_confpass")
-            
-            # Password Strength
-            if password:
-                score, message, color = validate_password_strength(password)
-                st.progress(score / 100)
-                st.markdown(f"<p style='color:{color}; font-size:0.9em;'>{message}</p>", unsafe_allow_html=True)
-            
-            terms = st.checkbox("I agree to the Terms of Service and Privacy Policy *", key="comp_reg_terms")
-            
-            submitted = st.form_submit_button("Submit Company Registration", 
-                                            use_container_width=True, 
-                                            type="primary")
-            
-            if submitted:
-                if not all([company_name, company_email, full_name, email, username, password, division]):
-                    st.error("❌ Please fill all required fields.")
-                elif password != confirm_password:
-                    st.error("❌ Passwords do not match.")
-                elif len(password) < 8:
-                    st.error("❌ Password must be at least 8 characters.")
-                elif score < 60:
-                    st.error("❌ Password is too weak.")
-                elif not terms:
-                    st.error("❌ You must accept the terms.")
-                else:
-                    try:
-                        company_data = {
-                            'company_name': company_name.strip(),
-                            'email': company_email.strip(),
-                            'phone': company_phone.strip(),
-                            'division': division
-                        }
-                        
-                        success, result = db.create_company(company_data)
-                        
-                        if success:
-                            company_id = result
-                            user_data = {
-                                'username': username.strip(),
-                                'password': password,
-                                'email': email.strip(),
-                                'full_name': full_name.strip(),
-                                'phone': company_phone.strip(),
-                                'role': 'company_admin',
-                                'account_type': 'company',
-                                'is_approved': False
-                            }
-                            
-                            user_success, user_result = db.create_user(company_id, user_data, None)
-                            
-                            if user_success:
-                                st.success("✅ Company registration submitted successfully!")
-                                st.info("Your account is under review. You will receive an email once approved (usually within 24-48 hours).")
-                                navigate_to("login")
-                            else:
-                                st.error(f"❌ User creation failed: {user_result}")
-                        else:
-                            st.error(f"❌ Company creation failed: {result}")
-                    except Exception as e:
-                        logger.error("Company registration error", exc_info=True)
-                        st.error("❌ An error occurred. Please try again.")
-    
-        # ====================== INDIVIDUAL REGISTRATION ======================
-    with tab2:
-        # Use the imported individual registration module
-        from modules.individual_registration import render_individual_registration
-        render_individual_registration()
-
-    
-    # Sidebar / Info Box
-    with st.sidebar:
-        st.markdown("### 📋 Registration Guidelines")
-        st.markdown("""
-        **Company Accounts:**
-        - Require admin approval
-        - Suitable for teams
-        - Full platform access after approval
-        
-        **Individual Accounts:**
-        - Faster activation
-        - Ideal for freelancers & consultants
-        - Auto-approved
-        """)
-        
-        st.info("💡 Already have an account?")
-        if st.button("→ Login Instead", use_container_width=True):
-            navigate_to("login")
-    
-    debug_print("✅ Registration page render complete")
-
-
-def pricing_page() -> None:
-    """Pricing plans page with interactive selection"""
-    debug_print("💰 Rendering pricing page")
-    
-    # Import and call the subscription module
-    from modules.subscription import render_subscription_page
-    render_subscription_page()
-    
-    debug_print("✅ Pricing page render complete")
-
-
-
-
-
-def contact_page() -> None:
-    """Contact us page with form"""
-    debug_print("📞 Rendering contact page")
-    
-    render_page_header("📞 Contact Us", "We're here to help")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        with st.form("contact_form", clear_on_submit=True):
-            name = st.text_input("Your Name *", key="contact_name")
-            email = st.text_input("Your Email *", key="contact_email")
-            subject = st.selectbox("Subject", 
-                ["General Inquiry", "Technical Support", "Sales Question", "Partnership", "Other"],
-                key="contact_subject"
-            )
-            message = st.text_area("Message *", height=150, key="contact_message")
-            
-            submitted = st.form_submit_button("Send Message", use_container_width=True, type="primary")
-            
-            if submitted:
-                if not all([name, email, message]):
-                    st.error("❌ Please fill all required fields")
-                else:
-                    try:
-                        db.save_contact_message(name, email, subject, message)
-                        st.success("✅ Thank you! We'll get back to you within 24 hours.")
-                        # Clear form by rerunning
-                        st.rerun()
-                    except Exception as e:
-                        debug_print(f"❌ Contact form error: {e}")
-                        st.error("❌ Failed to send message. Please try again or email support@tenderai.com")
-    
-    with col2:
-        st.markdown("### 📬 Other Ways to Reach Us")
-        st.markdown("""
-        **Email**  
-        📧 support@tenderai.com  
-        📧 sales@tenderai.com  
-        
-        **Phone**  
-        📱 +880 1XXX-XXXXXX (Sat-Thu, 9AM-6PM)  
-        
-        **Office**  
-        📍 Dhaka, Bangladesh  
-        """)
-        
-        st.markdown("### ⏱️ Response Times")
-        st.markdown("""
-        - **Technical Support**: < 4 hours (business days)  
-        - **Sales Inquiries**: < 24 hours  
-        - **General Questions**: < 48 hours  
-        """)
-    
-    debug_print("✅ Contact page render complete")
-    
-def dashboard_page_bak() -> None:
-    """Main dashboard for authenticated users"""
-    
-    # No need for separate header - top navigation handles it
-    # Just render dashboard content
-        # Add card CSS
-    st.markdown("""
-    <style>
-    .metric-card {
-        background: var(--bg-card);
-        border-radius: 12px;
-        padding: 1rem;
-        text-align: center;
-        border: 1px solid var(--border-color);
-        transition: transform 0.2s;
-    }
-    .metric-card:hover {
-        transform: translateY(-3px);
-    }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: bold;
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    .metric-label {
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-        margin-top: 0.25rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3, col4 = st.columns(4)
-    
-    # Get stats
-    stats = db.get_company_stats(st.session_state.company_id) if st.session_state.company_id else {'total_analyses': 0, 'win_rate': 0, 'total_users': 1}
-    
-    with col1:
-        st.metric("📈 Total Analyses", stats.get('total_analyses', 0))
-    with col2:
-        win_rate = stats.get('win_rate', 0)
-        st.metric("🎯 Win Rate", f"{win_rate:.1f}%")
-    with col3:
-        st.metric("👥 Team Members", stats.get('total_users', 1))
-    with col4:
-        sub = db.get_user_subscription(st.session_state.user_id)
-        limit = sub.get('analyses_limit', 5)
-        used = sub.get('analyses_used', 0)
-        remaining = "∞" if limit == -1 else max(0, limit - used)
-        st.metric("📊 Analyses Left", remaining)
-    
-    # Quick actions
-    st.markdown("### ⚡ Quick Actions")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        if st.button("📋 Tenders", use_container_width=True):
-            st.session_state.page = "tender_management"
-            st.rerun()
-    
-    with col2:
-        if st.button("📊 BOQ Generator", use_container_width=True):
-            st.session_state.page = "boq_generator"
-            st.rerun()
-    
-    with col3:
-        print("🔍 RENDERING DASHBOARD PAGE - START NEW ANALYSIS BUTTON")
-        if st.button("🔍 Start New Analysis", key="dashboard_start_new_analysis_btn", use_container_width=True, type="primary"):
-            navigate_to("new_analysis")
-
-    with col4:
-        if st.button("🎯 Bid Optimizer", use_container_width=True):
-            st.session_state.page = "boq_bid_optimizer"
-            st.rerun()
-    
-    with col5:
-        if st.session_state.user_role in ['admin', 'system_admin', 'company_admin']:
-            if st.button("👥 Team Management", use_container_width=True):
-                st.session_state.page = "user_management"
-                st.rerun()
-    
-    # Recent analyses table
-    st.markdown("### 🕐 Recent Analyses")
-    
-    try:
-        recent_df = db.get_user_analyses(
-            user_id=st.session_state.user_id,
-            company_id=st.session_state.company_id,
-            role=st.session_state.user_role,
-            limit=5
-        )
-        
-        if recent_df is not None and not recent_df.empty:
-            # Display recent analyses
-            for _, analysis in recent_df.iterrows():
-                col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 1.5, 1])
-                with col1:
-                    st.markdown(analysis.get('tender_title', 'Untitled')[:50])
-                with col2:
-                    st.markdown(f"BDT {analysis.get('recommended_bid', 0):,.0f}")
-                with col3:
-                    win_prob = analysis.get('success_probability', 0) or 0
-                    win_pct = win_prob * 100 if win_prob <= 1 else win_prob
-                    st.markdown(f"{win_pct:.1f}%")
-                with col4:
-                    status = analysis.get('bid_status', 'draft')
-                    emoji = {"won": "🏆", "lost": "❌", "submitted": "📤", "draft": "⚪"}.get(status, "⚪")
-                    st.markdown(f"{emoji} {status.title()}")
-                with col5:
-                    if st.button("View", key=f"view_{analysis.get('id')}"):
-                        st.session_state.selected_analysis_id = analysis.get('id')
-                        st.session_state.page = "history"
-                        st.rerun()
-                st.markdown("---")
-        else:
-            st.info("📭 No analyses yet. Start your first analysis!")
-    except Exception as e:
-        st.info("📭 Start your first analysis to see recent activity here!")
-
 
 def history_page() -> None:
     """History page - delegates to analysis_history module"""
@@ -1448,7 +728,7 @@ def _nav_button(label: str, page_key: str, badge: str = None):
         "competitor_master": "competitor_master",
         "post_evaluation": "post_evaluation",
         "intelligent_suggestions": "intelligent_suggestions",
-        "scenario_generator": "scenario_generator",
+        "price_to_win_simulator": "price_to_win_simulator",
         # Company Management
         "company_dashboard": "company_dashboard",
         "egp_boq_workspace": "egp_boq_workspace",
@@ -1599,7 +879,7 @@ def render_sidebar() -> None:
             _nav_button("🗂️ Competitor Master", "competitor_master")
             _nav_button("📋 Post-Evaluation", "post_evaluation")
             _nav_button("🧠 AI Suggestions", "intelligent_suggestions")
-            _nav_button("🧠 Scenario Generator", "scenario_generator")  # Fixed!
+            _nav_button("🔮 Price to Win Simulator", "price_to_win_simulator")  # Fixed!
         
         st.markdown("---")
         
@@ -1699,20 +979,36 @@ def render_sidebar() -> None:
 def _render_public_pages() -> None:
     """Render pages for non-authenticated users"""
     from modules.individual_registration import render_individual_registration, render_individual_login
+    from _pages.extension_features import show as extension_features_page
     
     page_handlers = {
-        'home': lambda: show_landing_page(),  # Use the new landing page
+        # Main pages
+        'home': landing_page,
         'login': login_page,
         'register': register_page,
         'pricing': pricing_page,
-        'about': lambda: show_about_page(),  # Use the new about page
+        'about': lambda: show_about_page(),
         'contact': contact_page,
+        
+        # Individual user pages
         'individual_register': render_individual_registration,
         'individual_login': render_individual_login,
+        
+        # Extension pages (public)
+        'extension_features': extension_features_page,  # ← ADD THIS
+        
+        # Auth pages
+        'forgot_password': render_forgot_password,
+        'reset_password': lambda: render_reset_password(st.query_params.get("token", "")),
     }
     
-    handler = page_handlers.get(st.session_state.page, home_page)
-    handler()
+    handler = page_handlers.get(st.session_state.page, landing_page)
+    
+    try:
+        handler()
+    except Exception as e:
+        debug_print(f"❌ Public page render error: {e}")
+        st.error("⚠️ Unable to load this page. Please try again.")
 
 
 def _render_authenticated_pages() -> None:
@@ -1755,9 +1051,13 @@ def _render_authenticated_pages() -> None:
         PageRoutes.BOQ_GENERATOR: lambda: _import_and_call('modules.boq_generator_ui', 'render_boq_generator'),
         PageRoutes.BOQ_ADMIN_REPORT: lambda: _import_and_call('modules.boq_admin_report', 'render_boq_admin_report'),
         PageRoutes.BOQ_BID_OPTIMIZER: lambda: _import_and_call('modules.boq_bid_bridge', 'render_boq_bid_integration'),
-        PageRoutes.SCENARIO_GENERATOR: lambda: render_bid_scenario_generator_ui(db, SubscriptionManager(db))
-
-
+        
+        PageRoutes.COMPANY_KNOWLEDGE: show_enhanced_company_dashboard,
+        PageRoutes.AUTO_FILL_EXTENSION_ADMIN: show_extension_admin,
+        PageRoutes.AUTO_FILL_EXTENSION_USAGE: show_extension_usage,
+        PageRoutes.AUTO_FILL_EXTENSION_DOWNLOAD: lambda: _import_and_call('_pages.extension_download', 'show'),  
+        PageRoutes.AUTO_FILL_EXTENSION_FEATURES: lambda: _import_and_call('_pages.extension_features', 'show'), 
+        PageRoutes.PRICE_TO_WIN_SIMULATOR: lambda: render_price_to_win_simulator_ui(db, SubscriptionManager(db))
     }
     
     # Get handler with fallback to dashboard for unknown routes
@@ -1777,16 +1077,6 @@ def _render_authenticated_pages() -> None:
         if DEBUG_MODE:
             with st.expander("🐛 Debug Traceback"):
                 st.code(traceback.format_exc(), language="python")
-
-def _import_and_call(module_path: str, function_name: str, *args, **kwargs):
-    """
-    Lazy import helper for module-based page handlers.
-    Prevents importing all modules at startup.
-    """
-    import importlib
-    module = importlib.import_module(module_path)
-    func = getattr(module, function_name)
-    return func(*args, **kwargs)
 
 # =============================================================================
 # 🎨 HEADER COMPONENT (For Public Pages)
@@ -2068,7 +1358,7 @@ def _handle_subscription_redirect():
     """Redirect to appropriate subscription page based on user type"""
     account_type = st.session_state.get('account_type', 'company')
     if account_type == 'individual':
-        from subscription import render_subscription_page
+        from modules.subscription import render_subscription_page
         render_subscription_page()
     else:
         show_company_subscription()
@@ -2163,7 +1453,9 @@ if __name__ == "__main__":
     debug_print("🎬 Starting TenderAI application...")
     #upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
     #db.update_role_permissions_for_rates()
+    # Add this function to main.py after db = DatabaseManager() initialization
 
+    
     # ✅ Initialize once at startup
     initialize_session_state()
     
@@ -2177,7 +1469,7 @@ if __name__ == "__main__":
                 'home', 'login', 'register', 'pricing', 'about', 'contact',
                 'dashboard', 'new_analysis', 'history', 'profile', 'subscription',
                 'user_management', 'tender_management', 'post_evaluation', 'intelligent_suggestions',
-                'historical_data', 'analysis_history', 'competitor_tracking', 'scenario_generator,' 'competitor_master',
+                'historical_data', 'analysis_history', 'competitor_tracking', 'price_to_win_simulator,' 'competitor_master',
                 'admin_dashboard', 'user_approval', 'role_management', 'tutorial'
             ]
             

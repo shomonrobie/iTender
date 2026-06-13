@@ -1,3 +1,5 @@
+version = "v007_scenarion_tables"
+
 
 
 def up(db_path):

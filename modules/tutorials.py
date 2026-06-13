@@ -43,7 +43,7 @@ def render_tutorial():
     st.markdown("---")
     
     # Create tabs organized by user journey
-    tab_intro, tab_tender, tab_boq, tab_optimize, tab_rates, tab_admin, tab_advanced = st.tabs([
+    tab_intro, tab_tender, tab_boq, tab_optimize, tab_rates, tab_admin, tab_advanced, tab_extension = st.tabs([
         "🌟 Getting Started",
         "📋 Tender Management",
         "📄 BOQ Generation",
@@ -51,6 +51,7 @@ def render_tutorial():
         "🏗️ Rate Management",
         "👑 Admin Guide",
         "⚙️ Advanced Features"
+        "📄 Extension"
     ])
     
     with tab_intro:
@@ -73,7 +74,8 @@ def render_tutorial():
     
     with tab_advanced:
         render_advanced_tutorial()
-
+    with tab_extension:
+        generate_extension_setup_instructions()
 
 def render_getting_started():
     """Getting started guide for new users"""
@@ -593,6 +595,54 @@ def render_sidebar_tutorial():
             st.rerun()
 
 
+def generate_extension_setup_instructions():
+    """Generate setup instructions for users"""
+    
+    instructions = """
+# TenderAI Chrome Extension Setup
+
+## Installation
+
+### Method 1: Developer Mode (Recommended for testing)
+1. Download the `tenderai_extension.zip` file
+2. Extract the zip file to a folder
+3. Open Chrome and go to `chrome://extensions/`
+4. Enable "Developer mode" (toggle in top right)
+5. Click "Load unpacked"
+6. Select the extracted extension folder
+7. The extension icon should appear in your toolbar
+
+### Method 2: Enterprise Deployment
+For organization-wide deployment, use Chrome Enterprise policies:
+- Add the extension ID to the force-installed list
+- Configure policy to allow the extension on tender sites
+
+## Configuration
+
+1. Click the extension icon in the toolbar
+2. Sign in with your TenderAI credentials
+3. The extension will automatically detect tender forms
+4. Auto-fill confidence threshold can be adjusted in settings
+
+## Supported Sites
+- e-GP Bangladesh (eptenders.gov.bd)
+- e-Procurement (eprocure.gov.bd)
+- DPP (dpp.gov.bd)
+- Any tender portal with form fields
+
+## Troubleshooting
+- If forms aren't detected, refresh the page
+- Check that you're logged into TenderAI
+- Verify your subscription has auto-fill credits remaining
+"""
+    
+    with open("EXTENSION_SETUP.md", "w") as f:
+        f.write(instructions)
+    print("✅ Created EXTENSION_SETUP.md")
+
+if __name__ == "__main__":
+    create_extension_package()
+    generate_extension_setup_instructions()
     
         
 

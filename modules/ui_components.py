@@ -275,7 +275,7 @@ def render_dark_mode_toggle():
     # Create columns for the toggle
     col1, col2, col3 = st.columns([2, 1, 2])
     
-    with col2:
+    with col3:
         if st.session_state.dark_mode:
             if st.button("☀️ Light Mode", use_container_width=True, key=f"light_mode_{unique_suffix}"):
                 toggle_dark_mode()

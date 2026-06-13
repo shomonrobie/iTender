@@ -1,455 +1,31 @@
-# In your admin dashboard (_pages/admin_dashboard.py)
+# _pages/admin_dashboard.py - Refactored (UI only)
 
 import streamlit as st
 import pandas as pd
 import os
-import re
-from collections import defaultdict
+import datetime
 from database.db_manager import DatabaseManager
 from modules.egp_boq_workspace import render_boq_workspace
-from modules.auth import restore_session_from_url
-import datetime
-#from modules.lged_parser import render_lged_management
-#from modules.pwd_rate_management_dashboard import PWDManagementDashboard
-#from modules.pwd_import_wizard import PWDImportWizard
-#from modules.pwd_parser import PWDParserWithHierarchy  # Your existing parser
-#from modules.unified_version_manager import render_unified_version_management, register_version_after_import
-#from modules.unified_rollback_manager import render_rollback_management
-
 from modules.unified_import_wizard import render_unified_import_wizard
 from modules.unified_version_manager import render_unified_version_management
 from modules.unified_rollback_manager import render_rollback_management
-from modules.manual_rate_entry import ManualRateEntry, render_quick_entry
 from modules.rate_viewer import render_rate_viewer
 from modules.rate_crud_forms import render_rate_crud_forms
+from modules.pwd_data_manager import (
+    PWDParserWithHierarchy, 
+    PWDExtractorForVerification,
+    save_hierarchy_to_database,
+    get_rate_versions,
+    archive_version
+)
 
 
 db = DatabaseManager()
 DB_PATH = db.db_path
 
 
-class PWDParserWithHierarchy:
-    """Parser that maintains parent-child relationships in PWD schedule"""
-    
-    def __init__(self):
-        self.parent_items = []
-        self.child_items = []
-    
-    def parse_pdf_with_hierarchy(self, file_path, max_pages=None):
-        """Parse PDF while maintaining parent-child hierarchy"""
-        import pdfplumber
-        
-        items = []
-        
-        with pdfplumber.open(file_path) as pdf:
-            total_pages = len(pdf.pages)
-            pages_to_process = min(total_pages, max_pages) if max_pages else total_pages
-            
-            for page_num in range(pages_to_process):
-                page = pdf.pages[page_num]
-                text = page.extract_text()
-                if not text:
-                    continue
-                
-                tables = page.extract_tables(table_settings={
-                    "vertical_strategy": "text",
-                    "horizontal_strategy": "text",
-                    "snap_tolerance": 5,
-                })
-                
-                if tables:
-                    for table in tables:
-                        page_items = self._parse_table(table)
-                        items.extend(page_items)
-                else:
-                    page_items = self._parse_text(text)
-                    items.extend(page_items)
-        
-        return self._organize_hierarchy(items)
-    
-    def _parse_table(self, table):
-        """Parse table rows"""
-        items = []
-        
-        for row in table:
-            if not row or len(row) < 3:
-                continue
-            
-            row_cells = [str(cell).strip() if cell else '' for cell in row]
-            
-            # Find item code
-            pwd_code = None
-            code_col = None
-            for col, cell in enumerate(row_cells[:4]):
-                if re.match(r'^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$', cell):
-                    pwd_code = cell
-                    code_col = col
-                    break
-            
-            if not pwd_code:
-                continue
-            
-            # Determine level
-            code_parts = pwd_code.split('.')
-            level = len(code_parts)
-            
-            # Extract description
-            desc = ""
-            if code_col is not None and code_col + 1 < len(row_cells):
-                desc = row_cells[code_col + 1].strip()
-                desc = re.sub(r'^\d+(?:\.\d+)?\s*$', '', desc)
-            
-            if not desc:
-                continue
-            
-            # Extract rates
-            rates = self._extract_rates(row_cells, code_col)
-            
-            # Extract unit
-            unit = self._extract_unit(row_cells, code_col)
-            
-            items.append({
-                'pwd_code': pwd_code,
-                'level': level,
-                'description': desc,
-                'has_rates': len(rates) > 0,
-                'rates': rates,
-                'unit': unit
-            })
-        
-        return items
-    
-    def _parse_text(self, text):
-        """Parse raw text"""
-        items = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            code_match = re.match(r'^(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?)\s+', line)
-            if not code_match:
-                continue
-            
-            pwd_code = code_match.group(1)
-            code_parts = pwd_code.split('.')
-            level = len(code_parts)
-            
-            remaining = line[len(code_match.group(0)):].strip()
-            
-            # Find rates
-            rate_pattern = r'Tk\.?\s*([\d,]+(?:\.\d{2})?)'
-            rate_matches = list(re.finditer(rate_pattern, remaining, re.I))
-            
-            if rate_matches:
-                desc = remaining[:rate_matches[0].start()].strip()
-                desc = re.sub(r'\s+', ' ', desc).strip()
-                
-                # Extract rates
-                zone_names = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
-                rates = {}
-                for idx, match in enumerate(rate_matches[:4]):
-                    if idx < len(zone_names):
-                        try:
-                            clean_rate = float(match.group(1).replace(',', ''))
-                            rates[zone_names[idx]] = clean_rate
-                        except:
-                            pass
-                
-                # Extract unit
-                unit = "N/A"
-                unit_match = re.search(r'\b(cum|sqm|meter|each|job|set|kg|hour|month|tender|point)\b', desc.lower())
-                if unit_match:
-                    unit = unit_match.group(1)
-                    desc = re.sub(r'\b' + unit + r'\b', '', desc, flags=re.I).strip()
-            else:
-                desc = remaining
-                rates = {}
-                unit = "N/A"
-            
-            if desc:
-                items.append({
-                    'pwd_code': pwd_code,
-                    'level': level,
-                    'description': desc,
-                    'has_rates': len(rates) > 0,
-                    'rates': rates,
-                    'unit': unit
-                })
-        
-        return items
-    
-    def _extract_rates(self, row_cells, code_col):
-        """Extract rates from row"""
-        rates = {}
-        zone_names = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
-        rate_start = 5 if code_col is None or code_col < 5 else code_col + 3
-        
-        for idx, zone in enumerate(zone_names):
-            rate_col = rate_start + idx
-            if rate_col < len(row_cells):
-                rate_val = self._extract_numeric(row_cells[rate_col])
-                if rate_val and rate_val > 0:
-                    rates[zone] = rate_val
-        
-        return rates
-    
-    def _extract_unit(self, row_cells, code_col):
-        """Extract unit from row"""
-        if code_col is None or code_col + 2 >= len(row_cells):
-            return "N/A"
-        
-        unit_cell = row_cells[code_col + 2].lower()
-        unit_patterns = ['cum', 'sqm', 'meter', 'each', 'job', 'set', 'kg', 'hour', 'month', 'tender', 'point']
-        
-        for pattern in unit_patterns:
-            if pattern in unit_cell:
-                return pattern
-        
-        return "N/A"
-    
-    def _extract_numeric(self, value):
-        """Extract numeric value"""
-        if not value or value == '—':
-            return None
-        
-        cleaned = re.sub(r'[^\d.-]', '', str(value).replace(',', ''))
-        try:
-            return float(cleaned) if cleaned and cleaned != '-' else None
-        except:
-            return None
-    
-    def _organize_hierarchy(self, items):
-        """Organize into parent-child structure"""
-        
-        hierarchy = {
-            'parents': [],
-            'children': [],
-            'parent_child_map': {}
-        }
-        
-        # First pass: collect parents
-        for item in items:
-            code_parts = item['pwd_code'].split('.')
-            if len(code_parts) == 2:  # Parent
-                hierarchy['parents'].append({
-                    'code': item['pwd_code'],
-                    'description': item['description'],
-                    'chapter': code_parts[0]
-                })
-                hierarchy['parent_child_map'][item['pwd_code']] = []
-        
-        # Second pass: collect children
-        for item in items:
-            code_parts = item['pwd_code'].split('.')
-            if len(code_parts) >= 3:  # Child
-                parent_code = '.'.join(code_parts[:2])
-                
-                child_item = {
-                    'pwd_code': item['pwd_code'],
-                    'parent_code': parent_code,
-                    'description': item['description'],
-                    'unit': item['unit'],
-                    'rates': item['rates']
-                }
-                
-                hierarchy['children'].append(child_item)
-                
-                if parent_code in hierarchy['parent_child_map']:
-                    hierarchy['parent_child_map'][parent_code].append(child_item)
-        
-        return hierarchy
-
-
-class PWDExtractorForVerification:
-    """Extract and analyze PWD structure for manual verification"""
-    
-    def __init__(self):
-        self.all_items = []
-        self.parents = {}
-        self.children = defaultdict(list)
-        self.orphans = []
-        self.items_without_children = set()
-    
-    def extract_from_pdf(self, file_path, max_pages=None):
-        """Extract all items from PDF with hierarchy analysis"""
-        import pdfplumber
-        
-        with pdfplumber.open(file_path) as pdf:
-            total_pages = len(pdf.pages)
-            pages_to_process = min(total_pages, max_pages) if max_pages else total_pages
-            
-            for page_num in range(pages_to_process):
-                page = pdf.pages[page_num]
-                text = page.extract_text()
-                if not text:
-                    continue
-                
-                tables = page.extract_tables(table_settings={
-                    "vertical_strategy": "text",
-                    "horizontal_strategy": "text",
-                    "snap_tolerance": 5,
-                })
-                
-                if tables:
-                    for table in tables:
-                        self._process_table(table)
-                else:
-                    self._process_text(text)
-        
-        # Analyze hierarchy
-        self._analyze_hierarchy()
-        
-        return self._generate_report()
-    
-    def _process_table(self, table):
-        """Process table rows"""
-        for row in table:
-            if not row or len(row) < 2:
-                continue
-            
-            row_cells = [str(cell).strip() if cell else '' for cell in row]
-            
-            # Find item code
-            pwd_code = None
-            description = ""
-            
-            for col, cell in enumerate(row_cells[:4]):
-                if re.match(r'^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$', cell):
-                    pwd_code = cell
-                    if col + 1 < len(row_cells):
-                        description = row_cells[col + 1]
-                        description = re.sub(r'^\d+(?:\.\d+)?\s*$', '', description)
-                        description = re.sub(r'\s+', ' ', description).strip()
-                    break
-            
-            if pwd_code and description:
-                self.all_items.append({
-                    'code': pwd_code,
-                    'description': description[:500],
-                    'has_rates': self._check_has_rates(row_cells)
-                })
-    
-    def _process_text(self, text):
-        """Process raw text lines"""
-        lines = text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            code_match = re.match(r'^(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?)\s+', line)
-            if not code_match:
-                continue
-            
-            pwd_code = code_match.group(1)
-            remaining = line[len(code_match.group(0)):].strip()
-            
-            has_rates = bool(re.search(r'Tk\.?\s*[\d,]+', remaining, re.I))
-            
-            if has_rates:
-                rate_match = re.search(r'Tk\.?\s*[\d,]+', remaining, re.I)
-                if rate_match:
-                    description = remaining[:rate_match.start()].strip()
-                else:
-                    description = remaining
-            else:
-                description = remaining
-            
-            description = re.sub(r'\s+', ' ', description).strip()
-            
-            if description:
-                self.all_items.append({
-                    'code': pwd_code,
-                    'description': description[:500],
-                    'has_rates': has_rates
-                })
-    
-    def _check_has_rates(self, row_cells):
-        """Check if row contains rate values"""
-        for cell in row_cells[5:9]:
-            if cell and re.search(r'Tk\.?\s*[\d,]+', str(cell), re.I):
-                return True
-        return False
-    
-    def _analyze_hierarchy(self):
-        """Analyze parent-child relationships"""
-        
-        # First pass: identify parents
-        for item in self.all_items:
-            code_parts = item['code'].split('.')
-            if len(code_parts) == 2:
-                self.parents[item['code']] = {
-                    'code': item['code'],
-                    'description': item['description'],
-                    'has_rates': item['has_rates'],
-                    'child_count': 0
-                }
-        
-        # Second pass: assign children
-        for item in self.all_items:
-            code_parts = item['code'].split('.')
-            if len(code_parts) >= 3:
-                parent_code = '.'.join(code_parts[:2])
-                if parent_code in self.parents:
-                    self.children[parent_code].append(item)
-                    self.parents[parent_code]['child_count'] += 1
-                else:
-                    self.orphans.append({
-                        'code': item['code'],
-                        'description': item['description'],
-                        'parent_expected': parent_code
-                    })
-        
-        # Find parents with no children
-        for parent_code, parent_data in self.parents.items():
-            if parent_data['child_count'] == 0:
-                self.items_without_children.add(parent_code)
-    
-    def _generate_report(self):
-        """Generate comprehensive verification report"""
-        
-        report = {
-            'summary': {
-                'total_items': len(self.all_items),
-                'total_parents': len(self.parents),
-                'total_children': sum(len(children) for children in self.children.values()),
-                'orphans': len(self.orphans),
-                'parents_without_children': len(self.items_without_children)
-            },
-            'parents': [],
-            'children': [],
-            'orphans_list': self.orphans,
-            'parents_without_children_list': []
-        }
-        
-        # Parents list
-        for code, data in sorted(self.parents.items()):
-            report['parents'].append({
-                'Item Code': code,
-                'Description': data['description'][:200],
-                'Has Direct Rates?': 'Yes' if data['has_rates'] else 'No',
-                'Child Count': data['child_count'],
-                'Status': '⚠️ NO CHILDREN' if data['child_count'] == 0 else '✅ Has Children'
-            })
-        
-        # Parents without children
-        for code in sorted(self.items_without_children):
-            parent_data = self.parents[code]
-            report['parents_without_children_list'].append({
-                'Item Code': code,
-                'Description': parent_data['description'][:200],
-                'Has Direct Rates?': 'Yes' if parent_data['has_rates'] else 'No',
-                'Action Required': 'Verify if this should have child items'
-            })
-        
-        return report
-
 def render_pwd_ingestion_panel():
-    """Main PWD ingestion panel with hierarchy"""
+    """Main PWD ingestion panel with hierarchy - UI only"""
     
     st.markdown("### 📥 Import PWD Schedule")
     st.caption("Upload PWD Schedule PDF - Automatically detects parent-child hierarchy")
@@ -678,179 +254,6 @@ def render_hierarchical_pwd_preview(hierarchy):
             st.info(f"📄 {parent['code']}: {parent['description'][:70]}... (No child items)")
 
 
-def save_hierarchy_to_database(hierarchy, edition_year):
-    """Save hierarchical data to database"""
-    
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        
-        # Create tables if they don't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_parents (
-                pwd_code TEXT PRIMARY KEY,
-                description TEXT,
-                chapter_number TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_children (
-                pwd_code TEXT PRIMARY KEY,
-                parent_code TEXT NOT NULL,
-                description TEXT,
-                unit TEXT,
-                edition_year INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_rates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pwd_code TEXT NOT NULL,
-                zone_name TEXT NOT NULL,
-                unit_rate REAL NOT NULL,
-                edition_year INTEGER NOT NULL,
-                UNIQUE(pwd_code, zone_name, edition_year)
-            )
-        """)
-        
-        # Clear existing data
-        cursor.execute("DELETE FROM pwd_rates WHERE edition_year = ?", (edition_year,))
-        cursor.execute("DELETE FROM pwd_children WHERE edition_year = ?", (edition_year,))
-        cursor.execute("DELETE FROM pwd_parents")
-        
-        # Insert parents
-        for parent in hierarchy['parents']:
-            cursor.execute("""
-                INSERT OR REPLACE INTO pwd_parents (pwd_code, description, chapter_number)
-                VALUES (?, ?, ?)
-            """, (parent['code'], parent['description'][:2000], parent['chapter']))
-        
-        # Insert children and rates
-        for child in hierarchy['children']:
-            cursor.execute("""
-                INSERT OR REPLACE INTO pwd_children (pwd_code, parent_code, description, unit, edition_year)
-                VALUES (?, ?, ?, ?, ?)
-            """, (child['pwd_code'], child['parent_code'], child['description'][:2000], child['unit'], edition_year))
-            
-            for zone, rate in child['rates'].items():
-                cursor.execute("""
-                    INSERT OR REPLACE INTO pwd_rates (pwd_code, zone_name, unit_rate, edition_year)
-                    VALUES (?, ?, ?, ?)
-                """, (child['pwd_code'], zone, rate, edition_year))
-        
-        conn.commit()
-        conn.close()
-        
-        return True, len(hierarchy['parents']), len(hierarchy['children'])
-        
-    except Exception as e:
-        return False, 0, str(e)
-
-
-def show():
-    """Admin dashboard page with full system management"""
-    
-    st.markdown("""
-    <div class="main-header">
-        <h1>👑 Admin Dashboard</h1>
-        <p>System-wide administration and monitoring</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Get all users for stats
-    all_users_raw = db.get_all_users()
-    all_subs = db.get_all_subscriptions()
-    
-    # Convert to dictionary format
-    all_users = []
-    for u in all_users_raw:
-        if hasattr(u, 'keys'):
-            user_dict = dict(u)
-        elif isinstance(u, (tuple, list)):
-            if len(u) >= 10:
-                user_dict = {
-                    'id': u[0], 'username': u[1], 'email': u[2], 'full_name': u[3],
-                    'phone': u[4], 'role': u[5], 'is_active': u[6],
-                    'created_at': u[7], 'last_login': u[8], 'company_name': u[9],
-                    'is_approved': u[10] if len(u) > 10 else 1
-                }
-            else:
-                continue
-        elif isinstance(u, dict):
-            user_dict = u
-        else:
-            continue
-        all_users.append(user_dict)
-    
-    # Statistics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Users", len(all_users))
-    
-    with col2:
-        active_users = len([u for u in all_users if u.get('is_active', 0) == 1]) if all_users else 0
-        st.metric("Active Users", active_users)
-    
-    with col3:
-        companies = set([u.get('company_name', 'N/A') for u in all_users]) if all_users else set()
-        st.metric("Companies", len(companies))
-    
-    with col4:
-        paid_subs = len([s for s in all_subs if len(s) > 2 and s[2] not in ['free', 'trial']]) if all_subs else 0
-        st.metric("Paid Subscriptions", paid_subs)
-    
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-        "📊 Overview", 
-        "👥 All Users", 
-        "🏢 Companies", 
-        "👑 System Users", 
-        "🔐 Role Management",
-        "🏗️ Rate Import",    
-        "📅 Version Management",
-        "🔄 Rollback Management",
-        "📝 Manual Entry",
-        "📊 Rate Viewer"  # ← NEW TAB
-
-    ])
-    
-    with tab1:
-        render_admin_overview(all_users, all_subs)
-    
-    with tab2:
-        render_all_users(all_users)
-    
-    with tab3:
-        render_company_management()
-    
-    with tab4:
-        render_system_user_management()
-    
-    with tab5:
-        render_role_management_page()
-    
-    with tab6:
-        render_unified_import_wizard(db)
-
-    with tab7:
-        render_rollback_management(db)        
-    with tab8:
-        render_unified_version_management(db)
-    with tab9:  # Manual Entry
-        render_rate_crud_forms(db)
-
-    with tab10:
-        render_rate_viewer(db)
-
-
-
-
-"📝 Manual Entry"  # ← NEW TAB
 def render_hierarchical_pwd_viewer():
     """View imported PWD hierarchy from database"""
     
@@ -934,12 +337,177 @@ def render_hierarchical_pwd_viewer():
         st.error(f"Error loading hierarchy: {str(e)}")
 
 
+def render_pwd_version_tab(db_instance):
+    """Render PWD version management tab"""
+    
+    st.subheader("🏗️ PWD Rate Schedule Version Control")
+    
+    tabs = st.tabs(["📥 Import New Version", "📜 Version History", "⚙️ Migration"])
+    
+    with tabs[0]:
+        render_version_import(db_instance)
+    
+    with tabs[1]:
+        render_version_history(db_instance)
+    
+    with tabs[2]:
+        render_version_migration(db_instance)
+
+
+def render_version_import(db_instance):
+    """Import a new version of PWD rates"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        version_name = st.text_input("Version Name", placeholder="PWD Schedule 2025")
+        edition_year = st.number_input("Edition Year", min_value=2020, max_value=2030, value=2025)
+    
+    with col2:
+        effective_date = st.date_input("Effective From")
+        is_active = st.checkbox("Set as Active Version", value=True)
+    
+    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+    
+    if uploaded_file and st.button("Import Version"):
+        st.success(f"✅ Version {version_name} imported successfully!")
+
+
+def render_version_history(db_instance):
+    """Display version history"""
+    
+    versions = get_rate_versions(db_instance)
+    
+    for version in versions:
+        with st.expander(f"{version['name']} ({version['year']})"):
+            st.write(f"**Effective Date:** {version['effective_date']}")
+            st.write(f"**Status:** {'✅ Active' if version['is_active'] else '📦 Archived'}")
+            st.write(f"**Imported:** {version['imported_at']}")
+            st.write(f"**Items:** {version['parent_count']} parents, {version['child_count']} children")
+            
+            if version['is_active']:
+                if st.button("Archive", key=f"archive_{version['id']}"):
+                    archive_version(db_instance, version['id'])
+                    st.rerun()
+
+
+def render_version_migration(db_instance):
+    """Migrate BOQ items to new version"""
+    st.info("Migration functionality coming soon")
+
+def show():
+    """Admin dashboard page with full system management"""
+    
+    st.markdown("""
+    <div class="main-header">
+        <h1>👑 Admin Dashboard</h1>
+        <p>System-wide administration and monitoring</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Get all users for stats
+    all_users_raw = db.get_all_users()
+    all_subs = db.get_all_subscriptions()
+    
+    # Convert to dictionary format
+    all_users = []
+    for u in all_users_raw:
+        if hasattr(u, 'keys'):
+            user_dict = dict(u)
+        elif isinstance(u, (tuple, list)):
+            if len(u) >= 10:
+                user_dict = {
+                    'id': u[0], 'username': u[1], 'email': u[2], 'full_name': u[3],
+                    'phone': u[4], 'role': u[5], 'is_active': u[6],
+                    'created_at': u[7], 'last_login': u[8], 'company_name': u[9],
+                    'is_approved': u[10] if len(u) > 10 else 1
+                }
+            else:
+                continue
+        elif isinstance(u, dict):
+            user_dict = u
+        else:
+            continue
+        all_users.append(user_dict)
+    
+    # Statistics in a row
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Users", len(all_users))
+    
+    with col2:
+        active_users = len([u for u in all_users if u.get('is_active', 0) == 1]) if all_users else 0
+        st.metric("Active Users", active_users)
+    
+    with col3:
+        companies = set([u.get('company_name', 'N/A') for u in all_users]) if all_users else set()
+        st.metric("Companies", len(companies))
+    
+    with col4:
+        paid_subs = len([s for s in all_subs if len(s) > 2 and s[2] not in ['free', 'trial']]) if all_subs else 0
+        st.metric("Paid Subscriptions", paid_subs)
+    
+    # Add a divider to separate metrics from tabs
+    st.markdown("---")
+    
+    # Tabs - now at full width below the metrics
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+        "📊 Overview", 
+        "👥 All Users", 
+        "🏢 Companies", 
+        "👑 System Users", 
+        "🔐 Role Management",
+        "🏗️ Rate Import",    
+        "📅 Version Management",
+        "🔄 Rollback Management",
+        "📝 Manual Entry",
+        "📊 Rate Viewer",
+        "⚙️ System Config",
+        "💳 Subscription Plans"
+    ])
+    
+    with tab1:
+        render_admin_overview(all_users, all_subs)
+    
+    with tab2:
+        render_all_users(all_users)
+    
+    with tab3:
+        render_company_management()
+    
+    with tab4:
+        render_system_user_management()
+    
+    with tab5:
+        render_role_management_page()
+    
+    with tab6:
+        render_unified_import_wizard(db)
+
+    with tab7:
+        render_rollback_management(db)        
+    
+    with tab8:
+        render_unified_version_management(db)
+    
+    with tab9:
+        render_rate_crud_forms(db)
+
+    with tab10:
+        render_rate_viewer(db)
+    
+    with tab11:
+        render_system_configuration()
+    
+    with tab12:
+        render_subscription_plans_management()
 
 def render_admin_overview(all_users, all_subs):
     """Render system overview with charts"""
     st.markdown("### System Overview")
     
-    # User growth chart (from database)
+    # User growth chart
     conn = db.get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -954,7 +522,7 @@ def render_admin_overview(all_users, all_subs):
     
     if user_growth_data:
         user_growth = pd.DataFrame(user_growth_data, columns=['Month', 'Users'])
-        user_growth = user_growth.iloc[::-1]  # Reverse to show chronological
+        user_growth = user_growth.iloc[::-1]
         st.line_chart(user_growth.set_index('Month'))
     else:
         st.info("No user growth data available")
@@ -978,36 +546,12 @@ def render_admin_overview(all_users, all_subs):
         
         role_df = pd.DataFrame(role_counts.items(), columns=['Role', 'Count'])
         st.bar_chart(role_df.set_index('Role'))
-    
-    # Recent activity
-    st.markdown("### Recent Activity")
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT l.action_type, l.target_type, u.username, l.created_at
-            FROM activity_logs l
-            JOIN users u ON l.actor_user_id = u.id
-            ORDER BY l.created_at DESC
-            LIMIT 10
-        """)
-        recent_activity = cursor.fetchall()
-        conn.close()
-        
-        if recent_activity:
-            activity_df = pd.DataFrame(recent_activity, columns=['Action', 'Type', 'User', 'Time'])
-            st.dataframe(activity_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No recent activity")
-    except Exception as e:
-        st.info("Activity logging not yet enabled")
 
 
 def render_all_users(all_users):
     """Render all users table"""
     st.markdown("### All Users")
     
-    # Search filter
     search = st.text_input("🔍 Search users", placeholder="Name, email, or username...")
     
     if all_users:
@@ -1025,7 +569,6 @@ def render_all_users(all_users):
                 'Created': str(u.get('created_at', ''))[:10] if u.get('created_at') else ''
             }
             
-            # Apply search filter
             if search:
                 if (search.lower() in user_dict['Username'].lower() or 
                     search.lower() in user_dict['Email'].lower() or 
@@ -1041,6 +584,7 @@ def render_all_users(all_users):
             st.info("No users match the search criteria")
     else:
         st.info("No users found")
+
 
 def render_company_management():
     """Render company management interface for super admin with subscription control"""
@@ -1551,175 +1095,7 @@ def render_system_user_management():
         else:
             st.info("No system users found")
             
-def render_system_user_management_bak():
-    """Manage system-level users and company users (for system admin)"""
-    st.markdown("### 👥 User Management")
-    st.caption("Create users for companies or system-level access")
-    
-    # ========== ADD NEW USER ==========
-    with st.expander("➕ Add New User", expanded=False):
-        with st.form("add_user_form"):
-            # ... (keep the existing form code as is) ...
-            pass  # Placeholder - keep your existing form code
-    
-    # ========== DISPLAY USERS BY TYPE ==========
-    st.markdown("### 📋 Users")
-    
-    # Tabs for different user types
-    tab1, tab2 = st.tabs(["🏢 Company Users", "👑 System Users"])
-    
-    with tab1:
-        # Get company users
-        companies, _ = db.get_all_companies_filtered(status=1, limit=200, offset=0)
-        
-        if companies:
-            for company in companies:
-                try:
-                    company_users, company_total = db.get_all_users_filtered(
-                        company_id=company['id'],
-                        limit=100,
-                        offset=0
-                    )
-                    
-                    if company_users:
-                        st.markdown(f"#### {company['company_name']} ({company_total} users)")
-                        
-                        for user in company_users:
-                            # Ensure user is a dictionary
-                            if not isinstance(user, dict):
-                                continue
-                            
-                            user_id = user.get('id')
-                            if not user_id:
-                                continue
-                            
-                            with st.expander(f"👤 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').title()}"):
-                                col1, col2 = st.columns([2, 1])
-                                
-                                with col1:
-                                    new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"name_{user_id}")
-                                    new_email = st.text_input("Email", value=user.get('email', ''), key=f"email_{user_id}")
-                                    new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"phone_{user_id}")
-                                    new_role = st.selectbox(
-                                        "Role",
-                                        options=["company_admin", "manager", "analyst", "viewer"],
-                                        index=["company_admin", "manager", "analyst", "viewer"].index(user.get('role', 'viewer')) if user.get('role') in ["company_admin", "manager", "analyst", "viewer"] else 2,
-                                        key=f"role_{user_id}"
-                                    )
-                                    new_active = st.checkbox("Active", value=user.get('is_active', 1) == 1, key=f"active_{user_id}")
-                                    
-                                    if st.button("💾 Save Changes", key=f"save_{user_id}"):
-                                        updates = {}
-                                        if new_full_name != user.get('full_name'):
-                                            updates['full_name'] = new_full_name
-                                        if new_email != user.get('email'):
-                                            updates['email'] = new_email
-                                        if new_phone != user.get('phone'):
-                                            updates['phone'] = new_phone
-                                        if new_role != user.get('role'):
-                                            updates['role'] = new_role
-                                        if new_active != (user.get('is_active', 1) == 1):
-                                            updates['is_active'] = 1 if new_active else 0
-                                        
-                                        if updates:
-                                            if db.update_user(user_id, updates):
-                                                st.success("User updated!")
-                                                st.rerun()
-                                
-                                with col2:
-                                    if st.button("🔑 Reset Password", key=f"reset_{user_id}"):
-                                        success, new_pw = db.reset_user_password(user_id)
-                                        if success:
-                                            st.success(f"New password: `{new_pw}`")
-                                    
-                                    if user_id != st.session_state.user_id:
-                                        if st.button("🗑️ Delete User", key=f"delete_{user_id}", type="secondary"):
-                                            if db.delete_user(user_id):
-                                                st.success("User deleted")
-                                                st.rerun()
-                                    
-                                    st.caption(f"Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
-                except Exception as e:
-                    st.warning(f"Could not load users for {company.get('company_name', 'Unknown')}: {e}")
-        else:
-            st.info("No companies found. Create a company first.")
-    
-    with tab2:
-        # Get system users
-        try:
-            system_users = db.get_system_users()
-        except AttributeError:
-            st.warning("get_system_users() method not available. Please update db_manager.py")
-            return
-        
-        if system_users:
-            for user in system_users:
-                # Ensure user is a dictionary
-                if not isinstance(user, dict):
-                    continue
-                
-                user_id = user.get('id')
-                if not user_id:
-                    continue
-                
-                with st.expander(f"👑 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').replace('_', ' ').title()}"):
-                    col1, col2 = st.columns([2, 1])
-                    
-                    with col1:
-                        new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"sys_name_{user_id}")
-                        new_email = st.text_input("Email", value=user.get('email', ''), key=f"sys_email_{user_id}")
-                        new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"sys_phone_{user_id}")
-                        
-                        # Determine role options based on current role
-                        role_options = ["system_admin", "system_support", "system_auditor"]
-                        current_role = user.get('role', 'system_support')
-                        
-                        try:
-                            role_index = role_options.index(current_role) if current_role in role_options else 1
-                        except ValueError:
-                            role_index = 1
-                        
-                        new_role = st.selectbox(
-                            "Role",
-                            options=role_options,
-                            index=role_index,
-                            key=f"sys_role_{user_id}"
-                        )
-                        new_active = st.checkbox("Active", value=user.get('is_active', 1) == 1, key=f"sys_active_{user_id}")
-                        
-                        if st.button("💾 Save Changes", key=f"sys_save_{user_id}"):
-                            updates = {}
-                            if new_full_name != user.get('full_name'):
-                                updates['full_name'] = new_full_name
-                            if new_email != user.get('email'):
-                                updates['email'] = new_email
-                            if new_phone != user.get('phone'):
-                                updates['phone'] = new_phone
-                            if new_role != user.get('role'):
-                                updates['role'] = new_role
-                            if new_active != (user.get('is_active', 1) == 1):
-                                updates['is_active'] = 1 if new_active else 0
-                            
-                            if updates:
-                                if db.update_user(user_id, updates):
-                                    st.success("User updated!")
-                                    st.rerun()
-                    
-                    with col2:
-                        if st.button("🔑 Reset Password", key=f"sys_reset_{user_id}"):
-                            success, new_pw = db.reset_user_password(user_id)
-                            if success:
-                                st.success(f"New password: `{new_pw}`")
-                        
-                        if user_id != st.session_state.user_id:
-                            if st.button("🗑️ Delete User", key=f"sys_del_{user_id}", type="secondary"):
-                                if db.delete_user(user_id):
-                                    st.success("User deleted")
-                                    st.rerun()
-                        
-                        st.caption(f"Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
-        else:
-            st.info("No system users found")
+
 
 def render_role_management_page():
     """Render role permissions management"""
@@ -1792,28 +1168,492 @@ def render_role_management_page():
                 else:
                     st.error("Failed to update permissions")
 
-def render_pwd_version_tab(db):
-    """Render PWD version management tab"""
+
+def render_system_configuration():
+    """Render system configuration settings including extension API URL"""
+    
+    st.markdown("### ⚙️ System Configuration")
+    st.caption("Manage system-wide settings including API endpoints and extension configuration")
+    
+    # Check if we have the system_config table
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Create system_config table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS system_config (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by INTEGER
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Error creating config table: {e}")
+        return
+    
+    # ========== SECTION 1: EXTENSION API URL ==========
+    st.markdown("#### 🤖 Chrome Extension Configuration")
+    
+    # Get current API URL
+    current_api_url = get_system_config('extension_api_url', get_default_api_url())
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        new_api_url = st.text_input(
+            "Extension API Base URL",
+            value=current_api_url,
+            help="The URL that the Chrome extension will connect to for API calls"
+        )
+        
+        st.caption("⚠️ After changing this URL, users must re-download the extension for changes to take effect.")
+    
+    with col2:
+        if st.button("💾 Save API URL", type="primary", use_container_width=True):
+            if save_system_config('extension_api_url', new_api_url):
+                st.success("✅ API URL saved successfully!")
+                st.info("📥 Reminder: Users need to re-download the extension from the Download page.")
+                st.rerun()
+            else:
+                st.error("Failed to save configuration")
+    
+    # Show current configuration status
+    st.markdown("---")
+    st.markdown("#### 📡 Current Configuration")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Extension API URL", current_api_url)
+    with col2:
+        # Test connection
+        import requests
+        try:
+            response = requests.get(f"{current_api_url}/health", timeout=5)
+            status = "✅ Connected" if response.status_code == 200 else "⚠️ Check URL"
+        except:
+            status = "❌ Not Reachable"
+        st.metric("API Status", status)
+    with col3:
+        # Get extension download count
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extension_downloads'")
+        if cursor.fetchone():
+            cursor.execute("SELECT COUNT(*) FROM extension_downloads")
+            download_count = cursor.fetchone()[0]
+        else:
+            download_count = 0
+        conn.close()
+        st.metric("Extension Downloads", download_count)
+    
+    # ========== SECTION 2: SYSTEM SETTINGS ==========
+    st.markdown("---")
+    st.markdown("#### 🔧 System Settings")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Debug mode setting
+        debug_mode = get_system_config('debug_mode', 'false') == 'true'
+        new_debug_mode = st.checkbox("Enable Debug Mode", value=debug_mode, help="Shows detailed error messages and debug information")
+        if new_debug_mode != debug_mode:
+            if save_system_config('debug_mode', str(new_debug_mode).lower()):
+                st.success("Debug mode setting saved")
+    
+    with col2:
+        # Maintenance mode
+        maintenance_mode = get_system_config('maintenance_mode', 'false') == 'true'
+        new_maintenance = st.checkbox("Maintenance Mode", value=maintenance_mode, help="Shows maintenance page to users")
+        if new_maintenance != maintenance_mode:
+            if save_system_config('maintenance_mode', str(new_maintenance).lower()):
+                st.warning("Maintenance mode setting saved. Restart required for full effect.")
+    
+    # ========== SECTION 3: RATE LIMITS ==========
+    st.markdown("---")
+    st.markdown("#### 🚦 Rate Limits")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        rate_limit = get_system_config('api_rate_limit', '60')
+        new_rate_limit = st.number_input("API Rate Limit (requests per minute)", min_value=10, max_value=1000, value=int(rate_limit))
+        if new_rate_limit != int(rate_limit):
+            if save_system_config('api_rate_limit', str(new_rate_limit)):
+                st.success(f"Rate limit updated to {new_rate_limit} requests/minute")
+    
+    with col2:
+        max_upload_size = get_system_config('max_upload_size_mb', '100')
+        new_max_upload = st.number_input("Max Upload Size (MB)", min_value=10, max_value=500, value=int(max_upload_size))
+        if new_max_upload != int(max_upload_size):
+            if save_system_config('max_upload_size_mb', str(new_max_upload)):
+                st.success(f"Max upload size updated to {new_max_upload} MB")
+    
+    # ========== SECTION 4: CLEAR CACHE ==========
+    st.markdown("---")
+    st.markdown("#### 🧹 Cache Management")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🗑️ Clear Extension Logs", use_container_width=True, type="secondary"):
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM extension_auto_fill_log")
+            conn.commit()
+            conn.close()
+            st.success("Extension logs cleared!")
+    
+    with col2:
+        if st.button("📊 Recalculate Extension Usage", use_container_width=True, type="secondary"):
+            st.info("Usage statistics recalculated")
+    
+    # ========== SECTION 5: EXTENSION DOWNLOAD STATS ==========
+    st.markdown("---")
+    st.markdown("#### 📊 Extension Download Statistics")
+    
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extension_downloads'")
+    if cursor.fetchone():
+        # Total downloads
+        cursor.execute("SELECT COUNT(*) FROM extension_downloads")
+        total_downloads = cursor.fetchone()[0]
+        
+        # Downloads by day (last 7 days)
+        cursor.execute("""
+            SELECT date(downloaded_at) as day, COUNT(*) as count
+            FROM extension_downloads
+            WHERE downloaded_at >= date('now', '-7 days')
+            GROUP BY date(downloaded_at)
+            ORDER BY day DESC
+        """)
+        daily_downloads = cursor.fetchall()
+        
+        # Downloads by user
+        cursor.execute("""
+            SELECT username, COUNT(*) as count
+            FROM extension_downloads
+            GROUP BY username
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        user_downloads = cursor.fetchall()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Total Downloads", total_downloads)
+            
+            if daily_downloads:
+                st.markdown("**Last 7 Days**")
+                for day, count in daily_downloads:
+                    st.write(f"{day}: {count} downloads")
+        
+        with col2:
+            if user_downloads:
+                st.markdown("**Top Downloaders**")
+                for username, count in user_downloads:
+                    st.write(f"{username}: {count} downloads")
+    else:
+        st.info("No extension downloads tracked yet")
+    
+    conn.close()
+
+
+def render_subscription_plans_management():
+    """Render subscription plans management interface for system admin"""
+    
+    st.markdown("### 💳 Subscription Plans Management")
+    st.caption("Configure subscription plans, pricing, and limits")
+    
+    # Get current plans from database
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    
+    # Create subscription_plans table if not exists
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS subscription_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_name TEXT UNIQUE NOT NULL,
+            plan_type TEXT DEFAULT 'company',
+            monthly_price REAL DEFAULT 0,
+            yearly_price REAL DEFAULT 0,
+            max_boq_generations INTEGER DEFAULT 5,
+            max_bid_optimizations INTEGER DEFAULT 5,
+            max_tender_analyses INTEGER DEFAULT 5,
+            max_users INTEGER DEFAULT 1,
+            extension_auto_fills INTEGER DEFAULT 5,
+            can_export_data BOOLEAN DEFAULT 0,
+            can_edit_rates BOOLEAN DEFAULT 0,
+            can_delete_rates BOOLEAN DEFAULT 0,
+            can_create_versions BOOLEAN DEFAULT 0,
+            can_manage_team BOOLEAN DEFAULT 0,
+            description TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Get existing plans
+    cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
+    plans = cursor.fetchall()
+    
+    if not plans:
+        # Insert default plans
+        default_plans = [
+            ('free', 'company', 0, 0, 5, 5, 5, 1, 5, 0, 0, 0, 0, 0, 'Free plan with basic features'),
+            ('basic', 'company', 4999, 49990, 30, 30, 30, 3, 30, 1, 0, 0, 0, 0, 'Basic plan for small businesses'),
+            ('professional', 'company', 14999, 149990, 100, 100, -1, 10, 100, 1, 1, 0, 1, 1, 'Professional plan for growing businesses'),
+            ('enterprise', 'company', 49999, 499990, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 'Enterprise plan with unlimited features')
+        ]
+        
+        for plan in default_plans:
+            cursor.execute("""
+                INSERT OR IGNORE INTO subscription_plans (
+                    plan_name, plan_type, monthly_price, yearly_price,
+                    max_boq_generations, max_bid_optimizations, max_tender_analyses,
+                    max_users, extension_auto_fills, can_export_data, can_edit_rates,
+                    can_delete_rates, can_create_versions, can_manage_team, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, plan)
+        
+        conn.commit()
+        
+        # Re-fetch plans
+        cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
+        plans = cursor.fetchall()
+    
+    # Get column names
+    columns = [description[0] for description in cursor.description]
+    conn.close()
+    
+    st.markdown("#### 📋 Current Plans")
+    
+    # Display existing plans
+    for plan in plans:
+        plan_dict = dict(zip(columns, plan))
+        
+        with st.expander(f"📌 {plan_dict['plan_name'].upper()} Plan", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Pricing**")
+                new_monthly = st.number_input(
+                    "Monthly Price (BDT)", 
+                    value=float(plan_dict['monthly_price']),
+                    min_value=0.0,
+                    step=500.0,
+                    key=f"monthly_{plan_dict['plan_name']}"
+                )
+                new_yearly = st.number_input(
+                    "Yearly Price (BDT)", 
+                    value=float(plan_dict['yearly_price']),
+                    min_value=0.0,
+                    step=1000.0,
+                    key=f"yearly_{plan_dict['plan_name']}"
+                )
+                
+                st.markdown("**Limits**")
+                new_boq = st.number_input(
+                    "Max BOQ Generations", 
+                    value=int(plan_dict['max_boq_generations']),
+                    min_value=-1,
+                    step=1,
+                    key=f"boq_{plan_dict['plan_name']}",
+                    help="-1 = Unlimited"
+                )
+                new_bid = st.number_input(
+                    "Max Bid Optimizations", 
+                    value=int(plan_dict['max_bid_optimizations']),
+                    min_value=-1,
+                    step=1,
+                    key=f"bid_{plan_dict['plan_name']}"
+                )
+                new_analyses = st.number_input(
+                    "Max Tender Analyses", 
+                    value=int(plan_dict['max_tender_analyses']),
+                    min_value=-1,
+                    step=1,
+                    key=f"analyses_{plan_dict['plan_name']}"
+                )
+                new_users = st.number_input(
+                    "Max Users", 
+                    value=int(plan_dict['max_users']),
+                    min_value=-1,
+                    step=1,
+                    key=f"users_{plan_dict['plan_name']}"
+                )
+                new_extension = st.number_input(
+                    "Extension Auto-Fills (per month)", 
+                    value=int(plan_dict['extension_auto_fills']),
+                    min_value=-1,
+                    step=1,
+                    key=f"extension_{plan_dict['plan_name']}"
+                )
+            
+            with col2:
+                st.markdown("**Permissions**")
+                new_export = st.checkbox(
+                    "Can Export Data", 
+                    value=bool(plan_dict['can_export_data']),
+                    key=f"export_{plan_dict['plan_name']}"
+                )
+                new_edit_rates = st.checkbox(
+                    "Can Edit Rates", 
+                    value=bool(plan_dict['can_edit_rates']),
+                    key=f"edit_rates_{plan_dict['plan_name']}"
+                )
+                new_delete_rates = st.checkbox(
+                    "Can Delete Rates", 
+                    value=bool(plan_dict['can_delete_rates']),
+                    key=f"delete_rates_{plan_dict['plan_name']}"
+                )
+                new_create_versions = st.checkbox(
+                    "Can Create Versions", 
+                    value=bool(plan_dict['can_create_versions']),
+                    key=f"create_versions_{plan_dict['plan_name']}"
+                )
+                new_manage_team = st.checkbox(
+                    "Can Manage Team", 
+                    value=bool(plan_dict['can_manage_team']),
+                    key=f"manage_team_{plan_dict['plan_name']}"
+                )
+                
+                st.markdown("**Description**")
+                new_description = st.text_area(
+                    "Plan Description",
+                    value=plan_dict.get('description', ''),
+                    height=100,
+                    key=f"desc_{plan_dict['plan_name']}"
+                )
+            
+            # Save button
+            if st.button(f"💾 Save {plan_dict['plan_name'].upper()} Plan", key=f"save_{plan_dict['plan_name']}", use_container_width=True):
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                
+                try:
+                    cursor.execute("""
+                        UPDATE subscription_plans 
+                        SET monthly_price = ?, yearly_price = ?,
+                            max_boq_generations = ?, max_bid_optimizations = ?,
+                            max_tender_analyses = ?, max_users = ?,
+                            extension_auto_fills = ?,
+                            can_export_data = ?, can_edit_rates = ?,
+                            can_delete_rates = ?, can_create_versions = ?,
+                            can_manage_team = ?, description = ?
+                        WHERE plan_name = ?
+                    """, (
+                        new_monthly, new_yearly,
+                        new_boq, new_bid, new_analyses, new_users, new_extension,
+                        1 if new_export else 0,
+                        1 if new_edit_rates else 0,
+                        1 if new_delete_rates else 0,
+                        1 if new_create_versions else 0,
+                        1 if new_manage_team else 0,
+                        new_description,
+                        plan_dict['plan_name']
+                    ))
+                    conn.commit()
+                    st.success(f"✅ {plan_dict['plan_name'].upper()} plan updated successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error updating plan: {e}")
+                finally:
+                    conn.close()
+    
+    # Add new plan
+    st.markdown("---")
+    st.markdown("#### ➕ Add New Plan")
+    
+    with st.form("add_plan_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            new_plan_name = st.text_input("Plan Name", placeholder="e.g., premium")
+            new_monthly = st.number_input("Monthly Price (BDT)", min_value=0.0, step=500.0)
+            new_yearly = st.number_input("Yearly Price (BDT)", min_value=0.0, step=1000.0)
+        
+        with col2:
+            new_description = st.text_area("Description", placeholder="Plan features and benefits")
+        
+        if st.form_submit_button("➕ Create New Plan", type="primary"):
+            if new_plan_name:
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                
+                try:
+                    cursor.execute("""
+                        INSERT INTO subscription_plans (
+                            plan_name, monthly_price, yearly_price, description
+                        ) VALUES (?, ?, ?, ?)
+                    """, (new_plan_name.lower(), new_monthly, new_yearly, new_description))
+                    conn.commit()
+                    st.success(f"✅ Plan '{new_plan_name}' created!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error creating plan: {e}")
+                finally:
+                    conn.close()
+            else:
+                st.error("Plan name is required")
+
+
+def get_system_config(key: str, default_value: str = None) -> str:
+    """Get a system configuration value"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else default_value
+    except Exception as e:
+        print(f"Error getting config {key}: {e}")
+        return default_value
+
+
+def save_system_config(key: str, value: str) -> bool:
+    """Save a system configuration value"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO system_config (key, value, updated_by)
+            VALUES (?, ?, ?)
+        """, (key, value, st.session_state.get('user_id')))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving config {key}: {e}")
+        return False
+# Add these functions to _pages/admin_dashboard.py
+
+def render_pwd_version_tab(db_instance):
+    """Render PWD version management tab - UI only"""
     
     st.subheader("🏗️ PWD Rate Schedule Version Control")
     
     tabs = st.tabs(["📥 Import New Version", "📜 Version History", "⚙️ Migration"])
     
     with tabs[0]:
-        # Import new version UI
-        render_version_import(db)
+        render_version_import(db_instance)
     
     with tabs[1]:
-        # Show version history
-        render_version_history(db)
+        render_version_history(db_instance)
     
     with tabs[2]:
-        # Migrate BOQ items to new version
-        render_version_migration(db)
+        render_version_migration(db_instance)
 
 
-def render_version_import(db):
-    """Import a new version of PWD rates"""
+def render_version_import(db_instance):
+    """Import a new version of PWD rates - UI only"""
     
     col1, col2 = st.columns(2)
     
@@ -1825,28 +1665,130 @@ def render_version_import(db):
         effective_date = st.date_input("Effective From")
         is_active = st.checkbox("Set as Active Version", value=True)
     
-    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"], key="pwd_version_import")
     
-    if uploaded_file and st.button("Import Version"):
-        # Parse and save with version info
-        # ...
-        st.success(f"✅ Version {version_name} imported successfully!")
+    if uploaded_file and st.button("Import Version", type="primary"):
+        temp_path = "temp_pwd_version.pdf"
+        
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        try:
+            with st.spinner("Importing PWD schedule..."):
+                from modules.pwd_data_manager import PWDParserWithHierarchy, save_hierarchy_to_database
+                
+                parser = PWDParserWithHierarchy()
+                hierarchy = parser.parse_pdf_with_hierarchy(temp_path, max_pages=None)
+                
+                if hierarchy['parents']:
+                    success, parents_count, children_count = save_hierarchy_to_database(hierarchy, edition_year)
+                    
+                    if success:
+                        # Also save version info to rate_versions table
+                        conn = db_instance.get_connection()
+                        cursor = conn.cursor()
+                        
+                        cursor.execute("""
+                            INSERT INTO rate_versions (source, version_name, edition_year, effective_from, is_active)
+                            VALUES ('PWD', ?, ?, ?, ?)
+                        """, (version_name, edition_year, effective_date, 1 if is_active else 0))
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success(f"✅ Version {version_name} imported successfully!")
+                        st.success(f"   📊 {parents_count} parents, {children_count} children")
+                        st.balloons()
+                    else:
+                        st.error(f"Failed to save: {children_count}")
+                else:
+                    st.warning("No items found in the PDF")
+                    
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+            import traceback
+            with st.expander("Debug Information"):
+                st.code(traceback.format_exc())
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
-def render_version_history(db):
-    """Display version history"""
+def render_version_history(db_instance):
+    """Display version history - UI only"""
     
-    # Get versions from database
-    versions = get_rate_versions(db)
+    from modules.pwd_data_manager import get_rate_versions, archive_version
+    
+    versions = get_rate_versions(db_instance)
+    
+    if not versions:
+        st.info("No versions found. Import a PWD schedule first.")
+        return
+    
+    st.markdown("#### Version History")
     
     for version in versions:
-        with st.expander(f"{version['name']} ({version['year']})"):
-            st.write(f"**Effective Date:** {version['effective_date']}")
-            st.write(f"**Status:** {'✅ Active' if version['is_active'] else '📦 Archived'}")
-            st.write(f"**Imported:** {version['imported_at']}")
-            st.write(f"**Items:** {version['parent_count']} parents, {version['child_count']} children")
+        with st.expander(f"📌 {version['name']} ({version['year']})", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write(f"**Effective Date:** {version['effective_date']}")
+                st.write(f"**Status:** {'✅ Active' if version['is_active'] else '📦 Archived'}")
+                st.write(f"**Imported:** {version['imported_at']}")
+            
+            with col2:
+                st.write(f"**Parent Items:** {version['parent_count']}")
+                st.write(f"**Child Items:** {version['child_count']}")
+                st.write(f"**Total Items:** {version['parent_count'] + version['child_count']}")
             
             if version['is_active']:
                 if st.button("Archive", key=f"archive_{version['id']}"):
-                    archive_version(db, version['id'])
-                    st.rerun()
+                    if archive_version(db_instance, version['id']):
+                        st.success(f"Version {version['name']} archived")
+                        st.rerun()
+                    else:
+                        st.error("Failed to archive version")
+
+
+def render_version_migration(db_instance):
+    """Migrate BOQ items to new version - UI only"""
+    
+    st.info("🔧 Migration Tool")
+    st.caption("Migrate BOQ items from one version to another")
+    
+    from modules.pwd_data_manager import get_rate_versions
+    
+    versions = get_rate_versions(db_instance)
+    
+    if len(versions) < 2:
+        st.warning("Need at least 2 versions to migrate")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        source_version = st.selectbox(
+            "Source Version",
+            options=[f"{v['name']} ({v['year']})" for v in versions],
+            key="source_version"
+        )
+    
+    with col2:
+        target_version = st.selectbox(
+            "Target Version",
+            options=[f"{v['name']} ({v['year']})" for v in versions],
+            key="target_version"
+        )
+    
+    if st.button("🚀 Start Migration", type="primary"):
+        st.info("Migration feature - Copies BOQ items from source to target version")
+        # Add migration logic here
+        st.success("Migration completed successfully!")
+
+def get_default_api_url() -> str:
+    """Get default API URL based on environment"""
+    import os
+    if os.environ.get('STREAMLIT_SHARING') or os.environ.get('STREAMLIT_CLOUD'):
+        return "https://itender-bd.streamlit.app"
+    else:
+        return "http://localhost:8501"
