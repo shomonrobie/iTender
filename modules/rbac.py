@@ -786,6 +786,13 @@ def check_feature_access(feature: str) -> bool:
         return _rbac.has_permission(permission)
     return False
 
+def is_premium_user(role: str = None) -> bool:
+    """Check if user has premium access"""
+    if role is None:
+        role = _rbac.get_current_user_role()
+    
+    premium_roles = ['system_admin', 'admin', 'company_admin', 'manager', 'analyst']
+    return role in premium_roles
 
 # =============================================================================
 # INITIALIZATION

@@ -62,7 +62,21 @@ def render_top_navigation():
     """, unsafe_allow_html=True)
     
     # ========== DEFINE NAVIGATION BASED ON ROLE (MUTUALLY EXCLUSIVE) ==========
-    
+    from modules.rbac import _rbac, is_premium_user
+    if _rbac.has_permission('can_optimize_bid'):
+        # Show premium features
+        st.sidebar.markdown("### 🚀 Premium Features")
+        if st.sidebar.button("🎯 Advanced Optimizer"):
+            st.session_state.page = "new_analysis"
+            st.rerun()
+        if st.sidebar.button("🔮 Competitive Simulator"):
+            st.session_state.page = "competitive_bid_simulator"
+            st.rerun()
+    else:
+        st.sidebar.info("💡 Upgrade to premium for advanced features")
+    role = _rbac.get_current_user_role()
+    is_premium = is_premium_user(role)
+
     if is_system_admin:
         # System Admin - Full platform control
         nav_items = [

@@ -143,13 +143,13 @@ def render_boq_bid_integration():
     subscription = db.get_user_subscription(user_id)
     is_premium = subscription.get('plan') in ['professional', 'enterprise'] or user_role in ['admin', 'system_admin']
     
-    if not is_premium:
-        st.warning("⚠️ Bid optimization is available for Professional and Enterprise plans only.")
-        st.info("💡 Upgrade your plan to access AI-powered bid optimization.")
-        if st.button("💳 Upgrade Now", use_container_width=True):
-            st.session_state.page = "subscription"
-            st.rerun()
-        return
+    # if not is_premium:
+    #     st.warning("⚠️ Bid optimization is available for Professional and Enterprise plans only.")
+    #     st.info("💡 Upgrade your plan to access AI-powered bid optimization.")
+    #     if st.button("💳 Upgrade Now", use_container_width=True):
+    #         st.session_state.page = "subscription"
+    #         st.rerun()
+    #     return
     
     # Show permission info
     if user_role == 'viewer':
