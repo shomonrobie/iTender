@@ -61,76 +61,42 @@ class PWDRateParser:
     # Short zone names for database storage
     ZONE_SHORT_NAMES = ["Dhaka", "Chattogram", "Khulna", "Rajshahi"]
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_instance=None, db_path: Optional[str] = None):
         """
         Initialize the parser.
         
         Args:
-            db_path: Path to SQLite database. If None, uses 'pwd_rates.db'
+            db_instance: Database manager instance (preferred)
+            db_path: Path to SQLite database (legacy, use db_instance instead)
         """
-        self.db_path = db_path or Path(__file__).parent.parent / "database" / "pwd_rates.db"
+        self.db = db_instance
         
-    def get_connection(self) -> sqlite3.Connection:
-        """Get database connection, ensuring parent directory exists."""
-        db_dir = Path(self.db_path).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return sqlite3.connect(str(self.db_path))
+        # Legacy support for db_path
+        if db_path is None and db_instance is None:
+            from database.unified_db_manager import db
+            self.db = db
+        elif db_path:
+            import warnings
+            warnings.warn("db_path is deprecated. Use db_instance instead.", DeprecationWarning)
+            self._legacy_db_path = db_path
     
-    def init_database(self):
-        """Initialize database tables for PWD rates."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Chapters table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pwd_chapters (
-                    chapter_number TEXT PRIMARY KEY,
-                    chapter_name TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # PWD Items table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pwd_items (
-                    pwd_code TEXT PRIMARY KEY,
-                    parent_code TEXT,
-                    chapter_number TEXT,
-                    specification_text TEXT,
-                    measurement_unit TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (chapter_number) REFERENCES pwd_chapters(chapter_number)
-                )
-            """)
-            
-            # Regional rates table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pwd_pwd_rates (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pwd_code TEXT NOT NULL,
-                    zone_name TEXT NOT NULL,
-                    unit_rate REAL NOT NULL,
-                    edition_year INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(pwd_code, zone_name, edition_year),
-                    FOREIGN KEY (pwd_code) REFERENCES pwd_items(pwd_code)
-                )
-            """)
-            
-            # Create index for faster lookups
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pwd_code 
-                ON pwd_items(pwd_code)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_chapter 
-                ON pwd_items(chapter_number)
-            """)
-            
-            conn.commit()
+    def get_connection(self):
+        """Get database connection from unified manager."""
+        if self.db:
+            return self.db.get_connection()
+        elif hasattr(self, '_legacy_db_path'):
+            # Legacy fallback
+            db_dir = Path(self._legacy_db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
+            return sqlite3.connect(str(self._legacy_db_path))
+        else:
+            from database.unified_db_manager import db
+            return db.get_connection()
+    
+    # ❌ REMOVED: init_database() - Tables already exist in unified manager
     
     def import_pdf(self, file_path: str, edition_year: int = 2022, 
-                   dry_run: bool = False, init_db: bool = True) -> ParseReport:
+                   dry_run: bool = False) -> ParseReport:
         """
         Import PWD rate schedule from PDF.
         
@@ -138,15 +104,11 @@ class PWDRateParser:
             file_path: Path to the PDF file
             edition_year: Year of the rate schedule (default: 2022)
             dry_run: If True, don't save to database
-            init_db: If True, initialize database tables first
             
         Returns:
             ParseReport with statistics and any errors
         """
         report = ParseReport()
-        
-        if init_db and not dry_run:
-            self.init_database()
         
         conn = None if dry_run else self.get_connection()
         cursor = None if dry_run else conn.cursor()
@@ -210,7 +172,13 @@ class PWDRateParser:
                 if not pwd_code:
                     continue
                 
-                chapter_num = pwd_code.split('.')[0]
+                # Determine parent code (for 3-part codes)
+                code_parts = pwd_code.split('.')
+                parent_code = None
+                if len(code_parts) >= 2:
+                    parent_code = '.'.join(code_parts[:2])
+                
+                chapter_num = code_parts[0]
                 
                 # Extract description
                 desc = ""
@@ -228,19 +196,20 @@ class PWDRateParser:
                 unit = self._extract_unit(row_cells, code_col)
                 
                 # Zone columns (adjust based on your PDF structure)
-                zone_indices = [5, 6, 7, 8]
+                zone_indices = [5, 6, 7, 8] if code_col is None or code_col < 5 else [code_col + 3, code_col + 4, code_col + 5, code_col + 6]
                 
-                for zone_name, zone_idx in zip(self.ZONE_SHORT_NAMES, zone_indices):
-                    if zone_idx < len(row_cells):
+                rates = {}
+                for idx, zone_idx in enumerate(zone_indices):
+                    if idx < len(self.ZONE_SHORT_NAMES) and zone_idx < len(row_cells):
                         clean_rate = self._extract_rate(row_cells[zone_idx])
                         
                         if clean_rate is not None and clean_rate > 0:
+                            rates[self.ZONE_SHORT_NAMES[idx]] = clean_rate
                             report.total_rates_found += 1
-                            
-                            if not dry_run and cursor:
-                                self._save_to_database(cursor, pwd_code, chapter_num, 
-                                                      desc, unit, zone_name, 
-                                                      clean_rate, edition_year)
+                
+                if not dry_run and cursor and rates:
+                    self._save_to_database(cursor, pwd_code, parent_code, chapter_num,
+                                          desc, unit, rates, edition_year)
     
     def _parse_raw_lines(self, text: str, edition_year: int, 
                          report: ParseReport, dry_run: bool, cursor):
@@ -259,14 +228,17 @@ class PWDRateParser:
             code_match = re.match(r'^(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?)\s+', line)
             if code_match:
                 pwd_code = code_match.group(1)
-                chapter_num = pwd_code.split('.')[0]
+                code_parts = pwd_code.split('.')
+                
+                # Determine parent code
+                parent_code = None
+                if len(code_parts) >= 2:
+                    parent_code = '.'.join(code_parts[:2])
+                
+                chapter_num = code_parts[0]
                 
                 # Remove the code from the beginning
                 remaining = line[len(code_match.group(0)):].strip()
-                
-                # Extract description and rates
-                desc = ""
-                rates = []
                 
                 # Find all rate patterns
                 rate_pattern = r'Tk\.?\s*([\d,]+(?:\.\d{2})?)'
@@ -277,12 +249,18 @@ class PWDRateParser:
                     first_rate_pos = rate_matches[0].start()
                     desc = remaining[:first_rate_pos].strip()
                     
-                    # Extract all rates
-                    for match in rate_matches:
-                        rate_str = match.group(1)
-                        rates.append(rate_str)
+                    # Extract rates
+                    rates = {}
+                    for idx, match in enumerate(rate_matches[:4]):
+                        if idx < len(self.ZONE_SHORT_NAMES):
+                            rate_str = match.group(1).replace(',', '')
+                            try:
+                                rates[self.ZONE_SHORT_NAMES[idx]] = float(rate_str)
+                            except ValueError:
+                                pass
                 else:
                     desc = remaining
+                    rates = {}
                 
                 # Clean up description
                 desc = re.sub(r'\s+', ' ', desc).strip()
@@ -294,20 +272,13 @@ class PWDRateParser:
                     desc = re.sub(r'\s+' + re.escape(unit) + r'\s*$', '', desc, flags=re.I)
                 
                 # Only process if we have a meaningful description
-                if desc and len(desc) > 5:
+                if desc and len(desc) > 5 and rates:
                     report.total_items_found += 1
+                    report.total_rates_found += len(rates)
                     
-                    for idx, rate_str in enumerate(rates[:4]):
-                        clean_rate = self._extract_rate(f"Tk. {rate_str}")
-                        
-                        if clean_rate is not None and clean_rate > 0:
-                            report.total_rates_found += 1
-                            
-                            if not dry_run and cursor:
-                                zone_name = self.ZONE_SHORT_NAMES[idx] if idx < len(self.ZONE_SHORT_NAMES) else f"Zone_{idx}"
-                                self._save_to_database(cursor, pwd_code, chapter_num,
-                                                      desc, unit, zone_name,
-                                                      clean_rate, edition_year)
+                    if not dry_run and cursor:
+                        self._save_to_database(cursor, pwd_code, parent_code, chapter_num,
+                                              desc, unit, rates, edition_year)
     
     def _extract_unit(self, row_cells: List[str], code_col: Optional[int]) -> str:
         """Extract measurement unit from table row."""
@@ -367,34 +338,38 @@ class PWDRateParser:
         
         return None
     
-    def _save_to_database(self, cursor, pwd_code: str, chapter_num: str,
-                         description: str, unit: str, zone_name: str,
-                         rate: float, edition_year: int):
-        """Save parsed data to database."""
+    def _save_to_database(self, cursor, pwd_code: str, parent_code: Optional[str], 
+                         chapter_num: str, description: str, unit: str, 
+                         rates: Dict[str, float], edition_year: int):
+        """Save parsed data to unified database tables."""
         try:
-            # Insert chapter
-            cursor.execute(
-                "INSERT OR IGNORE INTO pwd_chapters (chapter_number, chapter_name) VALUES (?, ?)",
-                (chapter_num, f"Chapter {chapter_num}")
-            )
+            # Insert into pwd_parents (for parent items, 2-part codes)
+            if parent_code is None or len(pwd_code.split('.')) == 2:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pwd_parents 
+                    (pwd_code, description, chapter_number)
+                    VALUES (?, ?, ?)
+                """, (pwd_code, description[:2000], chapter_num))
             
-            # Insert PWD item
-            cursor.execute(
-                """INSERT OR REPLACE INTO pwd_items 
-                   (pwd_code, parent_code, chapter_number, specification_text, measurement_unit) 
-                   VALUES (?, ?, ?, ?, ?)""",
-                (pwd_code, None, chapter_num, description[:1000], unit)
-            )
+            # Insert into pwd_children (for child items, 3-part codes)
+            if parent_code:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pwd_children 
+                    (pwd_code, parent_code, description, unit, edition_year)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (pwd_code, parent_code, description[:2000], unit, edition_year))
             
-            # Insert regional rate
-            cursor.execute(
-                """INSERT OR REPLACE INTO pwd_pwd_rates 
-                   (pwd_code, zone_name, unit_rate, edition_year) 
-                   VALUES (?, ?, ?, ?)""",
-                (pwd_code, zone_name, rate, edition_year)
-            )
+            # Insert rates into pwd_rates
+            for zone_name, rate in rates.items():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pwd_rates 
+                    (pwd_code, zone_name, unit_rate, edition_year)
+                    VALUES (?, ?, ?, ?)
+                """, (pwd_code, zone_name, rate, edition_year))
+                
         except Exception as e:
             # Don't fail the whole import for a single item
+            print(f"Warning: Failed to save {pwd_code}: {e}")
             pass
 
 
@@ -412,17 +387,16 @@ def import_pwd_rates(pdf_path: str, edition_year: int = 2022,
     Returns:
         ParseReport with import statistics
     """
-    parser = PWDRateParser()
+    from database.unified_db_manager import db
+    parser = PWDRateParser(db_instance=db)
     return parser.import_pdf(pdf_path, edition_year, dry_run)
 
 
 # Example usage
 if __name__ == "__main__":
     # Test the parser
-    parser = PWDRateParser()
-    
-    # Initialize database
-    parser.init_database()
+    from database.unified_db_manager import db
+    parser = PWDRateParser(db_instance=db)
     
     # Import PDF (replace with your file path)
     report = parser.import_pdf("PWD_RATE_SCHEDULE_2022_2026.pdf", edition_year=2022)

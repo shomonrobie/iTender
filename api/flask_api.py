@@ -1,4 +1,12 @@
 # api/flask_api.py - Flask API Module for Extension
+import logging
+
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+logging.getLogger('flask').setLevel(logging.ERROR)
+
+# Optional: Also suppress urllib3 logs
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -87,7 +95,9 @@ def create_flask_app():
                 return jsonify({'success': False, 'message': 'Account is deactivated'}), 403
             
             # Get subscription info
-            subscription = _db.get_user_subscription(user[0])
+            #subscription = _db.get_user_subscription(user[0])
+            subscription = db.get_user_subscription(user.get('id'))
+
             plan = subscription.get('plan', 'free')
             
             # Check if user is already logged in the main app
@@ -307,7 +317,6 @@ def create_flask_app():
             logger.error(f"Auto-fill error: {e}")
             return jsonify({}), 500
     
-    # ========== USAGE TRACKING ==========
     @app.route('/api/track/form-fill', methods=['POST'])
     def track_form_fill():
         try:
@@ -327,18 +336,7 @@ def create_flask_app():
             
             conn = _db.get_connection()
             cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS extension_auto_fill_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    company_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    field_label TEXT,
-                    confidence_score REAL,
-                    page_url TEXT,
-                    filled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+                    
             
             cursor.execute("""
                 INSERT INTO extension_auto_fill_log 
@@ -359,6 +357,7 @@ def create_flask_app():
         except Exception as e:
             logger.error(f"Track error: {e}")
             return jsonify({'success': False}), 500
+
     
     @app.route('/api/usage/stats', methods=['GET'])
     def get_usage_stats():
@@ -429,7 +428,7 @@ def start_flask_api(db, port=5000):
     
     def run():
         try:
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
         except Exception as e:
             print(f"Flask API error: {e}")
     

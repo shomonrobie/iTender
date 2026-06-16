@@ -7,64 +7,15 @@ from datetime import datetime, date
 from io import BytesIO
 import re
 from utils.currency_transformer import number_to_bangladesh_taka_words, number_to_bangladesh_taka_words_simple
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import db  # Changed to unified manager
 
-db = DatabaseManager()
+
+#db = UnifiedDatabaseManager()
 DB_PATH = db.db_path
 
 class BOQGenerator:
     """BOQ Generation with subscription limits, tender linking, and bid tracking"""
     
-    def __init__(self):
-        self._init_boq_tracking()
-    
-    def _init_boq_tracking(self):
-        """Initialize BOQ generation tracking table with tender linking"""
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # BOQ generation history with tender link
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS boq_generation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                company_id INTEGER,
-                tender_id TEXT,
-                tender_title TEXT,
-                procuring_entity TEXT,
-                file_name TEXT,
-                item_count INTEGER,
-                total_estimated_cost REAL,
-                selected_zone TEXT,
-                rate_source TEXT,
-                edition_year INTEGER,
-                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'completed',
-                notes TEXT,
-                FOREIGN KEY (tender_id) REFERENCES tenders_boq_meta(tender_id) ON DELETE SET NULL
-            )
-        """)
-        
-        # Bid submission tracking
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS bid_submissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                boq_history_id INTEGER,
-                tender_id TEXT,
-                company_id INTEGER,
-                submitted_bid_amount REAL,
-                bid_document_path TEXT,
-                submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                submitted_by TEXT,
-                status TEXT DEFAULT 'draft',
-                notes TEXT,
-                FOREIGN KEY (boq_history_id) REFERENCES boq_generation_history(id),
-                FOREIGN KEY (tender_id) REFERENCES tenders_boq_meta(tender_id)
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
     
     def get_user_plan(self, user_id, company_id):
         """Get user's subscription plan"""

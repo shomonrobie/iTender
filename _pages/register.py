@@ -1,7 +1,7 @@
 import streamlit as st
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def show():
     """User registration page"""

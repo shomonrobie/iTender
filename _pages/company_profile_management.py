@@ -3,10 +3,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from database.db_manager import DatabaseManager
-from database.enhanced_db_manager import enhanced_db
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def show():
     """Company Profile Management - Complete company data for e-GP bids"""
@@ -58,152 +57,95 @@ def show():
         render_documents(company_id)
 
 
+# _pages/company_profile_management.py - FIXED VERSION
+
 def render_basic_info(company_id):
-    """Basic company information"""
-    st.markdown("### 🏢 Basic Company Information")
+    """Render basic company information section"""
     
-    # Get existing profile
-    conn = db.get_connection()
-    cursor = conn.cursor()
+    st.markdown("### 🏢 Basic Information")
     
-    cursor.execute("""
-        SELECT id, company_name, registration_number, vat_number, 
-               email, phone, website, address, division, district,
-               upazila, post_code, tin_number, bin_number, rjsc_number
-        FROM companies 
-        WHERE id = ?
-    """, (company_id,))
+    # Use context manager properly
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get company data
+        cursor.execute("""
+            SELECT company_name, email, phone, mobile_number, address, 
+                   district, division, registration_number, vat_number, website,
+                   is_active, created_at
+            FROM companies 
+            WHERE id = ?
+        """, (company_id,))
+        
+        company = cursor.fetchone()
     
-    company = cursor.fetchone()
-    conn.close()
+    if not company:
+        st.error("Company not found")
+        return
     
-    if company:
-        company_data = {
-            'company_name': company[1],
-            'registration_number': company[2],
-            'vat_number': company[3],
-            'email': company[4],
-            'phone': company[5],
-            'website': company[6],
-            'address': company[7],
-            'division': company[8],
-            'district': company[9],
-            'upazila': company[10],
-            'post_code': company[11],
-            'tin_number': company[12],
-            'bin_number': company[13],
-            'rjsc_number': company[14]
-        }
-    else:
-        company_data = {}
+    # Display company info (convert row to dict first)
+    company_dict = dict(company)
     
-    with st.form("basic_info_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            company_name = st.text_input(
-                "Company / Firm Name *", 
-                value=company_data.get('company_name', ''),
-                help="Legal name of the company as per registration"
-            )
-            registration_number = st.text_input(
-                "Registration Number", 
-                value=company_data.get('registration_number', ''),
-                help="RJSC / ROC registration number"
-            )
-            tin_number = st.text_input(
-                "TIN Number", 
-                value=company_data.get('tin_number', ''),
-                help="Tax Identification Number (13 digits)"
-            )
-            bin_number = st.text_input(
-                "BIN Number", 
-                value=company_data.get('bin_number', ''),
-                help="Business Identification Number (e-GP)"
-            )
-            vat_number = st.text_input(
-                "VAT Registration Number", 
-                value=company_data.get('vat_number', ''),
-                help="Value Added Tax registration number"
-            )
-        
-        with col2:
-            email = st.text_input(
-                "Email Address", 
-                value=company_data.get('email', ''),
-                help="Official company email"
-            )
-            phone = st.text_input(
-                "Phone Number", 
-                value=company_data.get('phone', ''),
-                help="Contact number"
-            )
-            website = st.text_input(
-                "Website", 
-                value=company_data.get('website', ''),
-                help="Company website (optional)"
-            )
-            rjsc_number = st.text_input(
-                "RJSC Number", 
-                value=company_data.get('rjsc_number', ''),
-                help="Registrar of Joint Stock Companies number"
-            )
-        
-        st.markdown("#### 📍 Address")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            division = st.selectbox(
-                "Division",
-                ["Dhaka", "Chattogram", "Khulna", "Rajshahi", "Rangpur", "Barishal", "Sylhet", "Mymensingh"],
-                index=0 if not company_data.get('division') else 
-                      ["Dhaka", "Chattogram", "Khulna", "Rajshahi", "Rangpur", "Barishal", "Sylhet", "Mymensingh"].index(company_data.get('division', 'Dhaka'))
-            )
-        
-        with col2:
-            district = st.text_input("District", value=company_data.get('district', ''))
-        
-        with col3:
-            upazila = st.text_input("Upazila / Thana", value=company_data.get('upazila', ''))
-        
-        address = st.text_area("Full Address", value=company_data.get('address', ''), height=80)
-        post_code = st.text_input("Post Code", value=company_data.get('post_code', ''))
-        
-        submitted = st.form_submit_button("💾 Save Basic Information", type="primary")
-        
-        if submitted:
-            if not company_name:
-                st.error("Company name is required")
-            else:
-                try:
-                    conn = db.get_connection()
-                    cursor = conn.cursor()
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Company Name:**", company_dict.get('company_name', 'N/A'))
+        st.write("**Email:**", company_dict.get('email', 'N/A'))
+        st.write("**Phone:**", company_dict.get('phone', 'N/A'))
+        st.write("**Mobile:**", company_dict.get('mobile_number', 'N/A'))
+        st.write("**Registration No:**", company_dict.get('registration_number', 'N/A'))
+    
+    with col2:
+        st.write("**VAT Number:**", company_dict.get('vat_number', 'N/A'))
+        st.write("**Division:**", company_dict.get('division', 'N/A'))
+        st.write("**District:**", company_dict.get('district', 'N/A'))
+        st.write("**Address:**", company_dict.get('address', 'N/A'))
+        st.write("**Website:**", company_dict.get('website', 'N/A'))
+    
+    # Edit button
+    if st.button("✏️ Edit Basic Information"):
+        st.session_state.editing_basic_info = True
+        st.rerun()
+    
+    # Edit form
+    if st.session_state.get('editing_basic_info', False):
+        with st.form("edit_basic_info_form"):
+            new_company_name = st.text_input("Company Name", value=company_dict.get('company_name', ''))
+            new_email = st.text_input("Email", value=company_dict.get('email', ''))
+            new_phone = st.text_input("Phone", value=company_dict.get('phone', ''))
+            new_mobile = st.text_input("Mobile Number", value=company_dict.get('mobile_number', ''))
+            new_address = st.text_area("Address", value=company_dict.get('address', ''))
+            new_division = st.text_input("Division", value=company_dict.get('division', ''))
+            new_district = st.text_input("District", value=company_dict.get('district', ''))
+            new_registration = st.text_input("Registration Number", value=company_dict.get('registration_number', ''))
+            new_vat = st.text_input("VAT Number", value=company_dict.get('vat_number', ''))
+            new_website = st.text_input("Website", value=company_dict.get('website', ''))
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.form_submit_button("💾 Save Changes"):
+                    # Update using context manager
+                    with db.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE companies 
+                            SET company_name = ?, email = ?, phone = ?, mobile_number = ?,
+                                address = ?, division = ?, district = ?,
+                                registration_number = ?, vat_number = ?, website = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (new_company_name, new_email, new_phone, new_mobile,
+                              new_address, new_division, new_district,
+                              new_registration, new_vat, new_website, company_id))
                     
-                    # Update companies table
-                    cursor.execute("""
-                        UPDATE companies 
-                        SET company_name = ?, registration_number = ?, vat_number = ?,
-                            email = ?, phone = ?, website = ?, address = ?,
-                            division = ?, district = ?, upazila = ?, post_code = ?,
-                            tin_number = ?, bin_number = ?, rjsc_number = ?,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (
-                        company_name, registration_number, vat_number,
-                        email, phone, website, address,
-                        division, district, upazila, post_code,
-                        tin_number, bin_number, rjsc_number,
-                        company_id
-                    ))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    st.success("✅ Basic information saved successfully!")
+                    st.success("Company information updated!")
+                    st.session_state.editing_basic_info = False
                     st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"Error saving: {e}")
+            
+            with col2:
+                if st.form_submit_button("Cancel"):
+                    st.session_state.editing_basic_info = False
+                    st.rerun()
 
 
 def render_licenses_registrations(company_id):
@@ -214,24 +156,6 @@ def render_licenses_registrations(company_id):
     # Get existing licenses
     conn = db.get_connection()
     cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS company_licenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER NOT NULL,
-            license_type TEXT NOT NULL,
-            license_number TEXT NOT NULL,
-            issuing_authority TEXT,
-            issue_date DATE,
-            expiry_date DATE,
-            license_file_path TEXT,
-            status TEXT DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies(id)
-        )
-    """)
-    conn.commit()
     
     cursor.execute("""
         SELECT * FROM company_licenses 
@@ -322,25 +246,6 @@ def render_financial_info(company_id):
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS company_financials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER NOT NULL,
-            fiscal_year TEXT NOT NULL,
-            annual_turnover REAL,
-            construction_turnover REAL,
-            net_worth REAL,
-            working_capital REAL,
-            liquid_assets REAL,
-            credit_limit REAL,
-            bank_guarantee_limit REAL,
-            is_audited BOOLEAN DEFAULT 0,
-            audit_firm TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies(id)
-        )
-    """)
-    conn.commit()
     
     cursor.execute("""
         SELECT * FROM company_financials 
@@ -436,24 +341,6 @@ def render_key_personnel(company_id):
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS company_personnel (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            designation TEXT NOT NULL,
-            nid_number TEXT,
-            phone TEXT,
-            email TEXT,
-            educational_qualification TEXT,
-            experience_years INTEGER,
-            is_key_personnel BOOLEAN DEFAULT 0,
-            cv_file_path TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies(id)
-        )
-    """)
-    conn.commit()
     
     cursor.execute("""
         SELECT * FROM company_personnel 
@@ -745,21 +632,6 @@ def render_documents(company_id):
             conn = db.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS company_documents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    company_id INTEGER NOT NULL,
-                    document_name TEXT NOT NULL,
-                    document_type TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    file_name TEXT,
-                    description TEXT,
-                    document_date DATE,
-                    expiry_date DATE,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    uploaded_by INTEGER
-                )
-            """)
             
             cursor.execute("""
                 INSERT INTO company_documents (

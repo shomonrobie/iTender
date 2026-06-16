@@ -7,9 +7,9 @@ import traceback
 from datetime import datetime
 from typing import Dict, List, Optional
 from config import DEBUG_MODE, debug_print, COST_ESTIMATE_RATIO, BID_AMOUNT_DECIMALS
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def load_tender_into_form(tender_data):
     """Load tender data into session state model"""

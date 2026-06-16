@@ -8,18 +8,18 @@ from utils.analysis_helpers import (
     load_tender_into_form, sync_form_to_model, model_to_form, 
     ensure_admin_premium, _save_analysis_callback
 )
-from utils.db_helpers import get_company_tenders_cached
 from utils.bid_generators import _generate_competitor_bids
 from utils.helpers import render_page_header
 from config import DEBUG_MODE, debug_print
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_run_analysis, can_export_data, can_view_tenders,
     render_role_badge, require_permission, is_analyst
 )
 
+from utils.db_helpers import get_company_tenders_cached
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 @require_permission('can_run_analysis')
 def render_tender_analysis() -> None:
     """Three-Tier Tender Analysis Page with RBAC"""
@@ -603,7 +603,7 @@ def render_tender_analysis() -> None:
             col1, col2 = st.columns(2)
             with col1:
                 st.session_state.auto_competitor_count = st.slider(
-                    "Number of Competitors", min_value=2, max_value=20, 
+                    "Number of Competitors", min_value=2, max_value=50, 
                     value=st.session_state.get('auto_competitor_count', 3),
                     disabled=auto_disabled
                 )

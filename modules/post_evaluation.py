@@ -9,14 +9,14 @@ import numpy as np
 from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_view_tenders, can_edit_tender, can_view_reports,
     can_export_data, render_role_badge, require_permission,
     is_analyst, is_manager, is_company_admin
 )
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 @require_permission('can_view_tenders')

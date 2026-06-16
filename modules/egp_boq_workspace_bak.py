@@ -6,10 +6,10 @@ import os
 from modules.matching_engine import search_best_pwd_match
 from utils.currency_transformer import number_to_bangladesh_taka_words
 from database.competitor_db import calculate_win_probability
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.data_sanitizer import sanitize_text, sanitize_item_code
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 #db = st.session_state['db']
 DB_PATH = db.db_path 
 def render_boq_workspace():

@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.helpers import validate_password_strength
 import re
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 import streamlit as st
 import pandas as pd
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.helpers import validate_password_strength
 import re
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 def render_user_management():
     """Full user management with CRUD, search, pagination, inline editing"""
     
@@ -99,6 +99,7 @@ def render_user_management():
                 full_name = st.text_input("Full Name *")
                 email = st.text_input("Email *")
                 username = st.text_input("Username *")
+                mobile_number = st.text_input("Mobile Number *", help="Bangladeshi mobile: 01XXXXXXXXX")
                 role = st.selectbox("Role *", ["company_admin", "manager", "analyst", "viewer"])
             with col2:
                 phone = st.text_input("Phone")
@@ -130,6 +131,7 @@ def render_user_management():
                         'email': email.strip(),
                         'full_name': full_name.strip(),
                         'phone': phone.strip(),
+                        'mobile_number': mobile_number.strip(),
                         'role': role
                     }
                     success, result = db.create_user(company_id, user_data, st.session_state.user_id)

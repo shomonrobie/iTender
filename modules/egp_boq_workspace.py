@@ -6,8 +6,8 @@ import sqlite3
 import os
 from modules.matching_engine import search_best_pwd_match
 from utils.currency_transformer import number_to_bangladesh_taka_words
-from database.competitor_db import calculate_win_probability
-from database.db_manager import DatabaseManager
+#from database.competitor_db import calculate_win_probability
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.data_sanitizer import sanitize_text, sanitize_item_code
 from modules.rbac import (
     rbac, can_view_tenders, can_create_tender, can_edit_tender,
@@ -15,7 +15,7 @@ from modules.rbac import (
     render_role_badge, require_permission
 )
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 DB_PATH = db.db_path 
 
 

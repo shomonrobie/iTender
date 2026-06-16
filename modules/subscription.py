@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 PLANS = {
     'free': {
@@ -12,7 +12,7 @@ PLANS = {
         'price_yearly': 0,
         'analyses_limit': 5,
         'users_limit': 1,
-        'features': ['5 analyses/month', 'Basic reports', 'Email support', '7-day history']
+        'features': ['5 analyses/month', 'Basic Bid Optimizer','Rate Viewer', 'Basic reports', 'Email support', '7-day history']
     },
     'basic': {
         'name': 'Basic',
@@ -20,7 +20,7 @@ PLANS = {
         'price_yearly': 49990,
         'analyses_limit': 30,
         'users_limit': 3,
-        'features': ['30 analyses/month', 'AI predictions', 'Export reports', '30-day history', 'Email support']
+        'features': ['30 analyses/month', 'Basic Bid Optimizer', 'Advanced Bid Optimizer', 'AI predictions', 'Export reports', '30-day history', 'Email support']
     },
     'professional': {
         'name': 'Professional',
@@ -28,7 +28,7 @@ PLANS = {
         'price_yearly': 149990,
         'analyses_limit': -1,
         'users_limit': 10,
-        'features': ['Unlimited analyses', 'ML predictions', 'Competitor tracking', 'Team collaboration', 'Priority support', 'API access']
+        'features': ['Unlimited analyses', 'Competitive Bid Simulator', 'ML predictions', 'Competitor tracking', 'Team collaboration', 'Priority support', 'API access']
     },
     'enterprise': {
         'name': 'Enterprise',

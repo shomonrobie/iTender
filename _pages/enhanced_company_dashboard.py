@@ -3,9 +3,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from database.enhanced_db_manager import enhanced_db
+
 from modules.rbac import can_view_dashboard, can_manage_team, can_export_data
 from modules.subscription_manager import check_subscription_and_permission
+from database.unified_db_manager import UnifiedDatabaseManager
+db = UnifiedDatabaseManager()
 
 def show():
     """Enhanced Company Dashboard with Knowledge Repository"""
@@ -65,7 +67,7 @@ def render_knowledge_dashboard(company_id):
     st.markdown("### Knowledge Repository Overview")
     
     # Get counts from enhanced_db
-    conn = enhanced_db.get_connection()
+    conn = db.get_connection()
     cursor = conn.cursor()
     
     counts = {}
@@ -105,7 +107,7 @@ def render_knowledge_dashboard(company_id):
     st.markdown("### Data Completeness")
     
     completeness = {
-        'Company Profile': enhanced_db.get_company_profile(company_id) is not None,
+        'Company Profile': db.get_company_profile(company_id) is not None,
         'Personnel Records': counts.get('personnel', 0) > 0,
         'Equipment Records': counts.get('equipment', 0) > 0,
         'Experience Records': counts.get('experience_record', 0) > 0,
@@ -121,7 +123,7 @@ def render_company_profile(company_id):
     """Render company profile management"""
     st.markdown("### Company Profile")
     
-    profile = enhanced_db.get_company_profile(company_id)
+    profile = db.get_company_profile(company_id)
     
     with st.form("company_profile_form"):
         col1, col2 = st.columns(2)
@@ -158,7 +160,7 @@ def render_company_profile(company_id):
                 'updated_by': st.session_state.user_id
             }
             
-            if enhanced_db.save_company_profile(company_id, profile_data):
+            if db.save_company_profile(company_id, profile_data):
                 st.success("Company profile saved!")
                 st.rerun()
             else:
@@ -202,13 +204,13 @@ def render_personnel_management(company_id):
                             'created_by': st.session_state.user_id
                         }
                         
-                        result = enhanced_db.add_personnel(company_id, personnel_data)
+                        result = db.add_personnel(company_id, personnel_data)
                         if result:
                             st.success(f"Added {full_name}")
                             st.rerun()
     
     # List personnel
-    personnel = enhanced_db.get_personnel(company_id)
+    personnel = db.get_personnel(company_id)
     
     if not personnel.empty:
         for _, person in personnel.iterrows():
@@ -261,12 +263,12 @@ def render_equipment_management(company_id):
                             'created_by': st.session_state.user_id
                         }
                         
-                        result = enhanced_db.add_equipment(company_id, equipment_data)
+                        result = db.add_equipment(company_id, equipment_data)
                         if result:
                             st.success(f"Added {equipment_name}")
                             st.rerun()
     
-    equipment = enhanced_db.get_equipment(company_id)
+    equipment = db.get_equipment(company_id)
     
     if not equipment.empty:
         for _, equip in equipment.iterrows():
@@ -317,12 +319,12 @@ def render_experience_management(company_id):
                             'created_by': st.session_state.user_id
                         }
                         
-                        result = enhanced_db.add_experience(company_id, experience_data)
+                        result = db.add_experience(company_id, experience_data)
                         if result:
                             st.success(f"Added {project_name}")
                             st.rerun()
     
-    experiences = enhanced_db.get_experiences(company_id)
+    experiences = db.get_experiences(company_id)
     
     if not experiences.empty:
         for _, exp in experiences.iterrows():
@@ -365,12 +367,12 @@ def render_financial_management(company_id):
                             'is_audited': is_audited
                         }
                         
-                        result = enhanced_db.add_financial_capacity(company_id, financial_data)
+                        result = db.add_financial_capacity(company_id, financial_data)
                         if result:
                             st.success(f"Added financial record for {fiscal_year}")
                             st.rerun()
     
-    financial = enhanced_db.get_financial_records(company_id)
+    financial = db.get_financial_records(company_id)
     
     if not financial.empty:
         st.dataframe(financial, use_container_width=True)
@@ -425,13 +427,13 @@ def render_document_management(company_id):
                         'uploaded_by': st.session_state.user_id
                     }
                     
-                    doc_id = enhanced_db.add_document(company_id, document_data, uploaded_file.getvalue())
+                    doc_id = db.add_document(company_id, document_data, uploaded_file.getvalue())
                     
                     if doc_id:
                         st.success(f"Uploaded {document_name}")
                         st.rerun()
     
-    documents = enhanced_db.get_documents(company_id)
+    documents = db.get_documents(company_id)
     
     if documents:
         for doc in documents:
@@ -465,9 +467,9 @@ def render_ai_search(company_id):
         with st.spinner("Searching..."):
             if search_type == "Semantic Search" or search_type == "Hybrid Search":
                 # For now, use keyword search as semantic requires embeddings
-                results = enhanced_db.keyword_search(company_id, query)
+                results = db.keyword_search(company_id, query)
             else:
-                results = enhanced_db.keyword_search(company_id, query)
+                results = db.keyword_search(company_id, query)
             
             if results:
                 st.markdown(f"### Found {len(results)} results")

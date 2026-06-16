@@ -4,9 +4,9 @@ import re
 import pandas as pd
 from collections import defaultdict
 import pdfplumber
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 class PWDParserWithHierarchy:
@@ -425,47 +425,16 @@ class PWDExtractorForVerification:
         
         return report
 
-
 def save_hierarchy_to_database(hierarchy, edition_year):
     """Save hierarchical data to database"""
     
     try:
         conn = db.get_connection()
         cursor = conn.cursor()
+                
+        # Tables already exist in unified database manager
         
-        # Create tables if they don't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_parents (
-                pwd_code TEXT PRIMARY KEY,
-                description TEXT,
-                chapter_number TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_children (
-                pwd_code TEXT PRIMARY KEY,
-                parent_code TEXT NOT NULL,
-                description TEXT,
-                unit TEXT,
-                edition_year INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pwd_rates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pwd_code TEXT NOT NULL,
-                zone_name TEXT NOT NULL,
-                unit_rate REAL NOT NULL,
-                edition_year INTEGER NOT NULL,
-                UNIQUE(pwd_code, zone_name, edition_year)
-            )
-        """)
-        
-        # Clear existing data
+        # Clear existing data for this edition year
         cursor.execute("DELETE FROM pwd_rates WHERE edition_year = ?", (edition_year,))
         cursor.execute("DELETE FROM pwd_children WHERE edition_year = ?", (edition_year,))
         cursor.execute("DELETE FROM pwd_parents")

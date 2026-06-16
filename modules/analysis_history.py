@@ -8,7 +8,7 @@ import pandas as pd
 import json
 from datetime import datetime
 import traceback
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_view_tenders, can_export_data, can_run_analysis,
     render_role_badge, require_permission
@@ -23,7 +23,7 @@ from utils.helpers import (
 )
 
 # Initialize database
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 def parse_competitor_bids(competitor_bids_data):

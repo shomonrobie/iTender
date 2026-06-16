@@ -5,6 +5,8 @@ from version import get_app_name, get_app_desc
 
 import base64
 import os
+from modules.landing_counters import render_all_counters
+
 
 # 1. Safely locate and load your local image file bytes
 image_path = r"D:\itender_clean\assets\images\cptuEgpLogo.gif"
@@ -17,6 +19,824 @@ if os.path.exists(image_path):
 else:
     # Fallback placeholder string if file path is temporarily mislocated
     img_src = ""
+
+# In your landing page / home page
+def render_workflow_section():
+    """Render horizontal animated workflow section using Streamlit columns"""
+    
+    st.markdown("""
+    <style>
+        .workflow-section {
+            padding: 2.5rem 1rem 3rem 1rem;
+            margin: 2rem 0;
+            background: linear-gradient(135deg, #f8f9fe 0%, #eef0f7 50%, #e8e6f0 100%);
+            border-radius: 28px;
+            position: relative;
+            overflow: hidden;
+        }
+        .workflow-section::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -30%;
+            width: 60%;
+            height: 150%;
+            background: radial-gradient(ellipse at 70% 50%, rgba(118, 75, 162, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+            position: relative;
+            z-index: 1;
+        }
+        .workflow-header h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 0.3rem;
+        }
+        .workflow-header h2 span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .workflow-header p {
+            color: #6c757d;
+            font-size: 1.05rem;
+        }
+        .workflow-step-card {
+            background: white;
+            border-radius: 20px;
+            padding: 20px 12px 18px;
+            text-align: center;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.06);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+            height: 100%;
+            border-bottom: 4px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+        .workflow-step-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 16px 50px rgba(0,0,0,0.12);
+        }
+        .workflow-step-card .step-icon {
+            width: 65px;
+            height: 65px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 12px;
+            font-size: 28px;
+            transition: all 0.4s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+        }
+        .workflow-step-card:hover .step-icon {
+            transform: scale(1.1) rotate(-5deg);
+        }
+        .workflow-step-card .step-number {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 12px;
+            border-radius: 20px;
+            margin-bottom: 6px;
+            color: white;
+        }
+        .workflow-step-card .step-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin: 4px 0 2px;
+        }
+        .workflow-step-card .step-desc {
+            font-size: 11px;
+            color: #6c757d;
+            margin: 0;
+            line-height: 1.3;
+        }
+        .workflow-step-card .step-glow {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            pointer-events: none;
+        }
+        .workflow-step-card:hover .step-glow {
+            opacity: 0.1;
+        }
+        /* Step colors */
+        .step-1 .step-icon { background: linear-gradient(135deg, #e3f2fd, #bbdefb); }
+        .step-1 .step-number { background: linear-gradient(135deg, #2196F3, #1565C0); }
+        .step-1 .step-glow { background: radial-gradient(circle, #2196F3 0%, transparent 70%); }
+        .step-1:hover { border-bottom-color: #2196F3; }
+        
+        .step-2 .step-icon { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); }
+        .step-2 .step-number { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
+        .step-2 .step-glow { background: radial-gradient(circle, #4CAF50 0%, transparent 70%); }
+        .step-2:hover { border-bottom-color: #4CAF50; }
+        
+        .step-3 .step-icon { background: linear-gradient(135deg, #fff3e0, #ffe0b2); }
+        .step-3 .step-number { background: linear-gradient(135deg, #FF9800, #E65100); }
+        .step-3 .step-glow { background: radial-gradient(circle, #FF9800 0%, transparent 70%); }
+        .step-3:hover { border-bottom-color: #FF9800; }
+        
+        .step-4 .step-icon { background: linear-gradient(135deg, #fce4ec, #f8bbd0); }
+        .step-4 .step-number { background: linear-gradient(135deg, #E91E63, #880E4F); }
+        .step-4 .step-glow { background: radial-gradient(circle, #E91E63 0%, transparent 70%); }
+        .step-4:hover { border-bottom-color: #E91E63; }
+        
+        .step-5 .step-icon { background: linear-gradient(135deg, #f3e5f5, #e1bee7); }
+        .step-5 .step-number { background: linear-gradient(135deg, #9C27B0, #4A148C); }
+        .step-5 .step-glow { background: radial-gradient(circle, #9C27B0 0%, transparent 70%); }
+        .step-5:hover { border-bottom-color: #9C27B0; }
+        
+        .workflow-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: #4CAF50;
+            opacity: 0.6;
+            padding: 0 5px;
+        }
+        @media (max-width: 768px) {
+            .workflow-step-card .step-icon { width: 50px; height: 50px; font-size: 22px; }
+            .workflow-step-card .step-title { font-size: 13px; }
+            .workflow-step-card .step-desc { font-size: 10px; }
+            .workflow-header h2 { font-size: 1.5rem; }
+            .workflow-arrow { font-size: 18px; }
+        }
+        @media (max-width: 576px) {
+            .workflow-step-card { padding: 15px 8px; }
+            .workflow-step-card .step-icon { width: 40px; height: 40px; font-size: 18px; margin-bottom: 8px; }
+            .workflow-step-card .step-title { font-size: 11px; }
+            .workflow-step-card .step-desc { font-size: 9px; }
+            .workflow-arrow { font-size: 14px; }
+        }
+    </style>
+    
+    <div class="workflow-section">
+        <div class="workflow-header">
+            <h2>🚀 <span>Easy & Complete</span> Bidding Workflow</h2>
+            <p>From tender creation to winning bid – all in one platform</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    steps = [
+        {"icon": "📋", "number": "1", "title": "Create Tender", "desc": "Add tender details & requirements", "class": "step-1"},
+        {"icon": "📄", "number": "2", "title": "Generate BOQ", "desc": "Create detailed Bill of Quantities", "class": "step-2"},
+        {"icon": "👥", "number": "3", "title": "Add Competitors", "desc": "Track & analyze competition", "class": "step-3"},
+        {"icon": "🎯", "number": "4", "title": "Optimize Bid", "desc": "AI-powered bid optimization", "class": "step-4"},
+        {"icon": "🏆", "number": "5", "title": "Submit & Win", "desc": "Submit winning bid confidently", "class": "step-5"}
+    ]
+    
+    # Use Streamlit columns for horizontal layout
+    cols = st.columns(5)
+    
+    for i, (col, step) in enumerate(zip(cols, steps)):
+        with col:
+            st.markdown(f"""
+            <div class="workflow-step-card {step['class']}">
+                <div class="step-glow"></div>
+                <div class="step-number">{step['number']}</div>
+                <div class="step-icon">{step['icon']}</div>
+                <div class="step-title">{step['title']}</div>
+                <div class="step-desc">{step['desc']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Add arrow between steps (except after last)
+            if i < len(steps) - 1:
+                # We can't put HTML between Streamlit columns easily
+                # So we add a small arrow indicator below
+                pass
+    
+    # Add arrow indicators between steps using a separate row
+    st.markdown("""
+    <div style="display: flex; justify-content: space-between; padding: 0 20px; margin-top: -5px;">
+        <span style="flex:1; text-align:center; color: #4CAF50; font-size: 20px;">▶</span>
+        <span style="flex:1; text-align:center; color: #4CAF50; font-size: 20px;">▶</span>
+        <span style="flex:1; text-align:center; color: #4CAF50; font-size: 20px;">▶</span>
+        <span style="flex:1; text-align:center; color: #4CAF50; font-size: 20px;">▶</span>
+        <span style="flex:1; text-align:center; color: transparent;">⬤</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+def render_workflow_section3():
+    """Render horizontal animated workflow section with step cards and gradients"""
+    
+    st.markdown("""
+    <style>
+        .workflow-container {
+            background: linear-gradient(135deg, #f8f9fe 0%, #eef0f7 50%, #e8e6f0 100%);
+            border-radius: 28px;
+            padding: 2.5rem 2rem 3rem 2rem;
+            margin: 2rem 0 3rem 0;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.06);
+        }
+        .workflow-container::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -30%;
+            width: 60%;
+            height: 150%;
+            background: radial-gradient(ellipse at 70% 50%, rgba(118, 75, 162, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+            position: relative;
+            z-index: 1;
+        }
+        .workflow-header .workflow-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(118, 75, 162, 0.12), rgba(102, 126, 234, 0.12));
+            padding: 0.3rem 1.5rem;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            color: #5a3d8a;
+            font-weight: 600;
+            margin-bottom: 0.8rem;
+            border: 1px solid rgba(118, 75, 162, 0.15);
+        }
+        .workflow-header h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 0.3rem;
+        }
+        .workflow-header h2 span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .workflow-header p {
+            color: #6c757d;
+            font-size: 1.05rem;
+        }
+        
+        /* Step Cards */
+        .step-card {
+            background: white;
+            border-radius: 20px;
+            padding: 24px 16px 20px;
+            text-align: center;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.06);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+            height: 100%;
+            border-bottom: 4px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+        .step-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            border-radius: 20px;
+        }
+        .step-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+        }
+        .step-card:hover::before {
+            opacity: 1;
+        }
+        .step-card .step-number {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 14px;
+            border-radius: 20px;
+            margin-bottom: 8px;
+            color: white;
+            position: relative;
+            z-index: 1;
+        }
+        .step-card .step-icon {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 12px;
+            font-size: 30px;
+            transition: all 0.4s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+            position: relative;
+            z-index: 1;
+        }
+        .step-card:hover .step-icon {
+            transform: scale(1.1) rotate(-5deg);
+        }
+        .step-card .step-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin: 4px 0 2px;
+            position: relative;
+            z-index: 1;
+        }
+        .step-card .step-desc {
+            font-size: 12px;
+            color: #6c757d;
+            margin: 0;
+            line-height: 1.4;
+            position: relative;
+            z-index: 1;
+        }
+        .step-card .step-glow {
+            position: absolute;
+            top: -30%;
+            left: -30%;
+            width: 160%;
+            height: 160%;
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            pointer-events: none;
+        }
+        .step-card:hover .step-glow {
+            opacity: 0.08;
+        }
+        
+        /* Step 1 - Blue */
+        .step-1 .step-icon { background: linear-gradient(135deg, #e3f2fd, #bbdefb); }
+        .step-1 .step-number { background: linear-gradient(135deg, #2196F3, #1565C0); }
+        .step-1 .step-glow { background: radial-gradient(circle, #2196F3 0%, transparent 70%); }
+        .step-1:hover { border-bottom-color: #2196F3; }
+        .step-1:hover .step-icon { box-shadow: 0 8px 30px rgba(33, 150, 243, 0.3); }
+        
+        /* Step 2 - Green */
+        .step-2 .step-icon { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); }
+        .step-2 .step-number { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
+        .step-2 .step-glow { background: radial-gradient(circle, #4CAF50 0%, transparent 70%); }
+        .step-2:hover { border-bottom-color: #4CAF50; }
+        .step-2:hover .step-icon { box-shadow: 0 8px 30px rgba(76, 175, 80, 0.3); }
+        
+        /* Step 3 - Orange */
+        .step-3 .step-icon { background: linear-gradient(135deg, #fff3e0, #ffe0b2); }
+        .step-3 .step-number { background: linear-gradient(135deg, #FF9800, #E65100); }
+        .step-3 .step-glow { background: radial-gradient(circle, #FF9800 0%, transparent 70%); }
+        .step-3:hover { border-bottom-color: #FF9800; }
+        .step-3:hover .step-icon { box-shadow: 0 8px 30px rgba(255, 152, 0, 0.3); }
+        
+        /* Step 4 - Pink */
+        .step-4 .step-icon { background: linear-gradient(135deg, #fce4ec, #f8bbd0); }
+        .step-4 .step-number { background: linear-gradient(135deg, #E91E63, #880E4F); }
+        .step-4 .step-glow { background: radial-gradient(circle, #E91E63 0%, transparent 70%); }
+        .step-4:hover { border-bottom-color: #E91E63; }
+        .step-4:hover .step-icon { box-shadow: 0 8px 30px rgba(233, 30, 99, 0.3); }
+        
+        /* Step 5 - Purple */
+        .step-5 .step-icon { background: linear-gradient(135deg, #f3e5f5, #e1bee7); }
+        .step-5 .step-number { background: linear-gradient(135deg, #9C27B0, #4A148C); }
+        .step-5 .step-glow { background: radial-gradient(circle, #9C27B0 0%, transparent 70%); }
+        .step-5:hover { border-bottom-color: #9C27B0; }
+        .step-5:hover .step-icon { box-shadow: 0 8px 30px rgba(156, 39, 176, 0.3); }
+        
+        .step-connector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 0 4px;
+        }
+        .step-connector .arrow {
+            font-size: 22px;
+            color: #4CAF50;
+            opacity: 0.5;
+            animation: pulseArrow 1.8s ease-in-out infinite;
+        }
+        @keyframes pulseArrow {
+            0%, 100% { opacity: 0.5; transform: translateX(0); }
+            50% { opacity: 1; transform: translateX(4px); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 992px) {
+            .workflow-container { padding: 2rem 1rem; }
+            .step-card { padding: 18px 12px 16px; }
+            .step-card .step-icon { width: 54px; height: 54px; font-size: 24px; }
+            .step-card .step-title { font-size: 14px; }
+            .step-card .step-desc { font-size: 11px; }
+            .workflow-header h2 { font-size: 1.6rem; }
+            .step-connector .arrow { font-size: 18px; }
+        }
+        @media (max-width: 576px) {
+            .workflow-container { padding: 1.5rem 0.5rem; }
+            .step-card { padding: 14px 8px 12px; }
+            .step-card .step-icon { width: 44px; height: 44px; font-size: 20px; margin-bottom: 8px; }
+            .step-card .step-title { font-size: 12px; }
+            .step-card .step-desc { font-size: 10px; }
+            .workflow-header h2 { font-size: 1.3rem; }
+            .step-connector .arrow { font-size: 14px; }
+        }
+    </style>
+    
+    <div class="workflow-container">
+        <div class="workflow-header">
+            <div class="workflow-badge">🚀 BIDDING WORKFLOW</div>
+            <h2>🚀 <span>Easy & Complete</span> Bidding Workflow</h2>
+            <p>From tender creation to winning bid – all in one platform</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    steps = [
+        {"icon": "📋", "number": "1", "title": "Create Tender", "desc": "Add tender details & requirements", "class": "step-1"},
+        {"icon": "📄", "number": "2", "title": "Generate BOQ", "desc": "Create detailed Bill of Quantities", "class": "step-2"},
+        {"icon": "👥", "number": "3", "title": "Add Competitors", "desc": "Track & analyze competition", "class": "step-3"},
+        {"icon": "🎯", "number": "4", "title": "Optimize Bid", "desc": "AI-powered bid optimization", "class": "step-4"},
+        {"icon": "🏆", "number": "5", "title": "Submit & Win", "desc": "Submit winning bid confidently", "class": "step-5"}
+    ]
+    
+    # Create columns with connectors between them
+    # We need 9 columns: step, connector, step, connector, step, connector, step, connector, step
+    # But simpler: use 5 columns for steps and add connectors as a separate row
+    
+    # Row 1: Steps
+    cols = st.columns(5)
+    
+    for col, step in zip(cols, steps):
+        with col:
+            st.markdown(f"""
+            <div class="step-card {step['class']}">
+                <div class="step-glow"></div>
+                <div class="step-number">{step['number']}</div>
+                <div class="step-icon">{step['icon']}</div>
+                <div class="step-title">{step['title']}</div>
+                <div class="step-desc">{step['desc']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Row 2: Connectors (arrows between steps)
+    # Use 5 columns with arrows in between
+    st.markdown("""
+    <div style="display: flex; justify-content: space-between; padding: 0 20px; margin-top: 4px;">
+        <div style="flex:1; text-align:center; color: #4CAF50; font-size: 20px; opacity:0.4;">▶</div>
+        <div style="flex:1; text-align:center; color: #4CAF50; font-size: 20px; opacity:0.4;">▶</div>
+        <div style="flex:1; text-align:center; color: #4CAF50; font-size: 20px; opacity:0.4;">▶</div>
+        <div style="flex:1; text-align:center; color: #4CAF50; font-size: 20px; opacity:0.4;">▶</div>
+        <div style="flex:1; text-align:center; color: transparent; font-size: 20px;">⬤</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def render_workflow_section_with_connectors():
+    """Render workflow with animated connectors between steps"""
+    
+    st.markdown("""
+    <style>
+        .workflow-container {
+            background: linear-gradient(135deg, #f8f9fe 0%, #eef0f7 50%, #e8e6f0 100%);
+            border-radius: 28px;
+            padding: 2.5rem 2rem 3rem 2rem;
+            margin: 2rem 0 3rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+        .workflow-header .badge {
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(118, 75, 162, 0.12), rgba(102, 126, 234, 0.12));
+            padding: 0.3rem 1.5rem;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            color: #5a3d8a;
+            font-weight: 600;
+            margin-bottom: 0.8rem;
+        }
+        .workflow-header h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .workflow-header h2 span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .workflow-header p {
+            color: #6c757d;
+            font-size: 1.05rem;
+        }
+        .step-card {
+            background: white;
+            border-radius: 20px;
+            padding: 20px 12px 16px;
+            text-align: center;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.06);
+            transition: all 0.4s ease;
+            height: 100%;
+            border-bottom: 4px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+        .step-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+        }
+        .step-card .icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 10px;
+            font-size: 28px;
+            transition: transform 0.4s ease;
+        }
+        .step-card:hover .icon {
+            transform: scale(1.1) rotate(-5deg);
+        }
+        .step-card .num {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 12px;
+            border-radius: 20px;
+            color: white;
+            margin-bottom: 4px;
+        }
+        .step-card .title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .step-card .desc {
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 2px;
+        }
+        .step-card .glow {
+            position: absolute;
+            top: -30%;
+            left: -30%;
+            width: 160%;
+            height: 160%;
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+            pointer-events: none;
+        }
+        .step-card:hover .glow { opacity: 0.08; }
+        
+        .step-1 .icon { background: linear-gradient(135deg, #e3f2fd, #bbdefb); }
+        .step-1 .num { background: linear-gradient(135deg, #2196F3, #1565C0); }
+        .step-1 .glow { background: radial-gradient(circle, #2196F3 0%, transparent 70%); }
+        .step-1:hover { border-bottom-color: #2196F3; }
+        
+        .step-2 .icon { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); }
+        .step-2 .num { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
+        .step-2 .glow { background: radial-gradient(circle, #4CAF50 0%, transparent 70%); }
+        .step-2:hover { border-bottom-color: #4CAF50; }
+        
+        .step-3 .icon { background: linear-gradient(135deg, #fff3e0, #ffe0b2); }
+        .step-3 .num { background: linear-gradient(135deg, #FF9800, #E65100); }
+        .step-3 .glow { background: radial-gradient(circle, #FF9800 0%, transparent 70%); }
+        .step-3:hover { border-bottom-color: #FF9800; }
+        
+        .step-4 .icon { background: linear-gradient(135deg, #fce4ec, #f8bbd0); }
+        .step-4 .num { background: linear-gradient(135deg, #E91E63, #880E4F); }
+        .step-4 .glow { background: radial-gradient(circle, #E91E63 0%, transparent 70%); }
+        .step-4:hover { border-bottom-color: #E91E63; }
+        
+        .step-5 .icon { background: linear-gradient(135deg, #f3e5f5, #e1bee7); }
+        .step-5 .num { background: linear-gradient(135deg, #9C27B0, #4A148C); }
+        .step-5 .glow { background: radial-gradient(circle, #9C27B0 0%, transparent 70%); }
+        .step-5:hover { border-bottom-color: #9C27B0; }
+        
+        .connector-wrapper {
+            display: flex;
+            justify-content: space-between;
+            padding: 0 10px;
+            margin-top: 5px;
+        }
+        .connector-wrapper .arrow {
+            flex: 1;
+            text-align: center;
+            font-size: 18px;
+            color: #4CAF50;
+            opacity: 0.4;
+            animation: arrowPulse 1.8s ease-in-out infinite;
+        }
+        .connector-wrapper .arrow:nth-child(1) { animation-delay: 0s; }
+        .connector-wrapper .arrow:nth-child(2) { animation-delay: 0.3s; }
+        .connector-wrapper .arrow:nth-child(3) { animation-delay: 0.6s; }
+        .connector-wrapper .arrow:nth-child(4) { animation-delay: 0.9s; }
+        
+        @keyframes arrowPulse {
+            0%, 100% { opacity: 0.4; transform: translateX(0); }
+            50% { opacity: 0.9; transform: translateX(4px); }
+        }
+    </style>
+    <div class="workflow-section">
+        <div class="workflow-header">
+            <h2>🚀 <span>Easy & Complete</span> Bidding Workflow</h2>
+            <p>From tender creation to winning bid – all in one platform</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    steps = [
+        {"icon": "📋", "num": "1", "title": "Create Tender", "desc": "Add tender details", "class": "s1"},
+        {"icon": "📄", "num": "2", "title": "Generate BOQ", "desc": "Create Bill of Quantities", "class": "s2"},
+        {"icon": "👥", "num": "3", "title": "Add Competitors", "desc": "Track competition", "class": "s3"},
+        {"icon": "🎯", "num": "4", "title": "Optimize Bid", "desc": "AI-powered bidding", "class": "s4"},
+        {"icon": "🏆", "num": "5", "title": "Submit & Win", "desc": "Win confidently", "class": "s5"}
+    ]
+    
+    # Create 5 columns
+    cols = st.columns(5)
+    
+    for col, step in zip(cols, steps):
+        with col:
+            st.markdown(f"""
+            <div class="step-card {step['class']}">
+                <div class="num">{step['num']}</div>
+                <div class="icon">{step['icon']}</div>
+                <div class="title">{step['title']}</div>
+                <div class="desc">{step['desc']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+def render_workflow_section2():
+    """Render horizontal workflow with Streamlit columns and connectors"""
+    
+    st.markdown("""
+    <style>
+        .workflow-section {
+            padding: 2.5rem 1rem 3rem 1rem;
+            margin: 2rem 0;
+            background: linear-gradient(135deg, #f8f9fe 0%, #eef0f7 50%, #e8e6f0 100%);
+            border-radius: 28px;
+        }
+        .workflow-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .workflow-header h2 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .workflow-header h2 span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .workflow-header p {
+            color: #6c757d;
+            font-size: 1.05rem;
+        }
+        .step-card {
+            background: white;
+            border-radius: 20px;
+            padding: 20px 10px 16px;
+            text-align: center;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.06);
+            transition: all 0.4s ease;
+            height: 100%;
+            border-bottom: 4px solid transparent;
+        }
+        .step-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 16px 50px rgba(0,0,0,0.12);
+        }
+        .step-card .icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 10px;
+            font-size: 26px;
+            transition: transform 0.4s ease;
+        }
+        .step-card:hover .icon {
+            transform: scale(1.1) rotate(-5deg);
+        }
+        .step-card .num {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 20px;
+            margin-bottom: 4px;
+            color: white;
+        }
+        .step-card .title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .step-card .desc {
+            font-size: 10px;
+            color: #6c757d;
+            margin-top: 2px;
+        }
+        .s1 .icon { background: linear-gradient(135deg, #e3f2fd, #bbdefb); }
+        .s1 .num { background: linear-gradient(135deg, #2196F3, #1565C0); }
+        .s1:hover { border-bottom-color: #2196F3; }
+        
+        .s2 .icon { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); }
+        .s2 .num { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
+        .s2:hover { border-bottom-color: #4CAF50; }
+        
+        .s3 .icon { background: linear-gradient(135deg, #fff3e0, #ffe0b2); }
+        .s3 .num { background: linear-gradient(135deg, #FF9800, #E65100); }
+        .s3:hover { border-bottom-color: #FF9800; }
+        
+        .s4 .icon { background: linear-gradient(135deg, #fce4ec, #f8bbd0); }
+        .s4 .num { background: linear-gradient(135deg, #E91E63, #880E4F); }
+        .s4:hover { border-bottom-color: #E91E63; }
+        
+        .s5 .icon { background: linear-gradient(135deg, #f3e5f5, #e1bee7); }
+        .s5 .num { background: linear-gradient(135deg, #9C27B0, #4A148C); }
+        .s5:hover { border-bottom-color: #9C27B0; }
+        
+        .connector-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0 10px;
+            margin-top: -2px;
+        }
+        .connector-row span {
+            flex: 1;
+            text-align: center;
+            font-size: 14px;
+            color: #4CAF50;
+            opacity: 0.5;
+        }
+        @media (max-width: 768px) {
+            .step-card { padding: 15px 8px; }
+            .step-card .icon { width: 45px; height: 45px; font-size: 20px; }
+            .step-card .title { font-size: 12px; }
+            .step-card .desc { font-size: 9px; }
+            .workflow-header h2 { font-size: 1.5rem; }
+        }
+    </style>
+    
+    <div class="workflow-section">
+        <div class="workflow-header">
+            <h2>🚀 <span>Easy & Complete</span> Bidding Workflow</h2>
+            <p>From tender creation to winning bid – all in one platform</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    steps = [
+        {"icon": "📋", "num": "1", "title": "Create Tender", "desc": "Add tender details", "class": "s1"},
+        {"icon": "📄", "num": "2", "title": "Generate BOQ", "desc": "Create Bill of Quantities", "class": "s2"},
+        {"icon": "👥", "num": "3", "title": "Add Competitors", "desc": "Track competition", "class": "s3"},
+        {"icon": "🎯", "num": "4", "title": "Optimize Bid", "desc": "AI-powered bidding", "class": "s4"},
+        {"icon": "🏆", "num": "5", "title": "Submit & Win", "desc": "Win confidently", "class": "s5"}
+    ]
+    
+    # Create 5 columns
+    cols = st.columns(5)
+    
+    for col, step in zip(cols, steps):
+        with col:
+            st.markdown(f"""
+            <div class="step-card {step['class']}">
+                <div class="num">{step['num']}</div>
+                <div class="icon">{step['icon']}</div>
+                <div class="title">{step['title']}</div>
+                <div class="desc">{step['desc']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def show_landing_page():
     """Unified landing page with English and Bangla content - Modern & Professional"""
@@ -1271,6 +2091,8 @@ def show_landing_page():
                         st.rerun()
         
         st.markdown("---")
+    
+    render_workflow_section3()
     # ==================== STATS SECTION ====================
     st.markdown("""
     <div class="stats-container">
@@ -1378,7 +2200,10 @@ def show_landing_page():
     </div>
     """, unsafe_allow_html=True)
 
-    
+    render_all_counters()
+
+
+
     # ==================== KEY FEATURES ====================
     
     # Feature 1: AI Tender Analysis Engine
@@ -1562,9 +2387,9 @@ def show_landing_page():
     st.markdown('<p style="text-align: center; font-size: 0.8rem; color: #94a3b8; margin-top: 1rem;"><strong>SEO:</strong> Tender Management Software Bangladesh, eGP Management System</p>', unsafe_allow_html=True)
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
-    # Feature 5: Price-to-Win Simulator (NEW - Premium Feature)
+    # Feature 5: Competitive Simulator (NEW - Premium Feature)
     st.markdown("""
-    <h2 class="section-title">🏆 Price-to-Win Simulator</h2>
+    <h2 class="section-title">🏆 Competitive Simulator</h2>
     <p class="section-subtitle">বিভিন্ন প্রতিযোগী পরিস্থিতিতে আপনার জয়ের সম্ভাবনা বিশ্লেষণ করুন</p>
     """, unsafe_allow_html=True)
 
@@ -1607,11 +2432,11 @@ def show_landing_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # Price-to-Win Benefits Section
+    # Competitive Benefits Section
     st.markdown("""
         <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); 
                     border-radius: 20px; padding: 2rem; margin: 2rem 0; color: white; text-align: center;">
-            <h3 style="color: white; font-size: 1.8rem; margin-bottom: 1rem;">📊 Real Impact of Price-to-Win Simulator</h3>
+            <h3 style="color: white; font-size: 1.8rem; margin-bottom: 1rem;">📊 Real Impact of Competitive Simulator</h3>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; margin-top: 1.5rem;">
                 <div>
                     <div style="font-size: 2.5rem; font-weight: 800;">73%</div>
@@ -1845,7 +2670,7 @@ def show_landing_page():
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
     
-    # ==================== FAQ SECTION (UPDATED with Price-to-Win) ====================
+    # ==================== FAQ SECTION (UPDATED with Competitive) ====================
     st.markdown('<div id="faq"></div>', unsafe_allow_html=True)
     st.markdown("""
     <h2 class="section-title">❓ Frequently Asked Questions</h2>
@@ -1854,10 +2679,10 @@ def show_landing_page():
 
     faqs = [
         {
-            "question_en": "What is Price-to-Win Simulator?",
-            "question_bn": "প্রাইস-টু-উইন সিমুলেটর কী?",
-            "answer_en": "The Price-to-Win Simulator is an AI-powered tool that analyzes multiple competitor scenarios (5 to 19 competitors) and recommends the optimal bid price that balances win probability and profit margin. It simulates best-case, expected, and worst-case competition scenarios to give you data-driven bidding decisions.",
-            "answer_bn": "প্রাইস-টু-উইন সিমুলেটর একটি AI-চালিত টুল যা বিভিন্ন প্রতিযোগী পরিস্থিতি (৫ থেকে ১৯ জন প্রতিযোগী) বিশ্লেষণ করে এবং সর্বোত্তম বিড মূল্য সুপারিশ করে যা জয়ের সম্ভাবনা ও মুনাফার মধ্যে ভারসাম্য রাখে। এটি সেরা, প্রত্যাশিত এবং সবচেয়ে খারাপ প্রতিযোগিতা পরিস্থিতি সিমুলেট করে তথ্যভিত্তিক বিডিং সিদ্ধান্ত দেয়।"
+            "question_en": "What is Competitive Simulator?",
+            "question_bn": "Competitive  সিমুলেটর কী?",
+            "answer_en": "The Competitive Simulator is an AI-powered tool that analyzes multiple competitor scenarios (5 to 19 competitors) and recommends the optimal bid price that balances win probability and profit margin. It simulates best-case, expected, and worst-case competition scenarios to give you data-driven bidding decisions.",
+            "answer_bn": "Competitive  সিমুলেটর একটি AI-চালিত টুল যা বিভিন্ন প্রতিযোগী পরিস্থিতি (৫ থেকে ১৯ জন প্রতিযোগী) বিশ্লেষণ করে এবং সর্বোত্তম বিড মূল্য সুপারিশ করে যা জয়ের সম্ভাবনা ও মুনাফার মধ্যে ভারসাম্য রাখে। এটি সেরা, প্রত্যাশিত এবং সবচেয়ে খারাপ প্রতিযোগিতা পরিস্থিতি সিমুলেট করে তথ্যভিত্তিক বিডিং সিদ্ধান্ত দেয়।"
         },
         {
             "question_en": "How accurate is the win probability calculation?",
@@ -1886,14 +2711,14 @@ def show_landing_page():
         {
             "question_en": "What's included in the Free plan?",
             "question_bn": "ফ্রি প্ল্যানে কি কি আছে?",
-            "answer_en": "Free plan includes 5 BOQ generations, 5 bid optimizations, 5 tender analyses per month, and view-only rate access. Price-to-Win Simulator and export features require Professional or Enterprise plan.",
-            "answer_bn": "ফ্রি প্ল্যানে প্রতি মাসে ৫টি BOQ জেনারেশন, ৫টি বিড অপটিমাইজেশন, ৫টি টেন্ডার বিশ্লেষণ এবং ভিউ-অনলি রেট অ্যাক্সেস রয়েছে। প্রাইস-টু-উইন সিমুলেটর এবং এক্সপোর্ট ফিচারের জন্য প্রফেশনাল বা এন্টারপ্রাইজ প্ল্যান প্রয়োজন।"
+            "answer_en": "Free plan includes 5 BOQ generations, 5 bid optimizations, 5 tender analyses per month, and view-only rate access. Competitive Simulator and export features require Professional or Enterprise plan.",
+            "answer_bn": "ফ্রি প্ল্যানে প্রতি মাসে ৫টি BOQ জেনারেশন, ৫টি বিড অপটিমাইজেশন, ৫টি টেন্ডার বিশ্লেষণ এবং ভিউ-অনলি রেট অ্যাক্সেস রয়েছে। Competitive  সিমুলেটর এবং এক্সপোর্ট ফিচারের জন্য প্রফেশনাল বা এন্টারপ্রাইজ প্ল্যান প্রয়োজন।"
         },
         {
-            "question_en": "How does Price-to-Win differ from basic bid optimization?",
-            "question_bn": "প্রাইস-টু-উইন বেসিক বিড অপটিমাইজেশন থেকে কীভাবে আলাদা?",
-            "answer_en": "Basic bid optimization gives a single recommended price based on simple averages. Price-to-Win Simulator provides 9+ competitor scenarios, 5 AI strategies, detailed scenario breakdowns, exportable reports, and historical tracking - giving you a complete competitive intelligence system.",
-            "answer_bn": "বেসিক বিড অপটিমাইজেশন শুধু একটি প্রস্তাবিত মূল্য দেয় সহজ গড়ের ভিত্তিতে। প্রাইস-টু-উইন সিমুলেটর দেয় ৯+ প্রতিযোগী পরিস্থিতি, ৫টি AI স্ট্র্যাটেজি, বিস্তারিত পরিস্থিতি বিশ্লেষণ, এক্সপোর্টযোগ্য রিপোর্ট এবং ঐতিহাসিক ট্র্যাকিং - যা আপনাকে একটি সম্পূর্ণ প্রতিযোগিতামূলক ইন্টেলিজেন্স সিস্টেম দেয়।"
+            "question_en": "How does Competitive Simulator differ from basic bid optimization?",
+            "question_bn": "Competitive  বেসিক বিড অপটিমাইজেশন থেকে কীভাবে আলাদা?",
+            "answer_en": "Basic bid optimization gives a single recommended price based on simple averages. Competitive Simulator provides 9+ competitor scenarios, 5 AI strategies, detailed scenario breakdowns, exportable reports, and historical tracking - giving you a complete competitive intelligence system.",
+            "answer_bn": "বেসিক বিড অপটিমাইজেশন শুধু একটি প্রস্তাবিত মূল্য দেয় সহজ গড়ের ভিত্তিতে। Competitive  সিমুলেটর দেয় ৯+ প্রতিযোগী পরিস্থিতি, ৫টি AI স্ট্র্যাটেজি, বিস্তারিত পরিস্থিতি বিশ্লেষণ, এক্সপোর্টযোগ্য রিপোর্ট এবং ঐতিহাসিক ট্র্যাকিং - যা আপনাকে একটি সম্পূর্ণ প্রতিযোগিতামূলক ইন্টেলিজেন্স সিস্টেম দেয়।"
         },
         {
             "question_en": "Is TenderAI compliant with Bangladesh PPR 2025?",

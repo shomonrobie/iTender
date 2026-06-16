@@ -7,7 +7,7 @@ from datetime import datetime
 from modules.boq_generator import BOQGenerator
 from modules.advanced_bid_optimizer import get_three_tier_comparison
 from modules.report_generator import generate_enhanced_report
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_optimize_bid, can_view_tenders, can_export_data,
     render_role_badge, require_permission
@@ -125,7 +125,7 @@ def render_boq_bid_integration():
     st.markdown("---")
     
     # Initialize database connection
-    db = DatabaseManager()
+    db = UnifiedDatabaseManager()
     
     # Get user info
     user_id = st.session_state.get('user_id')

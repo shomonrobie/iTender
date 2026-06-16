@@ -1,3 +1,4 @@
+#
 """
 Complete Tender Management Module
 Track tender participation, bid submission, deadlines, and winner tracking
@@ -16,11 +17,11 @@ from datetime import datetime, timedelta
 import time
 import logging
 from typing import Optional, Dict, List, Any
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 DEBUG_MODE = True
 # Initialize logger
 logger = logging.getLogger(__name__)
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 from modules.rbac import (
     rbac, can_view_tenders, can_create_tender, can_edit_tender,
     can_submit_bid, can_manage_team, can_export_data,
@@ -117,6 +118,75 @@ def create_tender(company_id: int, tender_data: Dict[str, Any], created_by: int)
     except Exception as e:
         logger.error(f"Failed to create tender: {e}", exc_info=True)
         return None
+def update_tender(tender_id: int, tender_data: Dict[str, Any], updated_by: int) -> bool:
+    """Update an existing tender with full e-GP field support"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Check if tender exists and belongs to company
+        cursor.execute('''
+        SELECT id FROM company_tenders WHERE id = ? AND company_id = ? AND is_active = 1
+        ''', (tender_id, st.session_state.company_id))
+        
+        if not cursor.fetchone():
+            conn.close()
+            return False
+        
+        # Define updatable columns (match your table structure)
+        updatable_columns = [
+            'tender_id', 'tender_title', 'procuring_entity', 'division',
+            'district', 'thana', 'country', 'procurement_type', 'official_estimate',
+            'submission_deadline', 'tender_security', 'document_fee', 'evaluation_type',
+            'mode_of_payment', 'eligibility_criteria', 'invitation_ref_no', 'package_no',
+            'project_code', 'project_name', 'inviting_official_name',
+            'inviting_official_designation', 'inviting_official_phone',
+            'inviting_official_email', 'inviting_official_address',
+            'inviting_official_city', 'inviting_official_thana',
+            'inviting_official_district', 'notes', 'app_id', 'procuring_entity_code',
+            'procurement_nature', 'event_type', 'budget_type', 'source_of_funds',
+            'category', 'tender_publication_date', 'document_selling_end_date',
+            'pre_bid_meeting_start', 'pre_bid_meeting_end', 'bid_opening_date',
+            'security_submission_deadline', 'security_valid_upto', 'tender_valid_upto'
+        ]
+        
+        # Build update query dynamically
+        update_fields = []
+        update_values = []
+        
+        for col in updatable_columns:
+            if col in tender_data and tender_data[col] is not None:
+                update_fields.append(f"{col} = ?")
+                update_values.append(tender_data[col])
+        
+        if not update_fields:
+            conn.close()
+            return False
+        
+        # Add updated_at timestamp
+        update_fields.append("updated_at = ?")
+        update_values.append(datetime.now())
+        
+        # Add tender_id to values
+        update_values.append(tender_id)
+        
+        query = f"UPDATE company_tenders SET {', '.join(update_fields)} WHERE id = ?"
+        
+        cursor.execute(query, update_values)
+        conn.commit()
+        
+        success = cursor.rowcount > 0
+        conn.close()
+        
+        if success:
+            # Log the activity
+            logger.info(f"Tender {tender_id} updated by user {updated_by}")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"Failed to update tender: {e}", exc_info=True)
+        return False
 
 
 def get_company_tenders(company_id: int, status_filter: Optional[str] = None, limit: int = 50) -> pd.DataFrame:
@@ -527,6 +597,7 @@ db.get_bid_revisions = get_bid_revisions
 db.update_tender_lock_status = update_tender_lock_status
 db.create_tender_copy = create_tender_copy
 db.delete_tender = delete_tender
+db.update_tender = update_tender  # ← ADD THIS LINE
 
 
 # =============================================================================
@@ -1422,7 +1493,8 @@ def _render_tender_form_with_data(editing: bool = False):
             
             if editing:
                 # Update existing tender
-                success = db.update_tender(st.session_state.edit_tender_id, tender_data)
+                success = db.update_tender(st.session_state.edit_tender_id, tender_data, st.session_state.user_id)
+
                 if success:
                     st.success(f"✅ Tender updated successfully!")
                     st.balloons()

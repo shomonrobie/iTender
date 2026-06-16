@@ -7,8 +7,9 @@ import streamlit as st
 import pandas as pd
 import json
 from datetime import datetime, date
-from database.enhanced_db_manager import enhanced_db
+from database.unified_db_manager import UnifiedDatabaseManager
 
+db = UnifiedDatabaseManager()
 def show():
     """Enhanced Company Dashboard with Knowledge Repository"""
     
@@ -71,7 +72,7 @@ def render_knowledge_dashboard(company_id):
     st.markdown("### Knowledge Repository Dashboard")
     
     # Get counts
-    conn = enhanced_db.get_connection()
+    conn = db.get_connection()
     cursor = conn.cursor()
     
     counts = {}
@@ -140,7 +141,7 @@ def render_knowledge_dashboard(company_id):
     st.markdown("### 📊 Data Completeness")
     
     completeness = {
-        'Company Profile': enhanced_db.get_company_profile(company_id) is not None,
+        'Company Profile': db.get_company_profile(company_id) is not None,
         'Personnel Records': counts.get('personnel', 0) > 0,
         'Equipment Records': counts.get('equipment', 0) > 0,
         'Experience Records': counts.get('experience_record', 0) > 0,
@@ -157,7 +158,7 @@ def render_company_profile(company_id):
     st.markdown("### Company Profile")
     
     # Get existing profile
-    profile = enhanced_db.get_company_profile(company_id)
+    profile = db.get_company_profile(company_id)
     
     with st.form("company_profile_form"):
         col1, col2 = st.columns(2)
@@ -209,7 +210,7 @@ def render_company_profile(company_id):
                 'updated_by': st.session_state.user_id
             }
             
-            if enhanced_db.save_company_profile(company_id, profile_data):
+            if db.save_company_profile(company_id, profile_data):
                 st.success("Company profile saved successfully!")
                 st.rerun()
             else:

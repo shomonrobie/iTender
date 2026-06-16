@@ -19,32 +19,8 @@ class RateCRUDForms:
     
     def __init__(self, db):
         self.db = db
-        self._init_audit_table()
-    
-    def _init_audit_table(self):
-        """Initialize audit log table"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS rate_audit_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    username TEXT,
-                    role TEXT,
-                    action TEXT,
-                    entity_type TEXT,
-                    entity_id TEXT,
-                    old_data TEXT,
-                    new_data TEXT,
-                    ip_address TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
-            conn.close()
-        except:
-            pass
+
+   
     
     def _log_audit(self, action, entity_type, entity_id, old_data=None, new_data=None):
         """Log audit trail"""

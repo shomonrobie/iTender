@@ -7,13 +7,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_view_tenders, can_edit_tender, can_export_data,
     render_role_badge, is_admin, is_company_admin, require_permission
 )
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 class CompetitorTracker:
@@ -21,54 +21,41 @@ class CompetitorTracker:
     
     def __init__(self, company_id):
         self.company_id = company_id
-        self._ensure_tables()
-    
-    def _ensure_tables(self):
-        """Create competitor tracking tables if not exist"""
+        
+    def add_competitor_bid(self, competitor_name: str, tender_id: str, 
+                           bid_amount: float, official_estimate: float,
+                           was_winner: bool = False, bid_date: str = None):
+        """Add a competitor bid record"""
         conn = db.get_connection()
         cursor = conn.cursor()
         
-        # Competitor profiles table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS competitor_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
-            competitor_name TEXT,
-            competitor_type TEXT,
-            first_seen DATE,
-            last_seen DATE,
-            total_appearances INTEGER DEFAULT 0,
-            wins_count INTEGER DEFAULT 0,
-            avg_bid_ratio REAL,
-            bid_std_dev REAL,
-            strategy TEXT,
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies (id),
-            UNIQUE(company_id, competitor_name)
-        )
-        ''')
+        if not bid_date:
+            bid_date = datetime.now().date()
         
-        # Competitor bid history
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS competitor_bid_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER,
-            competitor_name TEXT,
-            tender_id TEXT,
-            bid_amount REAL,
-            official_estimate REAL,
-            bid_ratio REAL,
-            was_winner BOOLEAN DEFAULT 0,
-            bid_date DATE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (company_id) REFERENCES companies (id)
-        )
-        ''')
+        bid_ratio = bid_amount / official_estimate if official_estimate > 0 else 1.0
         
-        conn.commit()
-        conn.close()
+        try:
+            # Add to bid history
+            cursor.execute("""
+                INSERT INTO competitor_bid_history 
+                (company_id, competitor_name, tender_id, bid_amount, official_estimate, 
+                 bid_ratio, was_winner, bid_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (self.company_id, competitor_name, tender_id, bid_amount, 
+                  official_estimate, bid_ratio, 1 if was_winner else 0, bid_date))
+            
+            # Update competitor profile
+            self._update_competitor_profile(competitor_name, bid_ratio, was_winner)
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"Error adding competitor bid: {e}")
+            conn.rollback()
+            conn.close()
+            return False
     
     def update_competitor_profile(self, competitor_name, bid_amount, official_estimate, was_winner=False, tender_id=None):
         """Update or create competitor profile with new bid data"""

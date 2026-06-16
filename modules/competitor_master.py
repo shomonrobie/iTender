@@ -9,9 +9,9 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime
 
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def render_competitor_master_page():
     """Render competitor master management page"""

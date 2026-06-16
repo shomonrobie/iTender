@@ -8,8 +8,8 @@ import logging
 import io
 import os
 
-from database.db_manager import DatabaseManager
-from database.enhanced_db_manager import enhanced_db
+from database.unified_db_manager import UnifiedDatabaseManager
+
 from modules.field_matcher import field_matcher
 
 extension_bp = Blueprint('extension', __name__, url_prefix='/api')
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
 JWT_EXPIRATION_HOURS = 24
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 def require_auth(f):
@@ -87,7 +87,9 @@ def extension_login():
         return jsonify({'success': False, 'message': 'Account pending approval'}), 403
     
     # Get subscription info
-    subscription = db.get_user_subscription(user[0])
+    #subscription = db.get_user_subscription(user[0])
+    subscription = db.get_user_subscription(user.get('id'))
+
     plan = subscription.get('plan', 'free')
     
     # Generate JWT token
@@ -313,7 +315,6 @@ def search_knowledge_base():
     
     return jsonify({'results': results})
 
-
 @extension_bp.route('/track/form-fill', methods=['POST'])
 @require_auth
 def track_form_fill():
@@ -324,19 +325,6 @@ def track_form_fill():
     try:
         conn = db.get_connection()
         cursor = conn.cursor()
-        
-        # Create table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS extension_auto_fill_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                field_label TEXT,
-                confidence_score REAL,
-                page_url TEXT,
-                filled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
         
         cursor.execute("""
             INSERT INTO extension_auto_fill_log 

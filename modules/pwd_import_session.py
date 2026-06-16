@@ -12,7 +12,7 @@ class PWDImportSessionManager:
     
     def __init__(self, db_instance):
         self.db = db_instance
-        self._init_session_tables()
+        
     
     def _init_session_tables(self):
         """Create tables for tracking import sessions"""

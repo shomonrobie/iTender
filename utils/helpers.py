@@ -478,3 +478,88 @@ def safe_date_slice(date_value, length: int = 10) -> str:
         return 'N/A'
     date_str = str(date_value)
     return date_str[:length] if len(date_str) >= length else date_str
+
+# utils/db_helpers.py
+"""Helper functions for database row handling"""
+
+import streamlit as st
+
+
+def row_to_dict(row, cursor=None):
+    """
+    Convert any row (sqlite3.Row, dict, tuple) to a real dictionary.
+    
+    Usage:
+        row = cursor.fetchone()
+        data = row_to_dict(row, cursor)
+        value = data.get('column_name')
+    """
+    if row is None:
+        return {}
+    
+    # If it's already a dict
+    if isinstance(row, dict):
+        return row
+    
+    # If it's a sqlite3.Row (has keys method)
+    if hasattr(row, 'keys'):
+        return dict(row)
+    
+    # If it's a tuple, use cursor.description for column names
+    if isinstance(row, (tuple, list)) and cursor and hasattr(cursor, 'description'):
+        columns = [desc[0] for desc in cursor.description]
+        return dict(zip(columns, row))
+    
+    # Last resort - return as is
+    return {}
+
+
+def get_value(row, key, index=None, default=None):
+    """
+    Safely get value from row (works with dict, Row, or tuple).
+    
+    Usage:
+        # For dict/Row (preferred)
+        value = get_value(row, 'column_name')
+        
+        # For tuple (fallback)
+        value = get_value(row, None, index=2)
+        
+        # Both
+        value = get_value(row, 'column_name', index=2)
+    """
+    if row is None:
+        return default
+    
+    # Try dict access first
+    if hasattr(row, 'keys') or isinstance(row, dict):
+        if key and key in row:
+            return row[key]
+        elif hasattr(row, 'get'):
+            return row.get(key, default)
+    
+    # Try tuple/list access
+    if isinstance(row, (tuple, list)) and index is not None:
+        return row[index] if len(row) > index else default
+    
+    return default
+
+
+def rows_to_dicts(rows, cursor=None):
+    """Convert multiple rows to list of dictionaries"""
+    return [row_to_dict(row, cursor) for row in rows]
+
+
+def safe_execute_query(db, sql, params=None):
+    """
+    Execute query and return list of dictionaries.
+    This is the recommended way to query the database.
+    """
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+        rows = cursor.fetchall()
+        return rows_to_dicts(rows, cursor)

@@ -11,7 +11,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.utils import ImageReader
 from datetime import datetime
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 import traceback
 from matplotlib.patches import Wedge, Circle
 from reportlab.platypus import Table, TableStyle, Paragraph
@@ -25,7 +25,7 @@ def debug_print(*args, **kwargs):
     print(*args, **kwargs)
 
 DEBUG_MODE = True  # Set to False in production
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 # =============================================================================
 # 📊 PLOT GENERATION FUNCTIONS

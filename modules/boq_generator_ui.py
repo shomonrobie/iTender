@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.rbac import (
     rbac, can_view_boq, can_create_boq, can_edit_boq, 
     can_delete_boq, can_export_data, render_role_badge
@@ -236,7 +236,7 @@ def render_boq_generator():
     
     # Initialize database connection
     try:
-        db = DatabaseManager()
+        db = UnifiedDatabaseManager()
     except Exception as e:
         st.error(f"Failed to connect to database: {e}")
         return

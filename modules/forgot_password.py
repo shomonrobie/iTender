@@ -1,9 +1,9 @@
 import streamlit as st
 import secrets
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.email_verification import send_password_reset_email
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def render_forgot_password():
     st.markdown("### 🔑 Reset Your Password")

@@ -16,7 +16,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         'can_access_scenario_generator': True,
         'can_generate_scenarios': True,
         'can_export_scenarios': True,
-
+        
         # Rate Management
         'can_view_rates': True,
         'can_edit_rates': True,

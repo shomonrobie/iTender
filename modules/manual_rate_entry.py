@@ -471,14 +471,13 @@ class ManualRateEntry:
         if hasattr(st.session_state, 'preview_df'):
             st.markdown("#### Preview")
             st.dataframe(st.session_state.preview_df, use_container_width=True, hide_index=True)
+    
     def _save_child_items_only(self, rows, source, edition_year):
         """Save only child items (no parent creation)"""
         
         try:
-            if source == "PWD":
-                self.db.init_pwd_hierarchical_tables()
-            else:
-                self.db.init_lged_tables()
+            # ✅ REMOVED: self.db.init_pwd_hierarchical_tables() and self.db.init_lged_tables()
+            # Tables already exist in unified manager
             
             conn = self.db.get_connection()
             cursor = conn.cursor()
@@ -487,25 +486,10 @@ class ManualRateEntry:
             from datetime import date
             version_name = f"Manual Entry {source} {edition_year}"
             
-            # Check if rate_versions table exists
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rate_versions'")
-            if not cursor.fetchone():
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS rate_versions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        source TEXT DEFAULT 'LGED',
-                        version_name TEXT NOT NULL,
-                        edition_year INTEGER NOT NULL,
-                        effective_from DATE,
-                        is_active BOOLEAN DEFAULT 0,
-                        release_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_by TEXT,
-                        total_parents INTEGER DEFAULT 0,
-                        total_children INTEGER DEFAULT 0,
-                        total_rates INTEGER DEFAULT 0
-                    )
-                """)
             
+            # Table already exists in unified manager
+            
+            # Insert version
             cursor.execute("""
                 INSERT INTO rate_versions (source, version_name, edition_year, effective_from, is_active, release_date, created_by)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -901,18 +885,12 @@ class ManualRateEntry:
             return []
 
 
-
     def _save_row_data_with_parents(self, rows, source, edition_year):
         """Save row-by-row entered data with parent creation"""
         
         try:
-            if source == "PWD":
-                self.db.init_pwd_hierarchical_tables()
-                # Ensure chapters table has data
-                self.db.init_chapters_tables()
-            else:
-                self.db.init_lged_tables()
-                self.db.init_chapters_tables()
+            # ✅ REMOVED: self.db.init_pwd_hierarchical_tables(), init_lged_tables(), init_chapters_tables()
+            # Tables already exist in unified manager
             
             conn = self.db.get_connection()
             cursor = conn.cursor()
@@ -921,24 +899,8 @@ class ManualRateEntry:
             from datetime import date
             version_name = f"Manual Entry {source} {edition_year}"
             
-            # Check if rate_versions table exists
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rate_versions'")
-            if not cursor.fetchone():
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS rate_versions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        source TEXT NOT NULL,
-                        version_name TEXT NOT NULL,
-                        edition_year INTEGER NOT NULL,
-                        effective_from DATE,
-                        is_active BOOLEAN DEFAULT 0,
-                        release_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_by TEXT,
-                        total_parents INTEGER DEFAULT 0,
-                        total_children INTEGER DEFAULT 0,
-                        total_rates INTEGER DEFAULT 0
-                    )
-                """)
+            
+            # Table already exists in unified manager
             
             cursor.execute("""
                 INSERT INTO rate_versions (source, version_name, edition_year, effective_from, is_active, release_date, created_by)
@@ -1094,6 +1056,7 @@ class ManualRateEntry:
             st.error(f"Error saving: {str(e)}")
             import traceback
             st.code(traceback.format_exc())
+
     def _debug_show_parents(self, source):
         """Debug function to show what parents exist in database"""
         try:

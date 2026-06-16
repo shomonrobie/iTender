@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.helpers import (
     render_page_header,
     format_currency_bd,
@@ -19,7 +19,7 @@ from utils.helpers import (
     navigate_to
 )
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def render_historical_data_page():
     """Render historical data management page for admin/premium users"""

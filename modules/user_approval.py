@@ -2,9 +2,9 @@
 
 import streamlit as st
 import pandas as pd
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def render_user_approval_page():
     """Admin page to approve pending user registrations"""

@@ -2,7 +2,7 @@
 
 import pandas as pd
 import streamlit as st
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
 class PWDRateRetriever:
     """Helper to retrieve PWD rates from active version"""

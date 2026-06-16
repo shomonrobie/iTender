@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def calculate_optimal_bid(official_estimate, competitor_bids=None, risk_tolerance='moderate'):
     """Calculate optimal bid based on inputs"""

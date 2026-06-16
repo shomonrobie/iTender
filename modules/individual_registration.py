@@ -5,13 +5,13 @@ No company registration - for independent consultants/freelancers
 
 import streamlit as st
 from modules.email_verification import send_verification_email, verify_otp
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 import re
 import secrets
 import bcrypt
 from modules.google_auth import render_google_login_button, handle_google_callback
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 def debug_print(*args, **kwargs):
     """Debug print function"""

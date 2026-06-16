@@ -75,8 +75,8 @@ def render_system_info():
     
     with col2:
         st.markdown("#### Database Stats")
-        from database.db_manager import DatabaseManager
-        db = DatabaseManager()
+        from database.unified_db_manager import UnifiedDatabaseManager
+        db = UnifiedDatabaseManager()
         conn = db.get_connection()
         cursor = conn.cursor()
         

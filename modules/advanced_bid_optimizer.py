@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 try:
     from modules.advanced_win_probability import enhance_win_probability, calculate_optimal_bid_with_ml
     from modules.competitor_tracking import CompetitorTracker
-    from database.db_manager import DatabaseManager
+    from database.unified_db_manager import UnifiedDatabaseManager
 except ImportError:
     pass  # Handle gracefully if run standalone
 
@@ -419,6 +419,85 @@ def get_three_tier_comparison(official_estimate, competitor_bids, procurement_ty
 
 
 def calculate_optimal_bid_ppr2025(official_estimate, competitor_bids, procurement_type='goods', 
+                                  risk_tolerance='moderate', historical_data=None, company_id=None,
+                                  nppi_factor=None):  # ← ADD THIS PARAMETER
+    """
+    PPR 2025 compliant bid optimization with optional NPPI factor override.
+    
+    Args:
+        official_estimate: Official Cost Estimate (OCE)
+        competitor_bids: List of competitor bid amounts
+        procurement_type: 'goods', 'works', or 'services'
+        risk_tolerance: 'aggressive', 'moderate', or 'conservative'
+        historical_data: Optional historical data for NPPI calculation
+        company_id: Optional company ID for company-specific NPPI
+        nppi_factor: Optional NPPI factor override (if provided, uses this instead of calculation)
+    """
+    # Default NPPI logic
+    defaults = {'goods': 0.92, 'works': 0.89, 'services': 0.91}
+    
+    # ✅ Use provided nppi_factor if given
+    if nppi_factor is not None:
+        final_nppi = nppi_factor
+        nppi_source = 'User Specified'
+    else:
+        final_nppi = defaults.get(procurement_type, 0.92)
+        nppi_source = 'Default Market Index'
+        
+        # Try to get company-specific NPPI if DB is available
+        try:
+            from modules.historical_data import get_weighted_nppi
+            if company_id:
+                final_nppi, _ = get_weighted_nppi(company_id, procurement_type)
+                nppi_source = 'Company Historical'
+        except ImportError:
+            pass
+    
+    bid_values = _extract_bid_values(competitor_bids)
+    nppi_price = official_estimate * final_nppi
+    
+    if bid_values:
+        avg_comp = np.mean(bid_values)
+        weighted_avg = (0.5 * avg_comp) + (0.2 * official_estimate) + (0.3 * nppi_price)
+        n = len(bid_values)
+        weighted_std = np.sqrt(np.mean([(weighted_avg - p)**2 for p in bid_values])) if n > 0 else 0
+        slt_threshold = weighted_avg - weighted_std
+    else:
+        slt_threshold = official_estimate * 0.80
+        weighted_avg, weighted_std = official_estimate, 0
+    
+    risk_mult = {'aggressive': 0.97, 'moderate': 1.00, 'conservative': 1.03}.get(risk_tolerance, 1.0)
+    base_bid = np.mean(bid_values) * 0.98 if bid_values else official_estimate * 0.89
+    recommended_bid = base_bid * risk_mult
+    recommended_bid = max(recommended_bid, slt_threshold * 1.02)
+    recommended_bid = min(recommended_bid, official_estimate * 0.98)
+    
+    win_prob = 0.60
+    if len(bid_values) > 1:
+        m, s = np.mean(bid_values), np.std(bid_values)
+        if s > 0:
+            win_prob = np.clip(stats.norm.cdf((m - recommended_bid)/s), 0.05, 0.95)
+    
+    ratio = recommended_bid / official_estimate
+    r_map = [(0.85,"HIGH","🔴"), (0.89,"MEDIUM-HIGH","🟠"), (0.93,"MEDIUM","🟡")]
+    risk_level, risk_color = next(((r,c) for lim,r,c in r_map if ratio < lim), ("LOW","🟢"))
+    
+    return {
+        'optimal_bid': recommended_bid, 
+        'bid_ratio': ratio, 
+        'win_probability': win_prob,
+        'risk_level': risk_level, 
+        'risk_color': risk_color, 
+        'slt_threshold': slt_threshold,
+        'nppi_factor': final_nppi, 
+        'nppi_source': nppi_source,
+        'weighted_average': weighted_avg, 
+        'weighted_std_dev': weighted_std,
+        'expected_profit': recommended_bid - (official_estimate * 0.85),
+        'expected_value': (recommended_bid - (official_estimate * 0.85)) * win_prob
+    }
+
+def calculate_optimal_bid_ppr2025_bak(official_estimate, competitor_bids, procurement_type='goods', 
                                   risk_tolerance='moderate', historical_data=None, company_id=None):
     # Default NPPI logic
     defaults = {'goods': 0.92, 'works': 0.89, 'services': 0.91}
@@ -480,7 +559,7 @@ def calculate_basic_bid_estimate(official_estimate, competitor_bids, risk_tolera
 
 def calculate_optimal_bid_with_company_nppi(official_estimate, competitor_bids, company_id, procurement_type='goods', risk_tolerance='moderate'):
     """Wrapper using company historical NPPI"""
-    db = DatabaseManager()
+    db = UnifiedDatabaseManager()
     hist_df = db.get_historical_tenders(company_id, procurement_type)
     hist_data = hist_df[['official_estimate','awarded_price']].to_dict('records') if not hist_df.empty else []
     

@@ -441,6 +441,7 @@ class PWDExtractorForVerification:
         
         return report
 
+
 def render_pwd_ingestion_panel():
     """Main PWD ingestion panel with hierarchy"""
     
@@ -1620,6 +1621,7 @@ def render_role_management_page():
                     st.rerun()
                 else:
                     st.error("Failed to update permissions")
+
 
 def render_pwd_version_tab(db):
     """Render PWD version management tab"""

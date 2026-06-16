@@ -2,7 +2,7 @@
 
 import streamlit as st
 from modules.subscription_manager import SubscriptionManager
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
 def show_company_subscription():
     """Show company subscription management page"""
@@ -14,7 +14,7 @@ def show_company_subscription():
     </div>
     """, unsafe_allow_html=True)
     
-    db = DatabaseManager()
+    db = UnifiedDatabaseManager()
     company_id = st.session_state.get('company_id')
     user_role = st.session_state.get('user_role', 'viewer')
     

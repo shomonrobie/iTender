@@ -1,11 +1,11 @@
 import streamlit as st
 import re
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
 # Use string directly instead of PageRoutes to avoid import issues in separate modules
 LOGIN_PAGE = "login"
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 
 def validate_password_strength(password: str) -> tuple[float, str, str]:

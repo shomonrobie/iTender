@@ -403,39 +403,28 @@ class BOQManager:
     
     # ========== Helper Methods ==========
     
-    def _log_activity(self, boq_id: int, action: str, details: str):
-        """Log BOQ activity"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Create table if not exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS boq_activity_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    boq_id INTEGER,
-                    action TEXT,
-                    details TEXT,
-                    user_id INTEGER,
-                    username TEXT,
-                    user_role TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                INSERT INTO boq_activity_log (boq_id, action, details, user_id, username, user_role)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (boq_id, action, details,
-                  st.session_state.get('user_id', 0),
-                  st.session_state.get('username', 'system'),
-                  st.session_state.get('user_role', 'viewer')))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            print(f"Error logging activity: {e}")
+        def _log_activity(self, boq_id: int, action: str, details: str):
+            """Log BOQ activity"""
+            try:
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+                                
+                # Table already exists in unified manager
+                
+                cursor.execute("""
+                    INSERT INTO boq_activity_log (boq_id, action, details, user_id, username, user_role)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (boq_id, action, details,
+                    st.session_state.get('user_id', 0),
+                    st.session_state.get('username', 'system'),
+                    st.session_state.get('user_role', 'viewer')))
+                
+                conn.commit()
+                conn.close()
+                
+            except Exception as e:
+                print(f"Error logging activity: {e}")
+
     
     def get_boq_list(self, company_id: int = None, status: str = None, limit: int = 100) -> pd.DataFrame:
         """Get list of BOQs with filters"""

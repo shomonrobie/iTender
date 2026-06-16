@@ -4,12 +4,12 @@ import sqlite3
 import difflib
 import pandas as pd
 from streamlit import secrets
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from utils.data_sanitizer import sanitize_text
 
 #DB_PATH = secrets.get("database_path", "tenderai.db")
 #DB_PATH = "data/tender_system.db"
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 DB_PATH = db.db_path 
 
 def search_best_pwd_match(item_code, user_description, zone="Dhaka"):

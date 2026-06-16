@@ -105,7 +105,7 @@ from modules.boq_bid_bridge import render_boq_bid_integration
 from _pages.company_subscription import show_company_subscription
 from _pages.company_dashboard import show as show_company_dashboard
 from _pages.dashboard import show as dashboard_page
-from modules.navigation import render_top_navigation, render_page_header
+#from modules.navigation import render_top_navigation, render_page_header
 from modules.ui_components import (
     render_app_header, 
     render_dark_mode_toggle, 
@@ -131,7 +131,7 @@ from _pages.registration_page import show as register_page
 from _pages.pricing_page import show as pricing_page
 from _pages.contact_page import show as contact_page
 from _pages.extension_features import show as auto_fill_extension_features
-from modules.price_to_win_simulator import render_price_to_win_simulator_ui
+from modules.competitive_bid_simulator import render_competitive_bid_simulator_ui
 
 # =============================================================================
 # 🔧 DEBUG CONFIGURATION
@@ -162,14 +162,13 @@ logger = logging.getLogger(__name__)
 # 🗄️ DATABASE & MODULE IMPORTS
 # =============================================================================
 from datetime import datetime
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 from modules.auth import login_user, logout_user, is_admin, is_company_admin, authenticate_user, has_permission, get_current_user
 from modules.subscription import render_subscription_page, render_checkout
 from modules.user_management import render_user_management
-from migrations import run_migrations
 
 # Initialize database
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 init_rbac()
 # ========== START FLASK API FOR EXTENSION ==========
 try:
@@ -182,141 +181,141 @@ except Exception as e:
     print(f"⚠️ Failed to start Flask API: {e}")
 # ===================================================
 
-# =============================================================================
-# UNIFIED MIGRATION SYSTEM - Run ONCE at startup
-# =============================================================================
+# # =============================================================================
+# # UNIFIED MIGRATION SYSTEM - Run ONCE at startup
+# # =============================================================================
 
-def run_unified_migrations(db):
-    """
-    Run ALL migrations in one place.
-    - Complex migrations (new tables) use the migration system
-    - Simple migrations (columns, indexes) run here (idempotent)
-    """
-    try:
-        # STEP 1: Run complex migrations from migrations folder
-        run_complex_migrations()
+# def run_unified_migrations(db):
+#     """
+#     Run ALL migrations in one place.
+#     - Complex migrations (new tables) use the migration system
+#     - Simple migrations (columns, indexes) run here (idempotent)
+#     """
+#     try:
+#         # STEP 1: Run complex migrations from migrations folder
+#         run_complex_migrations()
         
-        # STEP 2: Run simple schema fixes (always runs, idempotent)
-        run_simple_migrations(db)
+#         # STEP 2: Run simple schema fixes (always runs, idempotent)
+#         run_simple_migrations(db)
         
-        return True
-    except Exception as e:
-        logger.error(f"Migration failed: {e}")
-        if DEBUG_MODE:
-            st.warning(f"⚠️ Migration error: {e}")
-        return False
+#         return True
+#     except Exception as e:
+#         logger.error(f"Migration failed: {e}")
+#         if DEBUG_MODE:
+#             st.warning(f"⚠️ Migration error: {e}")
+#         return False
 
-def run_complex_migrations():
-    """Run complex migrations (new tables, constraints) using migration system"""
-    try:
-        import sys
-        from pathlib import Path
+# def run_complex_migrations():
+#     """Run complex migrations (new tables, constraints) using migration system"""
+#     try:
+#         import sys
+#         from pathlib import Path
         
-        # Add migrations directory to path
-        migrations_path = Path(__file__).parent / "migrations"
-        if str(migrations_path) not in sys.path:
-            sys.path.insert(0, str(migrations_path))
+#         # Add migrations directory to path
+#         migrations_path = Path(__file__).parent / "migrations"
+#         if str(migrations_path) not in sys.path:
+#             sys.path.insert(0, str(migrations_path))
         
-        # Import migration manager
-        from migrations.run_migrations import MigrationManager
+#         # Import migration manager
+#         from migrations.run_migrations import MigrationManager
         
-        print("🔍 Checking for pending complex migrations...")
-        manager = MigrationManager(db.db_path)
-        success = manager.run_all_migrations()
+#         print("🔍 Checking for pending complex migrations...")
+#         manager = MigrationManager(db.db_path)
+#         success = manager.run_all_migrations()
         
-        if success:
-            print("✅ Complex migrations up to date")
-        return success
-    except ImportError as e:
-        print(f"⚠️ Migration module not found (first time run): {e}")
-        return True
-    except Exception as e:
-        print(f"⚠️ Migration check failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return True
+#         if success:
+#             print("✅ Complex migrations up to date")
+#         return success
+#     except ImportError as e:
+#         print(f"⚠️ Migration module not found (first time run): {e}")
+#         return True
+#     except Exception as e:
+#         print(f"⚠️ Migration check failed: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         return True
 
-def run_simple_migrations(db):
-    """Run simple schema fixes (add columns, indexes) - ALWAYS runs, idempotent"""
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
+# def run_simple_migrations(db):
+#     """Run simple schema fixes (add columns, indexes) - ALWAYS runs, idempotent"""
+#     try:
+#         conn = db.get_connection()
+#         cursor = conn.cursor()
         
-        print("🔧 Running simple schema checks...")
+#         print("🔧 Running simple schema checks...")
         
-        # ========== FIX COMPANIES TABLE ==========
-        cursor.execute("PRAGMA table_info(companies)")
-        company_columns = [col[1] for col in cursor.fetchall()]
+#         # ========== FIX COMPANIES TABLE ==========
+#         cursor.execute("PRAGMA table_info(companies)")
+#         company_columns = [col[1] for col in cursor.fetchall()]
         
-        columns_to_add = {
-            'district': 'TEXT',
-            'upazila': 'TEXT', 
-            'post_code': 'TEXT',
-            'is_individual': 'BOOLEAN DEFAULT 0',
-            'status': "TEXT DEFAULT 'active'",
-            'registration_number': 'TEXT',
-            'vat_number': 'TEXT',
-            'website': 'TEXT'
-        }
+#         columns_to_add = {
+#             'district': 'TEXT',
+#             'upazila': 'TEXT', 
+#             'post_code': 'TEXT',
+#             'is_individual': 'BOOLEAN DEFAULT 0',
+#             'status': "TEXT DEFAULT 'active'",
+#             'registration_number': 'TEXT',
+#             'vat_number': 'TEXT',
+#             'website': 'TEXT'
+#         }
         
-        for col_name, col_type in columns_to_add.items():
-            if col_name not in company_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
-                    print(f"  ✅ Added column: {col_name}")
-                except Exception as e:
-                    print(f"  ⚠️ Could not add {col_name}: {e}")
+#         for col_name, col_type in columns_to_add.items():
+#             if col_name not in company_columns:
+#                 try:
+#                     cursor.execute(f"ALTER TABLE companies ADD COLUMN {col_name} {col_type}")
+#                     print(f"  ✅ Added column: {col_name}")
+#                 except Exception as e:
+#                     print(f"  ⚠️ Could not add {col_name}: {e}")
         
-        # ========== FIX USERS TABLE ==========
-        cursor.execute("PRAGMA table_info(users)")
-        user_columns = [col[1] for col in cursor.fetchall()]
+#         # ========== FIX USERS TABLE ==========
+#         cursor.execute("PRAGMA table_info(users)")
+#         user_columns = [col[1] for col in cursor.fetchall()]
         
-        user_columns_to_add = {
-            'auth_provider': "TEXT DEFAULT 'email'",
-            'email_verified': "BOOLEAN DEFAULT 0",
-            'email_verified_at': "TIMESTAMP",
-            'verification_token': "TEXT",
-            'reset_token': "TEXT",
-            'reset_token_expires': "TIMESTAMP",
-            'specialization': "TEXT",
-            'years_experience': "INTEGER"
-        }
+#         user_columns_to_add = {
+#             'auth_provider': "TEXT DEFAULT 'email'",
+#             'email_verified': "BOOLEAN DEFAULT 0",
+#             'email_verified_at': "TIMESTAMP",
+#             'verification_token': "TEXT",
+#             'reset_token': "TEXT",
+#             'reset_token_expires': "TIMESTAMP",
+#             'specialization': "TEXT",
+#             'years_experience': "INTEGER"
+#         }
         
-        for col_name, col_type in user_columns_to_add.items():
-            if col_name not in user_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
-                    print(f"  ✅ Added column to users: {col_name}")
-                except Exception as e:
-                    print(f"  ⚠️ Could not add {col_name} to users: {e}")
+#         for col_name, col_type in user_columns_to_add.items():
+#             if col_name not in user_columns:
+#                 try:
+#                     cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+#                     print(f"  ✅ Added column to users: {col_name}")
+#                 except Exception as e:
+#                     print(f"  ⚠️ Could not add {col_name} to users: {e}")
         
-        # ========== CREATE INDEXES ==========
-        indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
-            "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
-            "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)",
-            "CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider)",
-            "CREATE INDEX IF NOT EXISTS idx_companies_is_individual ON companies(is_individual)",
-        ]
+#         # ========== CREATE INDEXES ==========
+#         indexes = [
+#             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+#             "CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)",
+#             "CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token)",
+#             "CREATE INDEX IF NOT EXISTS idx_users_auth_provider ON users(auth_provider)",
+#             "CREATE INDEX IF NOT EXISTS idx_companies_is_individual ON companies(is_individual)",
+#         ]
         
-        for index in indexes:
-            try:
-                cursor.execute(index)
-                print(f"  ✅ Index ready: {index.split('ON')[1].strip() if 'ON' in index else index}")
-            except Exception as e:
-                # Table might not exist yet (handled by complex migrations)
-                pass
+#         for index in indexes:
+#             try:
+#                 cursor.execute(index)
+#                 print(f"  ✅ Index ready: {index.split('ON')[1].strip() if 'ON' in index else index}")
+#             except Exception as e:
+#                 # Table might not exist yet (handled by complex migrations)
+#                 pass
         
-        conn.commit()
-        conn.close()
-        print("✅ Simple schema checks complete")
+#         conn.commit()
+#         conn.close()
+#         print("✅ Simple schema checks complete")
         
-    except Exception as e:
-        logger.error(f"Simple migration failed: {e}")
-        if DEBUG_MODE:
-            st.warning(f"⚠️ Simple migration error: {e}")
+#     except Exception as e:
+#         logger.error(f"Simple migration failed: {e}")
+#         if DEBUG_MODE:
+#             st.warning(f"⚠️ Simple migration error: {e}")
 
-run_unified_migrations(db)
+# run_unified_migrations(db)
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -556,7 +555,7 @@ class PageRoutes:
     INTELLIGENT_SUGGESTIONS = 'intelligent_suggestions'
     COMPANY_DASHBOARD = 'company_dashboard'
     EGP_BOQ_WORKSPACE = 'egp_boq_workspace'
-    TUTORIAL = 'tutorial'
+    TUTORIAL = 'tutorial'        
 
     # ─── Premium Intelligence Pages ──────────────────────────────────────────
     HISTORICAL_DATA = 'historical_data'
@@ -565,10 +564,12 @@ class PageRoutes:
     COMPETITOR_MASTER = 'competitor_master'
     BOQ_GENERATOR = "boq_generator"
     BOQ_ADMIN_REPORT = "boq_admin_report"
-    BOQ_BID_OPTIMIZER = "boq_bid_optimizer"    
-    PRICE_TO_WIN_SIMULATOR = 'price_to_win_simulator'
+    BOQ_BID_OPTIMIZER = "boq_bid_optimizer"
+    BASIC_BID_OPTIMIZER = 'basic_bid_optimizer'    
+    COMPETITIVE_BID_SIMULATOR = 'competitive_bid_simulator'
     # ─── Admin System Pages ──────────────────────────────────────────────────
     ADMIN_DASHBOARD = 'admin_dashboard'
+    ADMIN_ANALYTICS = 'admin_analytics'
     USER_APPROVAL = 'user_approval'
     ROLE_MANAGEMENT = 'role_management'
     RATE_MANAGEMENT = 'rate_management'
@@ -579,7 +580,7 @@ class PageRoutes:
     AUTO_FILL_EXTENSION_USAGE = 'extension_usage'
     AUTO_FILL_EXTENSION_DOWNLOAD = 'extension_download'
     AUTO_FILL_EXTENSION_FEATURES = 'auto_fill_extension_features'
-    
+    COMPANY_ANALYTICS ='company_analytics'
     # ─── Utility Routes ──────────────────────────────────────────────────────
     CHECKOUT = 'checkout'
     
@@ -728,9 +729,11 @@ def _nav_button(label: str, page_key: str, badge: str = None):
         "competitor_master": "competitor_master",
         "post_evaluation": "post_evaluation",
         "intelligent_suggestions": "intelligent_suggestions",
-        "price_to_win_simulator": "price_to_win_simulator",
+         "basic_bid_optimizer": "basic_bid_optimizer",  # ✅ NEW
+        "competitive_bid_simulator": "competitive_bid_simulator",
         # Company Management
         "company_dashboard": "company_dashboard",
+        "company_analytics":"company_analytics",
         "egp_boq_workspace": "egp_boq_workspace",
         "user_management": "user_management",
         
@@ -740,11 +743,13 @@ def _nav_button(label: str, page_key: str, badge: str = None):
         
         # Administration
         "admin_dashboard": "admin_dashboard",
+        "admin_analytics":"admin_analytics",
         "boq_admin_report": "boq_admin_report",
         "user_approval": "user_approval",
         "role_management": "role_management",
         "company_management": "company_management",
         
+
         # System Tools
         "version_management": "version_management",
         "rollback_management": "rollback_management",
@@ -858,28 +863,34 @@ def render_sidebar() -> None:
         if user_role != 'viewer':
             _nav_button("📄 BOQ Generator", "boq_generator")
         
-        if user_role != 'viewer':
-            _nav_button("🎯 BOQ to Bid Optimizer", "boq_bid_optimizer")
+        # if user_role != 'viewer':
+        #     _nav_button("🎯 BOQ to Bid Optimizer", "boq_bid_optimizer")
         
         st.markdown("---")
         
         # ========== SECTION 2: ANALYSIS & INTELLIGENCE ==========
         st.markdown("### 📊 Analysis & Intelligence")
-        
+
         _nav_button("📈 Dashboard", "dashboard")
-        _nav_button("🎯 New Analysis", "new_analysis")
+        _nav_button("🎯 New Analysis", "boq_bid_optimizer")
         _nav_button("📜 History", "history")
-        
+
+        # ✅ Basic Bid Optimizer - FREE for all users
+        _nav_button("📈 Basic Bid Optimizer", "basic_bid_optimizer")
+
         # Premium features (requires is_premium defined)
         is_system_admin = st.session_state.get('user_role') == 'system_admin'
 
         if is_premium or is_system_admin:
+            #_nav_button("🎯 Advanced Bid Optimizer", "boq_bid_optimizer")
+            _nav_button("🎯 Advanced Bid Optimizer", "new_analysis")
+            _nav_button("🔮 Competitive Bid Simulator", "competitive_bid_simulator")
             _nav_button("📊 Historical Data", "historical_data")
             _nav_button("👥 Competitor Tracking", "competitor_tracking")
             _nav_button("🗂️ Competitor Master", "competitor_master")
             _nav_button("📋 Post-Evaluation", "post_evaluation")
             _nav_button("🧠 AI Suggestions", "intelligent_suggestions")
-            _nav_button("🔮 Price to Win Simulator", "price_to_win_simulator")  # Fixed!
+
         
         st.markdown("---")
         
@@ -887,6 +898,7 @@ def render_sidebar() -> None:
         if user_role in ['company_admin', 'admin', 'system_admin']:
             st.markdown("### 🏢 Company Management")
             _nav_button("🏢 Company Dashboard", "company_dashboard")
+            _nav_button("📊 Analytics Dashboard", "company_analytics")
             _nav_button("🏗️ e-GP BOQ Workspace", "egp_boq_workspace")
             _nav_button("👥 Team Management", "user_management")
             st.markdown("---")
@@ -902,6 +914,7 @@ def render_sidebar() -> None:
         if user_role in ['admin', 'system_admin']:
             st.markdown("### 👑 Administration")
             _nav_button("📊 Admin Dashboard", "admin_dashboard")
+            _nav_button("📊 Analytics Dashboard", "admin_analytics")
             _nav_button("📊 BOQ Report", "boq_admin_report")
             
             pending_count = 0
@@ -1007,6 +1020,7 @@ def _render_public_pages() -> None:
     try:
         handler()
     except Exception as e:
+        raise e 
         debug_print(f"❌ Public page render error: {e}")
         st.error("⚠️ Unable to load this page. Please try again.")
 
@@ -1051,13 +1065,16 @@ def _render_authenticated_pages() -> None:
         PageRoutes.BOQ_GENERATOR: lambda: _import_and_call('modules.boq_generator_ui', 'render_boq_generator'),
         PageRoutes.BOQ_ADMIN_REPORT: lambda: _import_and_call('modules.boq_admin_report', 'render_boq_admin_report'),
         PageRoutes.BOQ_BID_OPTIMIZER: lambda: _import_and_call('modules.boq_bid_bridge', 'render_boq_bid_integration'),
-        
+        PageRoutes.BASIC_BID_OPTIMIZER: lambda: _import_and_call('modules.basic_bid_optimizer', 'render'),
+
         PageRoutes.COMPANY_KNOWLEDGE: show_enhanced_company_dashboard,
         PageRoutes.AUTO_FILL_EXTENSION_ADMIN: show_extension_admin,
         PageRoutes.AUTO_FILL_EXTENSION_USAGE: show_extension_usage,
         PageRoutes.AUTO_FILL_EXTENSION_DOWNLOAD: lambda: _import_and_call('_pages.extension_download', 'show'),  
         PageRoutes.AUTO_FILL_EXTENSION_FEATURES: lambda: _import_and_call('_pages.extension_features', 'show'), 
-        PageRoutes.PRICE_TO_WIN_SIMULATOR: lambda: render_price_to_win_simulator_ui(db, SubscriptionManager(db))
+        PageRoutes.COMPETITIVE_BID_SIMULATOR: lambda: render_competitive_bid_simulator_ui(db, SubscriptionManager(db)),
+        PageRoutes.ADMIN_ANALYTICS: lambda: _import_and_call('_pages.admin_analytics_dashboard', 'show'),
+        PageRoutes.COMPANY_ANALYTICS: lambda: _import_and_call('_pages.company_analytics_dashboard', 'show'),
     }
     
     # Get handler with fallback to dashboard for unknown routes
@@ -1348,11 +1365,11 @@ def _render_global_debug_panel() -> None:
             
             st.markdown("#### System Info")
             st.code(f"""
-Python: {sys.version.split()[0]}
-Streamlit: {st.__version__}
-Debug Mode: {DEBUG_MODE}
-Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            """, language="python")
+                Python: {sys.version.split()[0]}
+                Streamlit: {st.__version__}
+                Debug Mode: {DEBUG_MODE}
+                Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                            """, language="python")
 
 def _handle_subscription_redirect():
     """Redirect to appropriate subscription page based on user type"""
@@ -1447,8 +1464,8 @@ def upgrade_admin_once():
 # =============================================================================
 if __name__ == "__main__":
     # ✅ Ensure imports are available
-    from database.db_manager import DatabaseManager
-    db = DatabaseManager()
+    from database.unified_db_manager import UnifiedDatabaseManager
+    db = UnifiedDatabaseManager()
     
     debug_print("🎬 Starting TenderAI application...")
     #upgrade_admin_once()  # Ensure admin users are upgraded at startup (one-time check)
@@ -1464,19 +1481,19 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical("Application crashed", exc_info=True)
         st.error("💥 Application error. Please refresh or contact support.")
-        if DEBUG_MODE:
-            required_routes = [
-                'home', 'login', 'register', 'pricing', 'about', 'contact',
-                'dashboard', 'new_analysis', 'history', 'profile', 'subscription',
-                'user_management', 'tender_management', 'post_evaluation', 'intelligent_suggestions',
-                'historical_data', 'analysis_history', 'competitor_tracking', 'price_to_win_simulator,' 'competitor_master',
-                'admin_dashboard', 'user_approval', 'role_management', 'tutorial'
-            ]
+        # if DEBUG_MODE:
+        #     required_routes = [
+        #         'home', 'login', 'register', 'pricing', 'about', 'contact',
+        #         'dashboard', 'new_analysis', 'history', 'profile', 'subscription',
+        #         'user_management', 'tender_management', 'post_evaluation', 'intelligent_suggestions',
+        #         'historical_data', 'analysis_history', 'company_analytics', 'competitor_tracking',
+        #         'admin_dashboard', 'admin_analytics', 'user_approval', 'role_management', 'tutorial'
+        #     ]
             
-            missing = [r for r in required_routes if r not in PageRoutes.get_all_routes()]
-            if missing:
-                debug_print(f"❌ Missing PageRoutes attributes: {missing}")
-            else:
-                debug_print("✅ All PageRoutes attributes present")
+        #     missing = [r for r in required_routes if r not in PageRoutes.get_all_routes()]
+        #     if missing:
+        #         debug_print(f"❌ Missing PageRoutes attributes: {missing}")
+        #     else:
+        #         debug_print("✅ All PageRoutes attributes present")
     
     debug_print("✅ App render cycle complete\n")

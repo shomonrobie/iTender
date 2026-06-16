@@ -2,9 +2,9 @@
 
 import streamlit as st
 import pandas as pd
-from database.db_manager import DatabaseManager
+from database.unified_db_manager import UnifiedDatabaseManager
 
-db = DatabaseManager()
+db = UnifiedDatabaseManager()
 
 @st.cache_data(ttl=300)
 def get_company_tenders_cached(company_id: int) -> pd.DataFrame:

@@ -129,11 +129,11 @@ def handle_google_callback():
                 email = user_info.get('email')
                 name = user_info.get('name', email.split('@')[0])
                 
-                from database.db_manager import DatabaseManager
+                from database.unified_db_manager import UnifiedDatabaseManager
                 import bcrypt
                 import secrets
                 
-                db = DatabaseManager()
+                db = UnifiedDatabaseManager()
                 
                 # Check if user exists
                 existing_user = db.get_user_by_email(email)
@@ -307,10 +307,10 @@ def render_google_registration_form():
             elif not terms:
                 st.error("Please accept the terms to continue")
             else:
-                from database.db_manager import DatabaseManager
+                from database.unified_db_manager import UnifiedDatabaseManager
                 import bcrypt
                 
-                db = DatabaseManager()
+                db = UnifiedDatabaseManager()
                 
                 # Create individual company
                 company_data = {

@@ -1,4 +1,4 @@
-# modules/unified_rollback_manager.py - CORRECTED VERSION
+# modules/unified_rollback_manager.py - UPDATED VERSION
 
 import streamlit as st
 import pandas as pd
@@ -12,62 +12,9 @@ class UnifiedRollbackManager:
     
     def __init__(self, db_instance):
         self.db = db_instance
-        self._init_unified_tables()
+        # ✅ REMOVED: _init_unified_tables() - tables already exist in unified manager
     
-    def _init_unified_tables(self):
-        """Initialize unified rollback tables that work for both PWD and LGED"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        # Unified snapshots table (stores snapshots for both PWD and LGED)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rate_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL CHECK(source IN ('PWD', 'LGED')),
-                version_id INTEGER,
-                snapshot_name TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_by TEXT,
-                description TEXT,
-                data_json TEXT,
-                is_auto BOOLEAN DEFAULT 0
-            )
-        """)
-        
-        # Unified import history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rate_import_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL CHECK(source IN ('PWD', 'LGED')),
-                version_id INTEGER,
-                version_name TEXT,
-                edition_year INTEGER,
-                import_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                imported_by TEXT,
-                total_parents INTEGER,
-                total_children INTEGER,
-                total_rates INTEGER,
-                status TEXT DEFAULT 'active',
-                notes TEXT
-            )
-        """)
-        
-        # Unified change log
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rate_change_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                version_id INTEGER,
-                action TEXT,
-                changed_by TEXT,
-                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                details TEXT
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
-        print("✅ Unified rollback tables initialized")
+    # ❌ DELETED: _init_unified_tables() - Not needed, tables created by unified manager
     
     def create_snapshot(self, source, version_id, snapshot_name, created_by, description="", is_auto=False):
         """Create a snapshot for PWD or LGED"""
@@ -100,7 +47,7 @@ class UnifiedRollbackManager:
         }
         
         if source == 'PWD':
-            # Get PWD parents - CORRECTED table name
+            # Get PWD parents
             cursor.execute("SELECT pwd_code, description, chapter_number FROM pwd_parents WHERE version_id = ?", (version_id,))
             for row in cursor.fetchall():
                 data['parents'].append({
@@ -109,7 +56,7 @@ class UnifiedRollbackManager:
                     'chapter_number': row[2]
                 })
             
-            # Get PWD children - CORRECTED table name
+            # Get PWD children
             cursor.execute("SELECT pwd_code, parent_code, description, unit FROM pwd_children WHERE version_id = ?", (version_id,))
             for row in cursor.fetchall():
                 data['children'].append({
@@ -119,7 +66,7 @@ class UnifiedRollbackManager:
                     'unit': row[3]
                 })
             
-            # Get PWD rates - CORRECTED: using pwd_rates (not pwd_rates)
+            # Get PWD rates
             cursor.execute("SELECT pwd_code, zone_name, unit_rate FROM pwd_rates WHERE version_id = ?", (version_id,))
             for row in cursor.fetchall():
                 data['rates'].append({
@@ -194,7 +141,7 @@ class UnifiedRollbackManager:
         data = json.loads(data_json)
         
         if source == 'PWD':
-            # Clear existing PWD data - CORRECTED table names
+            # Clear existing PWD data
             cursor.execute("DELETE FROM pwd_rates WHERE version_id = ?", (version_id,))
             cursor.execute("DELETE FROM pwd_children WHERE version_id = ?", (version_id,))
             cursor.execute("DELETE FROM pwd_parents WHERE version_id = ?", (version_id,))
@@ -213,7 +160,7 @@ class UnifiedRollbackManager:
                     VALUES (?, ?, ?, ?, ?)
                 """, (child['code'], child['parent_code'], child['description'], child['unit'], version_id))
             
-            # Restore PWD rates - CORRECTED table name
+            # Restore PWD rates
             for rate in data['rates']:
                 cursor.execute("""
                     INSERT INTO pwd_rates (pwd_code, zone_name, unit_rate, version_id)
@@ -319,6 +266,7 @@ class UnifiedRollbackManager:
         
         conn.close()
         return df
+
 
 def render_rollback_management(db):
     """Render unified rollback management tab in admin dashboard"""
@@ -478,16 +426,7 @@ def render_rollback_actions_tab(rollback_manager, db):
             st.write(f"**Active Version:** {pwd_active.iloc[0]['version_name']} ({pwd_active.iloc[0]['edition_year']})")
             
             if st.button("📸 Create PWD Rollback Point", use_container_width=True):
-                snapshot_name = st.text_input("Snapshot Name", value=f"PWD Manual {datetime.now().strftime('%Y%m%d_%H%M')}")
-                if snapshot_name and st.button("Create PWD Snapshot"):
-                    snapshot_id = rollback_manager.create_snapshot(
-                        source='PWD',
-                        version_id=pwd_active.iloc[0]['id'],
-                        snapshot_name=snapshot_name,
-                        created_by=st.session_state.get('username', 'admin'),
-                        description="Manual rollback point"
-                    )
-                    st.success(f"Snapshot created: {snapshot_name}")
+                st.info("Use the 'Create Snapshot' tab to create a snapshot")
         else:
             st.info("No active PWD version")
     
@@ -497,16 +436,7 @@ def render_rollback_actions_tab(rollback_manager, db):
             st.write(f"**Active Version:** {lged_active.iloc[0]['version_name']} ({lged_active.iloc[0]['edition_year']})")
             
             if st.button("📸 Create LGED Rollback Point", use_container_width=True):
-                snapshot_name = st.text_input("Snapshot Name", value=f"LGED Manual {datetime.now().strftime('%Y%m%d_%H%M')}")
-                if snapshot_name and st.button("Create LGED Snapshot"):
-                    snapshot_id = rollback_manager.create_snapshot(
-                        source='LGED',
-                        version_id=lged_active.iloc[0]['id'],
-                        snapshot_name=snapshot_name,
-                        created_by=st.session_state.get('username', 'admin'),
-                        description="Manual rollback point"
-                    )
-                    st.success(f"Snapshot created: {snapshot_name}")
+                st.info("Use the 'Create Snapshot' tab to create a snapshot")
         else:
             st.info("No active LGED version")
     

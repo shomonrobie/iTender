@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 import os
 import datetime
-from database.db_manager import DatabaseManager
+
 from modules.egp_boq_workspace import render_boq_workspace
 from modules.unified_import_wizard import render_unified_import_wizard
 from modules.unified_version_manager import render_unified_version_management
@@ -19,8 +19,9 @@ from modules.pwd_data_manager import (
     archive_version
 )
 
+from database.unified_db_manager import UnifiedDatabaseManager
+db = UnifiedDatabaseManager()
 
-db = DatabaseManager()
 DB_PATH = db.db_path
 
 
@@ -446,6 +447,8 @@ def show():
     
     with col4:
         paid_subs = len([s for s in all_subs if len(s) > 2 and s[2] not in ['free', 'trial']]) if all_subs else 0
+        #paid_subs = len([s for s in all_subs if s.get('plan') not in ['free', 'trial']]) if all_subs else 0
+
         st.metric("Paid Subscriptions", paid_subs)
     
     # Add a divider to separate metrics from tabs
@@ -599,6 +602,7 @@ def render_company_management():
                 company_name = st.text_input("Company Name *")
                 email = st.text_input("Email")
                 phone = st.text_input("Phone")
+                mobile_number = st.text_input("Mobile Number *", help="Bangladeshi mobile: 01XXXXXXXXX")
                 division = st.text_input("Division")
             with col2:
                 district = st.text_input("District")
@@ -610,11 +614,14 @@ def render_company_management():
             if submitted:
                 if not company_name:
                     st.error("Company name is required")
+                elif not mobile_number:
+                    st.error("Mobile number is required")
                 else:
                     company_data = {
                         'company_name': company_name,
                         'email': email,
                         'phone': phone,
+                        'mobile_number': mobile_number,
                         'division': division,
                         'district': district,
                         'address': address,
@@ -627,6 +634,7 @@ def render_company_management():
                         st.rerun()
                     else:
                         st.error(f"Failed: {result}")
+
     
     # Search and filter
     col1, col2 = st.columns([3, 1])
@@ -815,6 +823,7 @@ def render_system_user_management():
     st.caption("Create users for companies or system-level access")
     
     # ========== ADD NEW USER ==========
+    
     with st.expander("➕ Add New User", expanded=False):
         with st.form("add_user_form"):
             st.markdown("#### User Details")
@@ -824,6 +833,7 @@ def render_system_user_management():
                 full_name = st.text_input("Full Name *")
                 email = st.text_input("Email *")
                 username = st.text_input("Username *")
+                mobile_number = st.text_input("Mobile Number *", help="Bangladeshi mobile: 01XXXXXXXXX")
             
             with col2:
                 phone = st.text_input("Phone")
@@ -842,43 +852,86 @@ def render_system_user_management():
                 key="user_type_radio_add"
             )
             
+            company_id = None
+            role = "viewer"
+            
+            # 👇 ONLY SHOWS WHEN "Company User" IS SELECTED
             if user_type == "Company User":
+                st.markdown("##### Company Assignment")
+                
                 # Get all active companies
                 companies, _ = db.get_all_companies_filtered(status=1, limit=200, offset=0)
                 company_options = {c['company_name']: c['id'] for c in companies}
                 
                 if company_options:
-                    selected_company = st.selectbox(
-                        "Select Company *",
-                        options=list(company_options.keys()),
-                        key="company_select_add"
-                    )
-                    company_id = company_options[selected_company]
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        selected_company = st.selectbox(
+                            "Select Company *",
+                            options=list(company_options.keys()),
+                            key="company_select_add"
+                        )
+                        company_id = company_options[selected_company]
                     
-                    role = st.selectbox(
-                        "Role *",
-                        options=["company_admin", "manager", "analyst", "viewer"],
-                        key="company_role_add"
-                    )
+                    with col2:
+                        role = st.selectbox(
+                            "Role *",
+                            options=["company_admin", "manager", "analyst", "viewer"],
+                            key="company_role_add",
+                            help="company_admin: Full company control | manager: Can manage team | analyst: Can run analyses | viewer: Read-only"
+                        )
                 else:
-                    st.error("No companies found")
+                    st.error("No companies found. Please create a company first.")
                     company_id = None
                     role = "viewer"
+            
+            # 👇 ONLY SHOWS WHEN "System User" IS SELECTED
             else:
-                company_id = None
+                st.markdown("##### System Access Level")
                 role = st.selectbox(
                     "Role *",
                     options=["system_admin", "system_support", "system_auditor"],
-                    key="system_role_add"
+                    key="system_role_add",
+                    help="system_admin: Full platform control | system_support: Customer support | system_auditor: Read-only audit"
                 )
+                
+                # Show role description
+                role_descriptions = {
+                    "system_admin": "👑 **System Admin** - Full platform access. Can manage all companies, users, subscriptions, and system settings.",
+                    "system_support": "🛟 **System Support** - Customer support role. Can view all companies and help users, but limited admin rights.",
+                    "system_auditor": "📊 **System Auditor** - Read-only access. Can audit all data but cannot modify anything."
+                }
+                st.info(role_descriptions.get(role, ""))
+            
+            # Password strength indicator
+            if not generate_password and 'password' in locals() and password:
+                score, msg, color = validate_password_strength(password)
+                st.progress(score / 100)
+                st.markdown(f"<small style='color:{color}'>{msg}</small>", unsafe_allow_html=True)
             
             submitted = st.form_submit_button("Create User", type="primary")
             
             if submitted:
-                if not all([full_name, email, username]):
-                    st.error("Please fill all required fields")
+                # Validation
+                errors = []
+                if not full_name:
+                    errors.append("Full name is required")
+                if not email:
+                    errors.append("Email is required")
+                if not username:
+                    errors.append("Username is required")
+                if not mobile_number:
+                    errors.append("Mobile number is required")
+                if user_type == "Company User" and not company_id:
+                    errors.append("Company selection is required")
+                if not generate_password and 'password' not in locals():
+                    errors.append("Password is required")
                 elif not generate_password and password != confirm_password:
-                    st.error("Passwords do not match")
+                    errors.append("Passwords do not match")
+                
+                if errors:
+                    for err in errors:
+                        st.error(err)
                 else:
                     final_password = db.generate_random_password() if generate_password else password
                     
@@ -888,10 +941,11 @@ def render_system_user_management():
                         'email': email.strip(),
                         'full_name': full_name.strip(),
                         'phone': phone.strip(),
+                        'mobile_number': mobile_number.strip(),
                         'role': role
                     }
                     
-                    if user_type == "Company User" and company_id:
+                    if user_type == "Company User":
                         success, result = db.create_company_user(company_id, user_data, st.session_state.user_id)
                     else:
                         success, result = db.create_system_user(user_data, st.session_state.user_id)
@@ -904,6 +958,8 @@ def render_system_user_management():
                         st.rerun()
                     else:
                         st.error(f"Failed: {result}")
+
+
     
     # ========== DISPLAY USERS ==========
     st.markdown("### 📋 Users")
@@ -1168,35 +1224,13 @@ def render_role_management_page():
                 else:
                     st.error("Failed to update permissions")
 
+# Updated render_system_configuration function
 
 def render_system_configuration():
     """Render system configuration settings including extension API URL"""
     
     st.markdown("### ⚙️ System Configuration")
     st.caption("Manage system-wide settings including API endpoints and extension configuration")
-    
-    # Check if we have the system_config table
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        
-        # Create system_config table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS system_config (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by INTEGER
-            )
-        """)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        st.error(f"Error creating config table: {e}")
-        return
-    
-    # ========== SECTION 1: EXTENSION API URL ==========
-    st.markdown("#### 🤖 Chrome Extension Configuration")
     
     # Get current API URL
     current_api_url = get_system_config('extension_api_url', get_default_api_url())
@@ -1239,15 +1273,13 @@ def render_system_configuration():
         st.metric("API Status", status)
     with col3:
         # Get extension download count
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extension_downloads'")
-        if cursor.fetchone():
-            cursor.execute("SELECT COUNT(*) FROM extension_downloads")
-            download_count = cursor.fetchone()[0]
+        if db.table_exists('extension_downloads'):
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM extension_downloads")
+                download_count = cursor.fetchone()[0]
         else:
             download_count = 0
-        conn.close()
         st.metric("Extension Downloads", download_count)
     
     # ========== SECTION 2: SYSTEM SETTINGS ==========
@@ -1300,12 +1332,14 @@ def render_system_configuration():
     
     with col1:
         if st.button("🗑️ Clear Extension Logs", use_container_width=True, type="secondary"):
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM extension_auto_fill_log")
-            conn.commit()
-            conn.close()
-            st.success("Extension logs cleared!")
+            if db.table_exists('extension_auto_fill_log'):
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM extension_auto_fill_log")
+                    conn.commit()
+                st.success("Extension logs cleared!")
+            else:
+                st.info("No extension logs to clear")
     
     with col2:
         if st.button("📊 Recalculate Extension Usage", use_container_width=True, type="secondary"):
@@ -1315,55 +1349,61 @@ def render_system_configuration():
     st.markdown("---")
     st.markdown("#### 📊 Extension Download Statistics")
     
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extension_downloads'")
-    if cursor.fetchone():
-        # Total downloads
-        cursor.execute("SELECT COUNT(*) FROM extension_downloads")
-        total_downloads = cursor.fetchone()[0]
-        
-        # Downloads by day (last 7 days)
-        cursor.execute("""
-            SELECT date(downloaded_at) as day, COUNT(*) as count
-            FROM extension_downloads
-            WHERE downloaded_at >= date('now', '-7 days')
-            GROUP BY date(downloaded_at)
-            ORDER BY day DESC
-        """)
-        daily_downloads = cursor.fetchall()
-        
-        # Downloads by user
-        cursor.execute("""
-            SELECT username, COUNT(*) as count
-            FROM extension_downloads
-            GROUP BY username
-            ORDER BY count DESC
-            LIMIT 10
-        """)
-        user_downloads = cursor.fetchall()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("Total Downloads", total_downloads)
+    if db.table_exists('extension_downloads'):
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
             
-            if daily_downloads:
-                st.markdown("**Last 7 Days**")
-                for day, count in daily_downloads:
-                    st.write(f"{day}: {count} downloads")
-        
-        with col2:
-            if user_downloads:
-                st.markdown("**Top Downloaders**")
-                for username, count in user_downloads:
-                    st.write(f"{username}: {count} downloads")
+            # Total downloads
+            cursor.execute("SELECT COUNT(*) FROM extension_downloads")
+            total_downloads = cursor.fetchone()[0]
+            
+            # Downloads by day (last 7 days)
+            db_type = db.get_db_type()
+            if db_type == 'sqlite':
+                cursor.execute("""
+                    SELECT date(downloaded_at) as day, COUNT(*) as count
+                    FROM extension_downloads
+                    WHERE downloaded_at >= date('now', '-7 days')
+                    GROUP BY date(downloaded_at)
+                    ORDER BY day DESC
+                """)
+            else:  # PostgreSQL
+                cursor.execute("""
+                    SELECT date(downloaded_at) as day, COUNT(*) as count
+                    FROM extension_downloads
+                    WHERE downloaded_at >= CURRENT_DATE - INTERVAL '7 days'
+                    GROUP BY date(downloaded_at)
+                    ORDER BY day DESC
+                """)
+            daily_downloads = cursor.fetchall()
+            
+            # Downloads by user
+            cursor.execute("""
+                SELECT username, COUNT(*) as count
+                FROM extension_downloads
+                GROUP BY username
+                ORDER BY count DESC
+                LIMIT 10
+            """)
+            user_downloads = cursor.fetchall()
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Total Downloads", total_downloads)
+                
+                if daily_downloads:
+                    st.markdown("**Last 7 Days**")
+                    for day, count in daily_downloads:
+                        st.write(f"{day}: {count} downloads")
+            
+            with col2:
+                if user_downloads:
+                    st.markdown("**Top Downloaders**")
+                    for username, count in user_downloads:
+                        st.write(f"{username}: {count} downloads")
     else:
         st.info("No extension downloads tracked yet")
-    
-    conn.close()
-
 
 def render_subscription_plans_management():
     """Render subscription plans management interface for system admin"""
@@ -1374,30 +1414,6 @@ def render_subscription_plans_management():
     # Get current plans from database
     conn = db.get_connection()
     cursor = conn.cursor()
-    
-    # Create subscription_plans table if not exists
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS subscription_plans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            plan_name TEXT UNIQUE NOT NULL,
-            plan_type TEXT DEFAULT 'company',
-            monthly_price REAL DEFAULT 0,
-            yearly_price REAL DEFAULT 0,
-            max_boq_generations INTEGER DEFAULT 5,
-            max_bid_optimizations INTEGER DEFAULT 5,
-            max_tender_analyses INTEGER DEFAULT 5,
-            max_users INTEGER DEFAULT 1,
-            extension_auto_fills INTEGER DEFAULT 5,
-            can_export_data BOOLEAN DEFAULT 0,
-            can_edit_rates BOOLEAN DEFAULT 0,
-            can_delete_rates BOOLEAN DEFAULT 0,
-            can_create_versions BOOLEAN DEFAULT 0,
-            can_manage_team BOOLEAN DEFAULT 0,
-            description TEXT,
-            is_active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
     
     # Get existing plans
     cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")

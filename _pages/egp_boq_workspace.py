@@ -3,22 +3,16 @@ import pandas as pd
 import sqlite3
 import numpy as np
 import difflib
-from database.db_manager import DatabaseManager
-from database.boq_db_manager import init_boq_subsystem_tables, DB_PATH
+from database.unified_db_manager import UnifiedDatabaseManagerDatabaseManagerDatabaseManagerDatabaseManager
+
 from modules.matching_engine import search_best_pwd_match
 from utils.currency_transformer import number_to_bangladesh_taka_words
-from database.competitor_db import init_competitor_tables, calculate_win_probability
-from database.db_manager import init_boq_subsystem_tables
 from utils.data_sanitizer import sanitize_text, sanitize_item_code
 
-db = DatabaseManager()
 #db = st.session_state['db']
-DB_PATH = db.db_path 
 
 # 1. Platform Infrastructure Foundations
 st.set_page_config(layout="wide", page_title="TenderAI Enterprise Workspace")
-init_boq_subsystem_tables()
-init_competitor_tables()
 
 # 2. Extract Session Security Access Contexts From Existing App Ecosystems
 current_user = st.session_state.get("username", None)

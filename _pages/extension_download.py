@@ -121,8 +121,8 @@ def show():
     st.markdown("---")
     st.markdown("### 📊 Your Current Usage")
     
-    from database.db_manager import DatabaseManager
-    db = DatabaseManager()
+    from database.unified_db_manager import UnifiedDatabaseManager
+    db = UnifiedDatabaseManager()
     
     sub = db.get_company_subscription(company_id)
     plan = sub.get('plan', 'free')
@@ -170,19 +170,10 @@ def show():
 def get_system_api_url():
     """Get the system-wide API URL configuration"""
     try:
-        from database.db_manager import DatabaseManager
-        db = DatabaseManager()
+        from database.unified_db_manager import db
+        
         conn = db.get_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS system_config (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by INTEGER
-            )
-        """)
         
         cursor.execute("SELECT value FROM system_config WHERE key = 'extension_api_url'")
         result = cursor.fetchone()
@@ -194,23 +185,23 @@ def get_system_api_url():
             if os.environ.get('STREAMLIT_SHARING') or os.environ.get('STREAMLIT_CLOUD'):
                 api_url = "https://itender-bd.streamlit.app"
             else:
-                # CHANGE THIS LINE - use port 5000 instead of 8501
-                api_url = "http://localhost:5000"  # ← CHANGE FROM 8501 TO 5000
+                api_url = "http://localhost:5000"
         
         conn.close()
         return api_url.rstrip('/')
         
     except Exception as e:
         print(f"Error getting API URL: {e}")
-        return "http://localhost:5000"  # ← CHANGE THIS TOO
+        return "http://localhost:5000"
+
 
 
 
 def save_system_api_url(api_url):
     """Save the system-wide API URL configuration (admin only)"""
     try:
-        from database.db_manager import DatabaseManager
-        db = DatabaseManager()
+        from database.unified_db_manager import UnifiedDatabaseManager
+        db = UnifiedDatabaseManager()
         conn = db.get_connection()
         cursor = conn.cursor()
         
@@ -1170,24 +1161,13 @@ checkAuth();
     
     zip_buffer.seek(0)
     return zip_buffer.getvalue()
-
 def log_extension_download(user_id, company_id, username):
     """Log extension download for analytics"""
     try:
-        from database.db_manager import DatabaseManager
-        db = DatabaseManager()
+        from database.unified_db_manager import db
+        
         conn = db.get_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS extension_downloads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                company_id INTEGER,
-                username TEXT,
-                downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
         
         cursor.execute("""
             INSERT INTO extension_downloads (user_id, company_id, username)

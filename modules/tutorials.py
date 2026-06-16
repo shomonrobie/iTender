@@ -50,7 +50,7 @@ def render_tutorial():
         "🎯 Bid Optimization",
         "🏗️ Rate Management",
         "👑 Admin Guide",
-        "⚙️ Advanced Features"
+        "⚙️ Advanced Features",
         "📄 Extension"
     ])
     
@@ -636,13 +636,13 @@ For organization-wide deployment, use Chrome Enterprise policies:
 - Verify your subscription has auto-fill credits remaining
 """
     
-    with open("EXTENSION_SETUP.md", "w") as f:
-        f.write(instructions)
-    print("✅ Created EXTENSION_SETUP.md")
+#     with open("EXTENSION_SETUP.md", "w") as f:
+#         f.write(instructions)
+#     print("✅ Created EXTENSION_SETUP.md")
 
-if __name__ == "__main__":
-    create_extension_package()
-    generate_extension_setup_instructions()
+# if __name__ == "__main__":
+#     create_extension_package()
+#     generate_extension_setup_instructions()
     
         
 
