@@ -6,19 +6,41 @@ from version import get_app_name, get_app_desc
 import base64
 import os
 from modules.landing_counters import render_all_counters
+from pathlib import Path
 
 
-# 1. Safely locate and load your local image file bytes
-image_path = r"D:\itender_clean\assets\images\cptuEgpLogo.gif"
+# # 1. Safely locate and load your local image file bytes
+# current_dir = Path(__file__).parent
+# image_path = current_dir / "assets" / "images" / "cptuEgpLogo.gif"
 
-if os.path.exists(image_path):
-    with open(image_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-    # Generate the correct base64 data URI format for a GIF
-    img_src = f"data:image/gif;base64,{encoded_string}"
-else:
-    # Fallback placeholder string if file path is temporarily mislocated
-    img_src = ""
+# if image_path.exists():
+#     st.image(str(image_path), use_container_width=True)
+# else:
+#     st.warning("Logo image not found")
+
+def get_logo_html():
+    """Get CPTU e-GP Logo with fallback to GitHub"""
+    
+    current_dir = Path(__file__).parent
+    image_path = current_dir / "assets" / "images" / "cptuEgpLogo.gif"
+    
+    if image_path.exists():
+        with open(image_path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+        return f"data:image/gif;base64,{encoded}"
+    
+    # Fallback to GitHub raw URL
+    return "https://raw.githubusercontent.com/shomonrobie/iTender/main/assets/images/cptuEgpLogo.gif"
+
+# if os.path.exists(image_path):
+#     with open(image_path, "rb") as image_file:
+#         encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+#     # Generate the correct base64 data URI format for a GIF
+#     img_src = f"data:image/gif;base64,{encoded_string}"
+# else:
+#     # Fallback placeholder string if file path is temporarily mislocated
+#     img_src = ""
+img_src = get_logo_html()
 
 # In your landing page / home page
 def render_workflow_section():
@@ -39,7 +61,7 @@ def render_workflow_section():
             position: absolute;
             top: -50%;
             right: -30%;
-            width: 60%;
+            width: 100%;
             height: 150%;
             background: radial-gradient(ellipse at 70% 50%, rgba(118, 75, 162, 0.06) 0%, transparent 70%);
             pointer-events: none;
@@ -50,11 +72,13 @@ def render_workflow_section():
             position: relative;
             z-index: 1;
         }
+
         .workflow-header h2 {
-            font-size: 2.2rem;
+            font-size: 2.6rem !important;
             font-weight: 700;
             color: #1a1a2e;
             margin-bottom: 0.3rem;
+            animation: fadeInUp 0.8s ease-out 0.6s both;                
         }
         .workflow-header h2 span {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -2016,7 +2040,7 @@ def show_landing_page():
             <div style="flex: 2;">
                 <div style="text-align: center; font-size: 2.5rem; margin-bottom: 1rem;">
                     <!-- Injection of the native Base64 encoded data URI string -->
-                    <img src="{img_src}" style="max-width: 100%; height: auto;" alt="CPTU e-GP Logo" />
+                    <img src="{img_src}" style="max-width: 200px; height: auto;" alt="CPTU e-GP Logo" />
                 </div>                
                 <p style="color: rgba(255,255,255,0.9); text-align: center;">Fill LTM/OTM tender forms instantly with your company data</p>
                 <div style="margin-top: 0.5rem; text-align: center;">
