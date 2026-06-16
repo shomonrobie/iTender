@@ -117,7 +117,6 @@ def clear_session_url():
     """Clear session from URL"""
     st.query_params.clear()
 
-
 def login_user(user_data: Dict, password: str = None, remember_me: bool = False) -> bool:
     """
     Login user and set session state
@@ -144,6 +143,9 @@ def login_user(user_data: Dict, password: str = None, remember_me: bool = False)
         st.session_state.email_verified = user_data.get('email_verified', False)
         st.session_state.account_type = 'company' if user_data.get('company_id') else 'individual'
         
+        print(f"✅ Login - Role set to: {st.session_state.user_role}")
+        print(f"✅ Login - Company ID: {st.session_state.company_id}")
+
         # Fetch company name
         if st.session_state.company_id:
             company = db.get_company_by_id(st.session_state.company_id)
@@ -157,6 +159,10 @@ def login_user(user_data: Dict, password: str = None, remember_me: bool = False)
         else:
             st.session_state.subscription_plan = 'free'
         st.session_state.subscription_status = 'active'
+        
+        # ✅ ADD THIS: Refresh RBAC role cache
+        from modules.rbac import _rbac
+        _rbac.refresh_role()
         
         # Save to URL if remember_me is checked
         if remember_me:

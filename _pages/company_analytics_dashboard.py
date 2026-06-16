@@ -7,17 +7,52 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from database.unified_db_manager import db
 from modules.rbac import is_company_admin, render_role_badge
+from modules.rbac import _rbac
+
+# Refresh RBAC role from database
+_rbac.refresh_role()
 
 def show():
     """Company Admin Analytics Dashboard - Company-specific metrics"""
     
-    # Verify company admin access
-    if not is_company_admin() and st.session_state.user_role not in ['admin', 'system_admin']:
+    # ✅ Get role from multiple sources
+    role_from_session = st.session_state.get('user_role', 'unknown')
+    user_role = _rbac.get_current_user_role()
+    user_id = st.session_state.get('user_id')
+    
+    # ✅ DEBUG: Print all role sources
+    print(f"🔍 Role from session: {role_from_session}")
+    print(f"🔍 Role from RBAC: {user_role}")  # ← Fixed: use user_role
+    print(f"🔍 User ID: {user_id}")
+    
+    # ✅ Get user from database to verify
+    if user_id:
+        user = db.get_user_by_id(user_id)
+        if user:
+            print(f"🔍 Database role: {user.get('role')}")
+            print(f"🔍 Database company_id: {user.get('company_id')}")
+    
+    # ✅ Auto-correct role if mismatch
+    if user_id:
+        user = db.get_user_by_id(user_id)
+        if user and user.get('role') == 'company_admin':
+            if st.session_state.get('user_role') != 'company_admin':
+                st.session_state.user_role = 'company_admin'
+                user_role = 'company_admin'
+                print(f"✅ Corrected role to: {user_role}")
+    
+    # ✅ Verify company admin access
+    if user_role not in ['admin', 'system_admin', 'company_admin']:
         st.error("🔒 Access denied. Company admin privileges required.")
         return
     
     company_id = st.session_state.company_id
     company_name = st.session_state.company_name
+    
+    # If no company_id, show error
+    if not company_id:
+        st.error("No company associated with this account.")
+        return
     
     st.markdown(f"""
     <div class="main-header">
@@ -49,25 +84,25 @@ def show():
     with col1:
         st.metric(
             "Total Tenders", 
-            perf_metrics['total_tenders'],
-            delta=f"{perf_metrics['tenders_this_month']} this month"
+            perf_metrics.get('total_tenders', 0),
+            delta=f"{perf_metrics.get('tenders_this_month', 0)} this month"
         )
     with col2:
         st.metric(
             "Win Rate", 
-            f"{perf_metrics['win_rate']:.1f}%",
-            delta=f"{perf_metrics['win_rate_change']:+.1f}% vs last month"
+            f"{perf_metrics.get('win_rate', 0):.1f}%",
+            delta=f"{perf_metrics.get('win_rate_change', 0):+.1f}% vs last month"
         )
     with col3:
         st.metric(
             "Total Analyses", 
-            perf_metrics['total_analyses'],
-            delta=f"{perf_metrics['analyses_this_month']} this month"
+            perf_metrics.get('total_analyses', 0),
+            delta=f"{perf_metrics.get('analyses_this_month', 0)} this month"
         )
     with col4:
         st.metric(
             "Active Team Members", 
-            perf_metrics['active_team_members'],
+            perf_metrics.get('active_team_members', 0),
             help="Users who logged in within last 30 days"
         )
     
@@ -470,12 +505,9 @@ def get_extension_usage_metrics(company_id):
     avg_conf = (cursor.fetchone()[0] or 0) * 100
     
     # Get plan limit
-    cursor.execute("""
-        SELECT extension_auto_fills FROM subscriptions 
-        WHERE company_id = ? AND status = 'active'
-        LIMIT 1
-    """, (company_id,))
-    limit = cursor.fetchone()[0] or 5
+    usage_metrics = db.get_extension_usage_metrics(company_id)
+    limit = usage_metrics.get('extension_auto_fills', 5)
+
     
     # Time saved (2 min per fill)
     time_saved = (total * 2) / 60

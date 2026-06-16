@@ -4193,53 +4193,136 @@ class DatabaseCRUD:
     # =========================================================
     # EXTENSION USAGE TRACKING METHODS
     # =========================================================
-
-    def get_extension_fill_usage(self, company_id: int, period: str = 'monthly') -> Dict:
-        """Get extension auto-fill usage for a company"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
+    def get_extension_fill_usage(self, company_id: int) -> Dict:
+        """Get extension fill usage for a company"""
+        try:
+            # Get plan limit from subscription_plans via subscriptions
+            usage = self.get_extension_usage_metrics(company_id)
             
-            # Get subscription plan
-            sub = self.get_company_subscription(company_id)
-            plan = sub.get('plan', 'free')
+            limit = usage.get('extension_auto_fills', 5)
+            used = usage.get('analyses_used', 0)
             
-            plan_limits = {
-                'free': 5,
-                'basic': 30,
-                'professional': 100,
-                'enterprise': -1
-            }
-            
-            limit = plan_limits.get(plan, 5)
-            
-            # Get current period usage
-            now = datetime.now()
-            if period == 'monthly':
-                start_date = datetime(now.year, now.month, 1)
-            else:
-                start_date = datetime(now.year, 1, 1)
-            
-            # Check if table exists
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='extension_auto_fill_log'")
-            table_exists = cursor.fetchone()
-            
-            if table_exists:
+            # Get actual extension log count
+            with self.get_connection() as conn:
+                cursor = self.db_conn.get_cursor(conn)
                 cursor.execute("""
                     SELECT COUNT(*) FROM extension_auto_fill_log
-                    WHERE company_id = ? AND filled_at >= ?
-                """, (company_id, start_date))
-                used = cursor.fetchone()[0] or 0
-            else:
-                used = 0
+                    WHERE company_id = ? 
+                    AND filled_at >= date('now', 'start of month')
+                """, (company_id,))
+                row = cursor.fetchone()
+                if row:
+                    if hasattr(row, 'keys'):
+                        actual_used = row.get('COUNT(*)', 0)
+                    else:
+                        actual_used = row[0] if row else 0
+                else:
+                    actual_used = 0
             
             return {
-                'used': used,
+                'used': actual_used,
                 'limit': limit,
-                'remaining': -1 if limit == -1 else max(0, limit - used),
+                'remaining': -1 if limit == -1 else max(0, limit - actual_used),
                 'is_unlimited': limit == -1,
-                'plan': plan
+                'plan': usage.get('plan', 'free'),
+                'can_export_data': usage.get('can_export_data', False),
+                'can_edit_rates': usage.get('can_edit_rates', False),
+                'can_delete_rates': usage.get('can_delete_rates', False),
+                'can_create_versions': usage.get('can_create_versions', False),
+                'can_manage_team': usage.get('can_manage_team', False)
             }
-
+            
+        except Exception as e:
+            print(f"Error getting extension fill usage: {e}")
+            return {
+                'used': 0,
+                'limit': 5,
+                'remaining': 5,
+                'is_unlimited': False,
+                'plan': 'free',
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False
+            }    
+    def get_extension_usage_metrics(self, company_id: int) -> Dict:
+        """Get extension usage metrics for a company including plan limits"""
+        try:
+            with self.get_connection() as conn:
+                cursor = self.db_conn.get_cursor(conn)
+                
+                # Join subscriptions with subscription_plans
+                cursor.execute("""
+                    SELECT 
+                        s.plan,
+                        s.analyses_used,
+                        s.analyses_limit,
+                        s.max_boq_generations,
+                        s.boq_used,
+                        s.max_bid_optimizations,
+                        s.bid_optimizations_used,
+                        sp.extension_auto_fills,
+                        sp.max_users,
+                        sp.can_export_data,
+                        sp.can_edit_rates,
+                        sp.can_delete_rates,
+                        sp.can_create_versions,
+                        sp.can_manage_team,
+                        sp.max_tender_analyses,
+                        s.status
+                    FROM subscriptions s
+                    LEFT JOIN subscription_plans sp ON s.plan = sp.plan_name
+                    WHERE s.company_id = ? AND s.status = 'active'
+                    ORDER BY s.id DESC LIMIT 1
+                """, (company_id,))
+                
+                result = cursor.fetchone()
+                
+                if result:
+                    return dict(result)
+                
+                # Default values if no subscription found
+                return {
+                    'plan': 'free',
+                    'analyses_used': 0,
+                    'analyses_limit': 5,
+                    'max_boq_generations': 5,
+                    'boq_used': 0,
+                    'max_bid_optimizations': 5,
+                    'bid_optimizations_used': 0,
+                    'extension_auto_fills': 5,
+                    'max_users': 1,
+                    'max_tender_analyses': 5,
+                    'can_export_data': False,
+                    'can_edit_rates': False,
+                    'can_delete_rates': False,
+                    'can_create_versions': False,
+                    'can_manage_team': False,
+                    'status': 'active'
+                }
+                
+        except Exception as e:
+            print(f"Error getting extension usage: {e}")
+            return {
+                'plan': 'free',
+                'analyses_used': 0,
+                'analyses_limit': 5,
+                'max_boq_generations': 5,
+                'boq_used': 0,
+                'max_bid_optimizations': 5,
+                'bid_optimizations_used': 0,
+                'extension_auto_fills': 5,
+                'max_users': 1,
+                'max_tender_analyses': 5,
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False,
+                'status': 'active'
+            }    
+     
     def log_extension_fill(self, company_id: int, user_id: int, field_label: str, 
                         confidence: float, page_url: str) -> bool:
         """Log an auto-fill action from the extension"""
@@ -5622,3 +5705,7 @@ def update_lged_chapter_section(self, hierarchy: Dict, version_id: int, edition_
             """, (tender_id, user_id, role))
             
             return True    
+
+    # database/crud_operations.py - Add this method    
+        
+    

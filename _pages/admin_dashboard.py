@@ -959,13 +959,11 @@ def render_system_user_management():
                     else:
                         st.error(f"Failed: {result}")
 
-
-    
     # ========== DISPLAY USERS ==========
     st.markdown("### 📋 Users")
-    
+
     tab1, tab2 = st.tabs(["🏢 Company Users", "👑 System Users"])
-    
+
     # ========== COMPANY USERS TAB ==========
     with tab1:
         companies, _ = db.get_all_companies_filtered(status=None, limit=200, offset=0)
@@ -991,13 +989,24 @@ def render_system_user_management():
                         
                         unique_base = f"comp_{company['id']}_user_{user_id}"
                         
-                        with st.expander(f"👤 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').title()}"):
+                        # Show username, mobile, and full name in expander header
+                        full_name = user.get('full_name', 'Unknown')
+                        username = user.get('username', 'N/A')
+                        mobile = user.get('mobile_number', 'N/A')
+                        role = user.get('role', 'N/A').title()
+                        
+                        with st.expander(f"👤 {full_name} (@{username}) 📱 {mobile} - {role}"):
                             col1, col2, col3 = st.columns([2, 1, 1])
                             
                             with col1:
-                                new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"{unique_base}_name")
+                                # Username is DISPLAY ONLY (not editable)
+                                st.text_input("Username (Read-Only)", value=username, disabled=True, key=f"{unique_base}_username")
+                                
+                                new_full_name = st.text_input("Full Name", value=full_name, key=f"{unique_base}_name")
                                 new_email = st.text_input("Email", value=user.get('email', ''), key=f"{unique_base}_email")
                                 new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"{unique_base}_phone")
+                                # Mobile number - DISPLAY ONLY (not editable)
+                                st.text_input("Mobile Number (Read-Only)", value=mobile, disabled=True, key=f"{unique_base}_mobile")
                             
                             with col2:
                                 # Company selection dropdown for company users
@@ -1070,7 +1079,7 @@ def render_system_user_management():
                             st.caption(f"📅 Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
         else:
             st.info("No companies found")
-    
+
     # ========== SYSTEM USERS TAB ==========
     with tab2:
         try:
@@ -1090,13 +1099,23 @@ def render_system_user_management():
                 
                 unique_base = f"sys_user_{user_id}"
                 
-                with st.expander(f"👑 {user.get('full_name', 'Unknown')} ({user.get('username', 'N/A')}) - {user.get('role', 'N/A').replace('_', ' ').title()}"):
+                full_name = user.get('full_name', 'Unknown')
+                username = user.get('username', 'N/A')
+                mobile = user.get('mobile_number', 'N/A')
+                role = user.get('role', 'N/A').replace('_', ' ').title()
+                
+                with st.expander(f"👑 {full_name} (@{username}) 📱 {mobile} - {role}"):
                     col1, col2, col3 = st.columns([2, 1, 1])
                     
                     with col1:
-                        new_full_name = st.text_input("Full Name", value=user.get('full_name', ''), key=f"{unique_base}_name")
+                        # Username - DISPLAY ONLY (not editable)
+                        st.text_input("Username (Read-Only)", value=username, disabled=True, key=f"{unique_base}_username")
+                        
+                        new_full_name = st.text_input("Full Name", value=full_name, key=f"{unique_base}_name")
                         new_email = st.text_input("Email", value=user.get('email', ''), key=f"{unique_base}_email")
                         new_phone = st.text_input("Phone", value=user.get('phone', ''), key=f"{unique_base}_phone")
+                        # Mobile number - DISPLAY ONLY (not editable)
+                        st.text_input("Mobile Number (Read-Only)", value=mobile, disabled=True, key=f"{unique_base}_mobile")
                     
                     with col2:
                         role_options = ["system_admin", "system_support", "system_auditor"]
@@ -1150,7 +1169,6 @@ def render_system_user_management():
                     st.caption(f"📅 Created: {str(user.get('created_at', ''))[:10] if user.get('created_at') else 'N/A'}")
         else:
             st.info("No system users found")
-            
 
 
 def render_role_management_page():

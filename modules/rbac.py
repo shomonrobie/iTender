@@ -4,6 +4,9 @@ import streamlit as st
 from typing import Dict, List, Any, Optional
 from functools import wraps
 
+from database.unified_db_manager import UnifiedDatabaseManager
+db = UnifiedDatabaseManager()
+
 # =============================================================================
 # ROLE DEFINITIONS AND PERMISSIONS
 # =============================================================================
@@ -346,23 +349,39 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
 # =============================================================================
 # RBAC MANAGER CLASS
 # =============================================================================
-
 class RBACManager:
     """Role-Based Access Control Manager"""
     
     def __init__(self):
-        self._current_user_role = None
+        # Don't cache role - always read from session state
+        pass
     
     def get_current_user_role(self) -> str:
-        """Get current user's role from session state"""
-        if self._current_user_role is None:
-            self._current_user_role = st.session_state.get('user_role', 'viewer')
-        return self._current_user_role
+        """Get current user's role from session state (always fresh)"""
+        # ✅ Always read from session state, never cache
+        role = st.session_state.get('user_role', 'viewer')
+        
+        # ✅ If role is system_admin but user has company_id, check if it should be company_admin
+        if role == 'system_admin' and st.session_state.get('company_id'):
+            # Try to get user from database to verify
+            try:
+                from database.unified_db_manager import db
+                user_id = st.session_state.get('user_id')
+                if user_id:
+                    user = db.get_user_by_id(user_id)
+                    if user and user.get('role') == 'company_admin':
+                        # Fix the session state
+                        st.session_state.user_role = 'company_admin'
+                        return 'company_admin'
+            except:
+                pass
+        
+        return role
     
     def get_current_user_permissions(self) -> Dict[str, bool]:
         """Get all permissions for current user"""
         role = self.get_current_user_role()
-        return ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS['viewer'])
+        return ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS.get('viewer', {}))
     
     def has_permission(self, permission: str) -> bool:
         """Check if current user has a specific permission"""
@@ -378,6 +397,19 @@ class RBACManager:
         """Check if current user has all specified permissions"""
         user_perms = self.get_current_user_permissions()
         return all(user_perms.get(p, False) for p in permissions)
+    
+    def refresh_role(self) -> None:
+        """Force refresh role from database"""
+        user_id = st.session_state.get('user_id')
+        if user_id:
+            try:
+                from database.unified_db_manager import db
+                user = db.get_user_by_id(user_id)
+                if user:
+                    st.session_state.user_role = user.get('role', 'viewer')
+                    print(f"🔄 Refreshed role to: {st.session_state.user_role}")
+            except Exception as e:
+                print(f"⚠️ Failed to refresh role: {e}")
     
     def require_permission(self, permission: str):
         """Decorator to require a permission for a function"""
@@ -642,23 +674,51 @@ def is_analyst() -> bool:
 
 def render_role_badge() -> None:
     """Render a badge showing current user's role"""
+    from modules.rbac import _rbac
+    
+    # ✅ Get fresh role from RBAC
     role = _rbac.get_current_user_role()
+    
+    # ✅ If role is system_admin but user has company_id, auto-correct
+    if role == 'system_admin' and st.session_state.get('company_id'):
+        user_id = st.session_state.get('user_id')
+        if user_id:
+            user = db.get_user_by_id(user_id)
+            if user and user.get('role') == 'company_admin':
+                role = 'company_admin'
+                # Fix session state
+                st.session_state.user_role = 'company_admin'
+    
     role_display = {
-        'system_admin': '👑 System Admin',
-        'admin': '👑 Admin',
-        'company_admin': '🏢 Company Admin',
+        'system_admin': '👑 System Administrator',
+        'admin': '👑 Administrator',
+        'company_admin': '🏢 Company Administrator',
         'manager': '📊 Manager',
         'analyst': '📈 Analyst',
         'data_entry': '📝 Data Entry',
-        'viewer': '👁️ Viewer'
-    }.get(role, '👤 User')
+        'viewer': '👁️ Viewer',
+        'user': '👤 User'
+    }.get(role, f'👤 {role.replace("_", " ").title()}')
+    
+    # Different colors for different roles
+    role_colors = {
+        'system_admin': 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+        'admin': 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+        'company_admin': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        'manager': 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+        'analyst': 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+        'viewer': 'linear-gradient(135deg, #a8a8a8 0%, #d3d3d3 100%)'
+    }
+    
+    gradient = role_colors.get(role, 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)')
     
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+    <div style="background: {gradient}; 
                 border-radius: 20px; padding: 4px 15px; display: inline-block; margin-bottom: 10px;">
-        <span style="color: white; font-size: 0.8rem;">{role_display}</span>
+        <span style="color: white; font-size: 0.8rem; font-weight: 500;">{role_display}</span>
     </div>
     """, unsafe_allow_html=True)
+
 
 
 def render_protected_button(label: str, permission: str, key: str, 
