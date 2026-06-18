@@ -5,7 +5,7 @@ from modules.subscription_manager import SubscriptionManager
 from database.unified_db_manager import UnifiedDatabaseManager
 from modules.subscription import get_plan, get_plans, is_premium_plan
 from modules.subscription_ui import render_subscription_card
-
+from typing import List, Union, Dict, Callable, Optional
 db = UnifiedDatabaseManager()
 
 
