@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import os
 import datetime
+from typing import Dict, List, Optional, Any, Tuple
 
 from modules.egp_boq_workspace import render_boq_workspace
 from modules.unified_import_wizard import render_unified_import_wizard
@@ -18,6 +19,8 @@ from modules.pwd_data_manager import (
     get_rate_versions,
     archive_version
 )
+from modules.subscription_ui import render_subscription_card
+from modules.subscription import get_plan
 
 from database.unified_db_manager import UnifiedDatabaseManager
 db = UnifiedDatabaseManager()
@@ -658,6 +661,7 @@ def render_company_management():
     if companies:
         for company in companies:
             # Get subscription info
+            company_id = company['id']  # This should be 3351 for Babui
             subscription = db.get_company_subscription(company['id'])
             
             with st.expander(f"🏢 {company['company_name']} - {company.get('email', 'No email')}"):
@@ -701,7 +705,7 @@ def render_company_management():
                                 updates['is_active'] = 1 if new_active else 0
                             
                             if updates:
-                                if db.update_company(company['id'], updates):
+                                if db.update_company(company['id'], **updates):
                                     st.success("Company updated!")
                                     st.rerun()
                                 else:
@@ -714,15 +718,19 @@ def render_company_management():
                             st.metric("👥 Users", stats.get('total_users', 0))
                             st.metric("📈 Analyses", stats.get('total_analyses', 0))
                             st.metric("🏆 Win Rate", f"{stats.get('win_rate', 0):.1f}%")
-                        except:
+                        except Exception as e:
+                            print(f"❌ Error getting stats: {e}")
                             st.metric("👥 Users", "N/A")
+                            st.metric("📈 Analyses", "N/A")
+                            st.metric("🏆 Win Rate", "N/A")
                         
                         st.markdown("---")
                         st.markdown("#### ⚡ Actions")
                         col_a, col_b = st.columns(2)
                         with col_a:
-                            if st.button("👥 Manage Users", key=f"users_{company['id']}"):
-                                st.session_state.selected_company_id = company['id']
+                             if st.button("👥 Manage Users", key=f"users_{company_id}"):
+                                # ✅ Store the correct company ID
+                                st.session_state.selected_company_id = company_id
                                 st.session_state.page = "user_management"
                                 st.rerun()
                         with col_b:
@@ -738,84 +746,21 @@ def render_company_management():
                                     st.rerun()
                         
                         st.caption(f"📅 Created: {company.get('created_at', 'N/A')[:10] if company.get('created_at') else 'N/A'}")
-                
+                print(f"🔍 DEBUG: Company being displayed: {company['company_name']} (ID: {company['id']})")
+                print(f"🔍 DEBUG: Subscription for this company: {subscription}")
+
                 with comp_tab2:
-                    st.markdown("#### 💳 Subscription Management")
-                    
-                    # Display current subscription
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Current Plan", subscription.get('plan', 'free').upper())
-                    with col2:
-                        st.metric("Status", subscription.get('status', 'active').upper())
-                    with col3:
-                        limit = subscription.get('analyses_limit', 5)
-                        used = subscription.get('analyses_used', 0)
-                        if limit == -1:
-                            st.metric("Analyses", "Unlimited")
-                        else:
-                            remaining = max(0, limit - used)
-                            st.metric("Analyses Remaining", f"{remaining}/{limit}")
-                    
-                    st.markdown("---")
-                    st.markdown("#### Update Subscription")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        new_plan = st.selectbox(
-                            "Select Plan",
-                            options=["free", "basic", "professional", "enterprise"],
-                            index=["free", "basic", "professional", "enterprise"].index(subscription.get('plan', 'free')),
-                            key=f"plan_select_{company['id']}"
-                        )
-                    
-                    with col2:
-                        duration = st.selectbox(
-                            "Duration",
-                            options=["monthly", "yearly"],
-                            key=f"duration_select_{company['id']}"
-                        )
-                    
-                    # Plan benefits
-                    plan_benefits = {
-                        "free": "• 5 analyses/month\n• Basic reports\n• Email support",
-                        "basic": "• 30 analyses/month\n• AI predictions\n• Priority support",
-                        "professional": "• Unlimited analyses\n• ML predictions\n• Team collaboration\n• Advanced reporting",
-                        "enterprise": "• Everything in Professional\n• Custom AI model\n• Dedicated support\n• API access"
-                    }
-                    st.info(plan_benefits.get(new_plan, ""))
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"💾 Update Subscription", key=f"update_sub_{company['id']}", type="primary"):
-                            success = db.update_company_subscription(company['id'], new_plan, duration, 'admin_manual')
-                            if success:
-                                st.success(f"✅ Subscription updated to {new_plan.upper()}!")
-                                st.rerun()
-                            else:
-                                st.error("Failed to update subscription")
-                    
-                    with col2:
-                        if subscription.get('plan') != 'free':
-                            if st.button(f"❌ Cancel Subscription", key=f"cancel_sub_{company['id']}"):
-                                success = db.update_company_subscription(company['id'], 'free', 'monthly', 'admin_cancelled')
-                                if success:
-                                    st.success("Subscription cancelled. Plan set to FREE.")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to cancel subscription")
-                    
-                    # Subscription details
-                    st.markdown("---")
-                    st.markdown("#### Subscription Details")
-                    st.caption(f"**Start Date:** {subscription.get('start_date', 'N/A')}")
-                    st.caption(f"**End Date:** {subscription.get('end_date', 'N/A')}")
-                    if subscription.get('payment_method'):
-                        st.caption(f"**Payment Method:** {subscription.get('payment_method')}")
-                    if subscription.get('transaction_id'):
-                        st.caption(f"**Transaction ID:** {subscription.get('transaction_id')}")
+                    # ✅ Pass subscription correctly
+                    render_subscription_card(
+                        subscription=subscription,
+                        company_id=company['id'],
+                        show_update=True,
+                        show_cancel=True,
+                        title="💳 Subscription Management"
+                    )
     else:
         st.info("No companies found")
+
 
 def render_system_user_management():
     """Manage system-level users and company users (for system admin)"""
@@ -905,6 +850,7 @@ def render_system_user_management():
             
             # Password strength indicator
             if not generate_password and 'password' in locals() and password:
+                from utils.helpers import validate_password_strength
                 score, msg, color = validate_password_strength(password)
                 st.progress(score / 100)
                 st.markdown(f"<small style='color:{color}'>{msg}</small>", unsafe_allow_html=True)
@@ -1056,7 +1002,7 @@ def render_system_user_management():
                                         updates['company_id'] = new_company_id
                                     
                                     if updates:
-                                        if db.update_user(user_id, updates):
+                                        if db.update_user(user_id, **updates):
                                             st.success("User updated! Changes will appear after refresh.")
                                             st.rerun()
                                         else:
@@ -1146,7 +1092,7 @@ def render_system_user_management():
                                 updates['is_active'] = 1 if new_active else 0
                             
                             if updates:
-                                if db.update_user(user_id, updates):
+                                if db.update_user(user_id, **updates):
                                     st.success("User updated!")
                                     st.rerun()
                                 else:
@@ -1422,6 +1368,7 @@ def render_system_configuration():
                         st.write(f"{username}: {count} downloads")
     else:
         st.info("No extension downloads tracked yet")
+# _pages/admin_dashboard.py - Subscription Plans Management Section
 
 def render_subscription_plans_management():
     """Render subscription plans management interface for system admin"""
@@ -1429,23 +1376,46 @@ def render_subscription_plans_management():
     st.markdown("### 💳 Subscription Plans Management")
     st.caption("Configure subscription plans, pricing, and limits")
     
-    # Get current plans from database
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    
-    # Get existing plans
-    cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
-    plans = cursor.fetchall()
-    
-    if not plans:
-        # Insert default plans
-        default_plans = [
-            ('free', 'company', 0, 0, 5, 5, 5, 1, 5, 0, 0, 0, 0, 0, 'Free plan with basic features'),
-            ('basic', 'company', 4999, 49990, 30, 30, 30, 3, 30, 1, 0, 0, 0, 0, 'Basic plan for small businesses'),
-            ('professional', 'company', 14999, 149990, 100, 100, -1, 10, 100, 1, 1, 0, 1, 1, 'Professional plan for growing businesses'),
-            ('enterprise', 'company', 49999, 499990, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 'Enterprise plan with unlimited features')
-        ]
+    # Get existing plans using unified db
+    with db.get_connection() as conn:
+        cursor = db.db_conn.get_cursor(conn)
+        cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
+        plans = cursor.fetchall()
         
+        # Get column names for dict conversion
+        columns = [description[0] for description in cursor.description]
+    
+    # If no plans exist, insert defaults
+    if not plans:
+        _insert_default_plans()
+        # Re-fetch plans
+        with db.get_connection() as conn:
+            cursor = db.db_conn.get_cursor(conn)
+            cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
+            plans = cursor.fetchall()
+    
+    st.markdown("#### 📋 Current Plans")
+    
+    # Display existing plans
+    for plan in plans:
+        plan_dict = dict(plan)
+        _render_plan_editor(plan_dict)
+    
+    # Add new plan
+    _render_add_plan_form()
+
+
+def _insert_default_plans():
+    """Insert default plans if none exist"""
+    default_plans = [
+        ('free', 'company', 0, 0, 5, 5, 5, 1, 5, 0, 0, 0, 0, 0, 'Free plan with basic features'),
+        ('basic', 'company', 4999, 49990, 30, 30, 30, 3, 30, 1, 0, 0, 0, 0, 'Basic plan for small businesses'),
+        ('professional', 'company', 14999, 149990, 100, 100, -1, 10, 100, 1, 1, 0, 1, 1, 'Professional plan for growing businesses'),
+        ('enterprise', 'company', 49999, 499990, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 'Enterprise plan with unlimited features')
+    ]
+    
+    with db.get_connection() as conn:
+        cursor = db.db_conn.get_cursor(conn)
         for plan in default_plans:
             cursor.execute("""
                 INSERT OR IGNORE INTO subscription_plans (
@@ -1455,121 +1425,112 @@ def render_subscription_plans_management():
                     can_delete_rates, can_create_versions, can_manage_team, description
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, plan)
-        
         conn.commit()
+
+#"Dict" is not definedPylancereportUndefinedVariable
+def _render_plan_editor(plan_dict: Dict):
+    """Render editor for a single plan"""
+    
+    plan_name = plan_dict['plan_name']
+    
+    with st.expander(f"📌 {plan_name.upper()} Plan", expanded=False):
+        col1, col2 = st.columns(2)
         
-        # Re-fetch plans
-        cursor.execute("SELECT * FROM subscription_plans ORDER BY monthly_price")
-        plans = cursor.fetchall()
-    
-    # Get column names
-    columns = [description[0] for description in cursor.description]
-    conn.close()
-    
-    st.markdown("#### 📋 Current Plans")
-    
-    # Display existing plans
-    for plan in plans:
-        plan_dict = dict(zip(columns, plan))
+        with col1:
+            st.markdown("**Pricing**")
+            new_monthly = st.number_input(
+                "Monthly Price (BDT)", 
+                value=float(plan_dict['monthly_price']),
+                min_value=0.0,
+                step=500.0,
+                key=f"monthly_{plan_name}"
+            )
+            new_yearly = st.number_input(
+                "Yearly Price (BDT)", 
+                value=float(plan_dict['yearly_price']),
+                min_value=0.0,
+                step=1000.0,
+                key=f"yearly_{plan_name}"
+            )
+            
+            st.markdown("**Limits**")
+            new_boq = st.number_input(
+                "Max BOQ Generations", 
+                value=int(plan_dict['max_boq_generations']),
+                min_value=-1,
+                step=1,
+                key=f"boq_{plan_name}",
+                help="-1 = Unlimited"
+            )
+            new_bid = st.number_input(
+                "Max Bid Optimizations", 
+                value=int(plan_dict['max_bid_optimizations']),
+                min_value=-1,
+                step=1,
+                key=f"bid_{plan_name}"
+            )
+            new_analyses = st.number_input(
+                "Max Tender Analyses", 
+                value=int(plan_dict['max_tender_analyses']),
+                min_value=-1,
+                step=1,
+                key=f"analyses_{plan_name}"
+            )
+            new_users = st.number_input(
+                "Max Users", 
+                value=int(plan_dict['max_users']),
+                min_value=-1,
+                step=1,
+                key=f"users_{plan_name}"
+            )
+            new_extension = st.number_input(
+                "Extension Auto-Fills (per month)", 
+                value=int(plan_dict['extension_auto_fills']),
+                min_value=-1,
+                step=1,
+                key=f"extension_{plan_name}"
+            )
         
-        with st.expander(f"📌 {plan_dict['plan_name'].upper()} Plan", expanded=False):
-            col1, col2 = st.columns(2)
+        with col2:
+            st.markdown("**Permissions**")
+            new_export = st.checkbox(
+                "Can Export Data", 
+                value=bool(plan_dict['can_export_data']),
+                key=f"export_{plan_name}"
+            )
+            new_edit_rates = st.checkbox(
+                "Can Edit Rates", 
+                value=bool(plan_dict['can_edit_rates']),
+                key=f"edit_rates_{plan_name}"
+            )
+            new_delete_rates = st.checkbox(
+                "Can Delete Rates", 
+                value=bool(plan_dict['can_delete_rates']),
+                key=f"delete_rates_{plan_name}"
+            )
+            new_create_versions = st.checkbox(
+                "Can Create Versions", 
+                value=bool(plan_dict['can_create_versions']),
+                key=f"create_versions_{plan_name}"
+            )
+            new_manage_team = st.checkbox(
+                "Can Manage Team", 
+                value=bool(plan_dict['can_manage_team']),
+                key=f"manage_team_{plan_name}"
+            )
             
-            with col1:
-                st.markdown("**Pricing**")
-                new_monthly = st.number_input(
-                    "Monthly Price (BDT)", 
-                    value=float(plan_dict['monthly_price']),
-                    min_value=0.0,
-                    step=500.0,
-                    key=f"monthly_{plan_dict['plan_name']}"
-                )
-                new_yearly = st.number_input(
-                    "Yearly Price (BDT)", 
-                    value=float(plan_dict['yearly_price']),
-                    min_value=0.0,
-                    step=1000.0,
-                    key=f"yearly_{plan_dict['plan_name']}"
-                )
-                
-                st.markdown("**Limits**")
-                new_boq = st.number_input(
-                    "Max BOQ Generations", 
-                    value=int(plan_dict['max_boq_generations']),
-                    min_value=-1,
-                    step=1,
-                    key=f"boq_{plan_dict['plan_name']}",
-                    help="-1 = Unlimited"
-                )
-                new_bid = st.number_input(
-                    "Max Bid Optimizations", 
-                    value=int(plan_dict['max_bid_optimizations']),
-                    min_value=-1,
-                    step=1,
-                    key=f"bid_{plan_dict['plan_name']}"
-                )
-                new_analyses = st.number_input(
-                    "Max Tender Analyses", 
-                    value=int(plan_dict['max_tender_analyses']),
-                    min_value=-1,
-                    step=1,
-                    key=f"analyses_{plan_dict['plan_name']}"
-                )
-                new_users = st.number_input(
-                    "Max Users", 
-                    value=int(plan_dict['max_users']),
-                    min_value=-1,
-                    step=1,
-                    key=f"users_{plan_dict['plan_name']}"
-                )
-                new_extension = st.number_input(
-                    "Extension Auto-Fills (per month)", 
-                    value=int(plan_dict['extension_auto_fills']),
-                    min_value=-1,
-                    step=1,
-                    key=f"extension_{plan_dict['plan_name']}"
-                )
-            
-            with col2:
-                st.markdown("**Permissions**")
-                new_export = st.checkbox(
-                    "Can Export Data", 
-                    value=bool(plan_dict['can_export_data']),
-                    key=f"export_{plan_dict['plan_name']}"
-                )
-                new_edit_rates = st.checkbox(
-                    "Can Edit Rates", 
-                    value=bool(plan_dict['can_edit_rates']),
-                    key=f"edit_rates_{plan_dict['plan_name']}"
-                )
-                new_delete_rates = st.checkbox(
-                    "Can Delete Rates", 
-                    value=bool(plan_dict['can_delete_rates']),
-                    key=f"delete_rates_{plan_dict['plan_name']}"
-                )
-                new_create_versions = st.checkbox(
-                    "Can Create Versions", 
-                    value=bool(plan_dict['can_create_versions']),
-                    key=f"create_versions_{plan_dict['plan_name']}"
-                )
-                new_manage_team = st.checkbox(
-                    "Can Manage Team", 
-                    value=bool(plan_dict['can_manage_team']),
-                    key=f"manage_team_{plan_dict['plan_name']}"
-                )
-                
-                st.markdown("**Description**")
-                new_description = st.text_area(
-                    "Plan Description",
-                    value=plan_dict.get('description', ''),
-                    height=100,
-                    key=f"desc_{plan_dict['plan_name']}"
-                )
-            
-            # Save button
-            if st.button(f"💾 Save {plan_dict['plan_name'].upper()} Plan", key=f"save_{plan_dict['plan_name']}", use_container_width=True):
-                conn = db.get_connection()
-                cursor = conn.cursor()
+            st.markdown("**Description**")
+            new_description = st.text_area(
+                "Plan Description",
+                value=plan_dict.get('description', ''),
+                height=100,
+                key=f"desc_{plan_name}"
+            )
+        
+        # Save button
+        if st.button(f"💾 Save {plan_name.upper()} Plan", key=f"save_{plan_name}", use_container_width=True):
+            with db.get_connection() as conn:
+                cursor = db.db_conn.get_cursor(conn)
                 
                 try:
                     cursor.execute("""
@@ -1591,17 +1552,21 @@ def render_subscription_plans_management():
                         1 if new_create_versions else 0,
                         1 if new_manage_team else 0,
                         new_description,
-                        plan_dict['plan_name']
+                        plan_name
                     ))
                     conn.commit()
-                    st.success(f"✅ {plan_dict['plan_name'].upper()} plan updated successfully!")
+                    st.success(f"✅ {plan_name.upper()} plan updated successfully!")
+                    # Clear plan cache
+                    from modules.subscription import get_plans
+                    get_plans(force_refresh=True)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error updating plan: {e}")
-                finally:
-                    conn.close()
+
+
+def _render_add_plan_form():
+    """Render form to add new plan"""
     
-    # Add new plan
     st.markdown("---")
     st.markdown("#### ➕ Add New Plan")
     
@@ -1609,34 +1574,72 @@ def render_subscription_plans_management():
         col1, col2 = st.columns(2)
         
         with col1:
-            new_plan_name = st.text_input("Plan Name", placeholder="e.g., premium")
+            new_plan_name = st.text_input("Plan Name *", placeholder="e.g., premium")
             new_monthly = st.number_input("Monthly Price (BDT)", min_value=0.0, step=500.0)
             new_yearly = st.number_input("Yearly Price (BDT)", min_value=0.0, step=1000.0)
-        
-        with col2:
             new_description = st.text_area("Description", placeholder="Plan features and benefits")
         
+        with col2:
+            st.markdown("**Default Limits**")
+            new_boq = st.number_input("Max BOQ Generations", min_value=-1, value=5)
+            new_bid = st.number_input("Max Bid Optimizations", min_value=-1, value=5)
+            new_analyses = st.number_input("Max Tender Analyses", min_value=-1, value=5)
+            new_users = st.number_input("Max Users", min_value=-1, value=1)
+            
+            st.markdown("**Default Permissions**")
+            new_export = st.checkbox("Can Export Data")
+            new_edit_rates = st.checkbox("Can Edit Rates")
+            new_delete_rates = st.checkbox("Can Delete Rates")
+            new_create_versions = st.checkbox("Can Create Versions")
+            new_manage_team = st.checkbox("Can Manage Team")
+        
         if st.form_submit_button("➕ Create New Plan", type="primary"):
-            if new_plan_name:
-                conn = db.get_connection()
-                cursor = conn.cursor()
-                
-                try:
-                    cursor.execute("""
-                        INSERT INTO subscription_plans (
-                            plan_name, monthly_price, yearly_price, description
-                        ) VALUES (?, ?, ?, ?)
-                    """, (new_plan_name.lower(), new_monthly, new_yearly, new_description))
-                    conn.commit()
-                    st.success(f"✅ Plan '{new_plan_name}' created!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error creating plan: {e}")
-                finally:
-                    conn.close()
-            else:
+            if not new_plan_name:
                 st.error("Plan name is required")
-
+            else:
+                plan_name = new_plan_name.lower().strip()
+                
+                # Check if plan already exists
+                with db.get_connection() as conn:
+                    cursor = db.db_conn.get_cursor(conn)
+                    cursor.execute("SELECT plan_name FROM subscription_plans WHERE plan_name = ?", (plan_name,))
+                    if cursor.fetchone():
+                        st.error(f"Plan '{plan_name}' already exists!")
+                        return
+                
+                # Insert new plan
+                with db.get_connection() as conn:
+                    cursor = db.db_conn.get_cursor(conn)
+                    try:
+                        cursor.execute("""
+                            INSERT INTO subscription_plans (
+                                plan_name, monthly_price, yearly_price, 
+                                max_boq_generations, max_bid_optimizations,
+                                max_tender_analyses, max_users,
+                                extension_auto_fills,
+                                can_export_data, can_edit_rates,
+                                can_delete_rates, can_create_versions,
+                                can_manage_team, description
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            plan_name, new_monthly, new_yearly,
+                            new_boq, new_bid, new_analyses, new_users,
+                            5,  # default extension auto-fills
+                            1 if new_export else 0,
+                            1 if new_edit_rates else 0,
+                            1 if new_delete_rates else 0,
+                            1 if new_create_versions else 0,
+                            1 if new_manage_team else 0,
+                            new_description
+                        ))
+                        conn.commit()
+                        st.success(f"✅ Plan '{plan_name}' created!")
+                        # Clear plan cache
+                        from modules.subscription import get_plans
+                        get_plans(force_refresh=True)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error creating plan: {e}")
 
 def get_system_config(key: str, default_value: str = None) -> str:
     """Get a system configuration value"""

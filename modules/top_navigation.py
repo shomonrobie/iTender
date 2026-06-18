@@ -84,8 +84,10 @@ def render_top_navigation():
             ("📊 Analytics", "admin_analytics"),
             ("📝 Rate Mgmt", "rate_management"),
             ("📥 Import", "import_wizard"),
-            ("👥 Users", "user_management"),
+            #("👥 Users", "user_management"),
+            
             ("📋 Tenders", "tender_management"),
+            ("📊 BOQ", "boq_generator"),
             #("📈 Basic Optimizer", "basic_bid_optimizer"),      # ✅ NEW - Free for all
             ("📈 Basic Optimizer", "boq_bid_optimizer"),      # ✅ NEW - Free for all
             ("🎯 Advanced Optimizer", "new_analysis"),     # Premium
@@ -103,8 +105,10 @@ def render_top_navigation():
             ("🏠 Dashboard", "dashboard"),
             ("📝 Rate Mgmt", "rate_management"),
             ("📥 Import", "import_wizard"),
-            ("👥 Users", "user_management"),
+            #("👥 Users", "user_management"),
+            
             ("📋 Tenders", "tender_management"),
+            ("📊 BOQ", "boq_generator"),
             #("📈 Basic Optimizer", "basic_bid_optimizer"),      # ✅ NEW - Free for all
             ("📈 Basic Optimizer", "boq_bid_optimizer"),      # ✅ NEW - Free for all
             ("🎯 Advanced Optimizer", "new_analysis"),     # Premium            

@@ -15,6 +15,7 @@ from modules.rbac import (
     render_role_badge,
     get_user_role
 )
+from modules.tender_selector import render_tender_selector
 
 
 class BasicBidOptimizer:

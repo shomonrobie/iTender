@@ -102,7 +102,7 @@ from modules.tutorials import render_tutorial
 from modules.boq_generator_ui import render_boq_generator
 from modules.boq_admin_report import render_boq_admin_report
 from modules.boq_bid_bridge import render_boq_bid_integration
-from _pages.company_subscription import show_company_subscription
+from _pages.company_subscription import show as show_company_subscription
 from _pages.company_dashboard import show as show_company_dashboard
 from _pages.dashboard import show as dashboard_page
 #from modules.navigation import render_top_navigation, render_page_header
@@ -166,10 +166,13 @@ from database.unified_db_manager import UnifiedDatabaseManager
 from modules.auth import login_user, logout_user, is_admin, is_company_admin, authenticate_user, has_permission, get_current_user
 from modules.subscription import render_subscription_page, render_checkout
 from modules.user_management import render_user_management
+from modules.subscription_plans import ensure_default_plans
 
 # Initialize database
 db = UnifiedDatabaseManager()
 init_rbac()
+ensure_default_plans()
+
 # ========== START FLASK API FOR EXTENSION ==========
 try:
     from api.flask_api import start_flask_api
@@ -317,31 +320,31 @@ except Exception as e:
 
 # run_unified_migrations(db)
 
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
+# if 'logged_in' not in st.session_state:
+#     st.session_state.logged_in = False
 
-print("=" * 60)
-print(f"MAIN.PY STARTING - logged_in={st.session_state.logged_in}")
-print(f"URL params at start: {dict(st.query_params)}")
+# print("=" * 60)
+# print(f"MAIN.PY STARTING - logged_in={st.session_state.logged_in}")
+# print(f"URL params at start: {dict(st.query_params)}")
 
-# Try to restore session from URL
-if not st.session_state.logged_in:
-    print("Attempting to restore from URL...")
-    try:
-        from modules.auth import restore_session_from_url
-        restored = restore_session_from_url()
-        print(f"Restore result: {restored}")
-        if restored:
-            print("Session restored! User is now logged in.")
-            # Don't rerun here to avoid loop
-    except Exception as e:
-        print(f"Restore exception: {e}")
-        import traceback
-        traceback.print_exc()
-else:
-    print("Already logged in, skipping restore")
+# # Try to restore session from URL
+# if not st.session_state.logged_in:
+#     print("Attempting to restore from URL...")
+#     try:
+#         #from modules.auth import restore_session_from_url
+#         restored = restore_session_from_url()
+#         print(f"Restore result: {restored}")
+#         if restored:
+#             print("Session restored! User is now logged in.")
+#             # Don't rerun here to avoid loop
+#     except Exception as e:
+#         print(f"Restore exception: {e}")
+#         import traceback
+#         traceback.print_exc()
+# else:
+#     print("Already logged in, skipping restore")
 
-print("=" * 60)
+# print("=" * 60)
 
 st.markdown(get_compact_css(), unsafe_allow_html=True)
     
@@ -784,6 +787,239 @@ def _nav_button(label: str, page_key: str, badge: str = None):
             st.rerun()
 
 def render_sidebar() -> None:
+    """Optimized sidebar with role-based navigation - using access control"""
+    if not st.session_state.get('logged_in'):
+        return
+    
+    debug_print("🧭 Rendering sidebar")
+    
+    with st.sidebar:
+        # Clear extracted data if leaving tender management page
+        if st.session_state.page != 'tender_management' and 'extracted_data' in st.session_state:
+            st.session_state.extracted_data = None
+            st.session_state.skip_review = False
+        
+        from version import get_app_name, get_app_desc
+        from modules.subscription import get_current_user_plan_name, is_premium_plan, get_plan
+        from modules.access_control import access_control
+        from modules.rbac import get_current_user_role
+
+        # ========== BRANDING ==========
+        st.markdown(f"""
+        <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #eee;">
+            <h2 style="margin: 0; color: #1e3c72;">🏗️ {get_app_name()}</h2>
+            <small style="color: #666;">{get_app_desc()}</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # ========== USER INFO & BADGE ==========
+        user_role = get_current_user_role()
+        plan_name = get_current_user_plan_name()
+        is_premium = is_premium_plan(plan_name)
+        plan_config = get_plan(plan_name)
+        
+        full_name = st.session_state.get('full_name', 'User')
+        company_name = st.session_state.get('company_name', 'N/A')
+        
+        role_display = {
+            'system_admin': '👑 System Admin',
+            'admin': '👑 Admin',
+            'company_admin': '🏢 Company Admin',
+            'manager': '📊 Manager',
+            'analyst': '📈 Analyst',
+            'viewer': '👁️ Viewer'
+        }.get(user_role, '👤 User')
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+                    padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
+            <strong>👋 {full_name}</strong><br>
+            <small>🏢 {company_name}<br>
+            ⭐ {role_display}</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Premium badge
+        badge_color = plan_config.get('color', '#6c757d') if is_premium else "#6b7280"
+        badge_text = f"{plan_config.get('badge', '✨')} PREMIUM" if is_premium else "🔓 FREE"
+        
+        st.markdown(f"""
+        <div style="text-align: center; background: {badge_color}20; 
+                    padding: 0.4rem; border-radius: 6px; margin: 0.5rem 0; 
+                    border: 1px solid {badge_color};">
+            <strong style="color: {badge_color};">{badge_text}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # ========== LOGOUT BUTTON (TOP) ==========
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 👤 Account")
+        with col2:
+            if st.button("🚪", key="nav_logout_icon", help="Sign Out", use_container_width=True):
+                logout_user()
+                for key in list(st.session_state.keys()):
+                    if key not in ['debug_mode', 'page']:
+                        del st.session_state[key]
+                initialize_session_state()
+                st.toast("👋 You have been signed out", icon="✅")
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # ========== SIDEBAR MENU ==========
+        _render_sidebar_menu()
+        
+        # ========== USAGE STATS ==========
+        from modules.subscription_manager import SubscriptionManager
+        sub_manager = SubscriptionManager(db)
+        sub_manager.render_usage_stats()
+        
+        # ========== FULL LOGOUT BUTTON (BOTTOM) ==========
+        if st.button("🚪 Sign Out", key="nav_logout", use_container_width=True, type="secondary"):
+            logout_user()
+            for key in list(st.session_state.keys()):
+                if key not in ['debug_mode', 'page']:
+                    del st.session_state[key]
+            initialize_session_state()
+            st.toast("👋 You have been signed out", icon="✅")
+            st.rerun()
+        
+        # ========== VERSION INFO ==========
+        from version import __version__, __version_date__
+        st.markdown("---")
+        st.caption(f"📌 Version {__version__} | {__version_date__}")
+        st.caption("💡 Need help? [Contact Support](mailto:support@tenderai.com)")
+        
+        if DEBUG_MODE:
+            st.markdown("---")
+            st.caption("🐛 Debug Mode Active")
+
+
+def _render_sidebar_menu():
+    """Render sidebar menu with access control"""
+    
+    from modules.access_control import access_control
+    from modules.subscription import is_premium_plan, get_current_user_plan_name
+    from modules.rbac import get_current_user_role
+    
+    user_role = get_current_user_role()
+    is_premium = is_premium_plan(get_current_user_plan_name())
+    
+    # Define menu structure with permissions
+    menu_sections = [
+        {
+            "title": "🚀 Core Workflow",
+            "items": [
+                {"label": "📋 Tender Management", "page": "tender_management", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "📄 BOQ Generator", "page": "boq_generator", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"]},
+            ]
+        },
+        {
+            "title": "📊 Analysis & Intelligence",
+            "items": [
+                {"label": "📈 Dashboard", "page": "dashboard", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "📈 Basic Bid Optimizer", "page": "basic_bid_optimizer", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"], "badge": "🆓"},
+                {"label": "🎯 Advanced Bid Optimizer", "page": "new_analysis", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"], "badge": "⭐", "premium": True},
+                {"label": "🔮 Competitive Simulator", "page": "competitive_bid_simulator", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"], "badge": "⭐", "premium": True},
+                {"label": "📜 History", "page": "history", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "📋 Post-Evaluation", "page": "post_evaluation", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "🧠 AI Suggestions", "page": "intelligent_suggestions", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "👥 Competitor Tracking", "page": "competitor_tracking", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "🗂️ Competitor Master", "page": "competitor_master", "roles": ["analyst", "manager", "company_admin", "admin", "system_admin"]},
+            ]
+        },
+        {
+            "title": "🏢 Company Management",
+            "roles": ["company_admin", "admin", "system_admin"],
+            "items": [
+                {"label": "🏢 Company Dashboard", "page": "company_dashboard", "roles": ["company_admin", "admin", "system_admin"]},
+                {"label": "📊 Analytics Dashboard", "page": "company_analytics", "roles": ["company_admin", "admin", "system_admin"]},
+                {"label": "👥 Team Management", "page": "user_management", "roles": ["company_admin", "admin", "system_admin"]},
+                {"label": "🏗️ e-GP BOQ Workspace", "page": "egp_boq_workspace", "roles": ["company_admin", "admin", "system_admin"]},
+            ]
+        },
+        {
+            "title": "🏗️ Rate Management",
+            "roles": ["admin", "system_admin", "company_admin", "manager", "analyst", "data_entry"],
+            "items": [
+                {"label": "📝 Rate Management", "page": "rate_management", "roles": ["admin", "system_admin", "company_admin", "manager", "data_entry"]},
+                {"label": "📊 Rate Viewer", "page": "rate_viewer", "roles": ["admin", "system_admin", "company_admin", "manager", "analyst", "data_entry"]},
+                {"label": "📥 Import Wizard", "page": "import_wizard", "roles": ["admin", "system_admin", "company_admin", "manager", "data_entry"]},
+            ]
+        },
+        {
+            "title": "👑 Administration",
+            "roles": ["admin", "system_admin"],
+            "items": [
+                {"label": "📊 Admin Dashboard", "page": "admin_dashboard", "roles": ["admin", "system_admin"]},
+                {"label": "📊 Analytics Dashboard", "page": "admin_analytics", "roles": ["admin", "system_admin"]},
+                {"label": "👥 User Approvals", "page": "user_approval", "roles": ["admin", "system_admin"]},
+                {"label": "🔐 Role Permissions", "page": "role_management", "roles": ["admin", "system_admin"]},
+                {"label": "🏢 All Companies", "page": "company_management", "roles": ["admin", "system_admin"]},
+                {"label": "📦 Version Management", "page": "version_management", "roles": ["admin", "system_admin"]},
+                {"label": "🔄 Rollback Management", "page": "rollback_management", "roles": ["admin", "system_admin"]},
+            ]
+        },
+        {
+            "title": "⚙️ System Tools",
+            "items": [
+                {"label": "🤖 Extension Admin", "page": "extension_admin", "roles": ["admin", "system_admin"]},
+                {"label": "🤖 Extension Usage", "page": "extension_usage", "roles": ["company_admin", "admin", "system_admin"]},
+                {"label": "📥 Download Extension", "page": "extension_download", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "💳 Subscription", "page": "subscription", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+                {"label": "👤 Profile", "page": "profile", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+            ]
+        },
+        {
+            "title": "📚 Help & Support",
+            "items": [
+                {"label": "📖 Tutorial", "page": "tutorial", "roles": ["viewer", "analyst", "manager", "company_admin", "admin", "system_admin"]},
+            ]
+        }
+    ]
+    
+    # Render each section
+    for section in menu_sections:
+        # Check if user has access to any item in this section
+        section_items = []
+        for item in section.get("items", []):
+            # Check role access
+            if user_role not in item.get("roles", []):
+                continue
+            
+            # Check premium requirement
+            if item.get("premium", False) and not is_premium and user_role not in ['admin', 'system_admin']:
+                # Show locked version
+                section_items.append({
+                    "label": f"🔒 {item['label']}",
+                    "page": None,
+                    "disabled": True,
+                    "help": "Premium feature - Upgrade to access"
+                })
+            else:
+                section_items.append(item)
+        
+        if section_items:
+            # Show section title
+            st.markdown(f"### {section['title']}")
+            
+            # Show items
+            for item in section_items:
+                if item.get("disabled", False):
+                    st.button(
+                        item['label'],
+                        disabled=True,
+                        use_container_width=True,
+                        help=item.get("help", "Feature not available"),
+                        key=f"nav_{item['label'].replace(' ', '_')}"
+                    )
+                else:
+                    _nav_button(item['label'], item['page'], item.get('badge'))
+
+def render_sidebar_2() -> None:
     """Optimized sidebar with role-based navigation - ONLY for logged-in users"""
     if not st.session_state.get('logged_in'):
         return
@@ -1229,7 +1465,6 @@ def render_header_nav() -> None:
                     if st.button(label, key=f"nav_{page_key}", use_container_width=True, type=button_type):
                         st.session_state.page = page_key
                         st.rerun()
-
 def main() -> None:
     """
     Main application entry point with optimized routing.
@@ -1244,44 +1479,66 @@ def main() -> None:
     apply_theme()
 
     # =========================================================================
-    # RESTORE SESSION FROM URL PARAMETER (Google OAuth)
+    # FIRST: Check if user is already logged in - redirect immediately
     # =========================================================================
-    query_params = st.query_params
-    
-    # Check for user data in URL (from Google callback)
-    if 'user' in query_params:
-        try:
-            user_data_b64 = query_params['user']
-            user_data_json = base64.urlsafe_b64decode(user_data_b64).decode()
-            user_data = json.loads(user_data_json)
-            
-            # Restore session state
-            for key, value in user_data.items():
-                st.session_state[key] = value
-            
-            # Clear the parameter to avoid re-processing
+    if st.session_state.get('logged_in', False):
+        # Ensure page is set correctly
+        user_role = st.session_state.get('user_role', 'viewer')
+        current_page = st.session_state.get('page', 'dashboard')
+        
+        # If on login or oauth2callback page, redirect to proper dashboard
+        if current_page in ['login', 'oauth2callback']:
+            # Clear any lingering params
             st.query_params.clear()
-            # Force rerun to show dashboard
+            
+            if user_role in ['admin', 'system_admin']:
+                st.session_state.page = "admin_dashboard"
+            elif user_role == 'company_admin':
+                st.session_state.page = "company_dashboard"
+            else:
+                st.session_state.page = "dashboard"
             st.rerun()
             return
-        except Exception as e:
-            debug_print(f"Error restoring session: {e}")
     
     # =========================================================================
     # HANDLE GOOGLE OAUTH CALLBACK
     # =========================================================================
-    from modules.google_auth import handle_google_callback
+    query_params = st.query_params
     
-    # Check if this is an OAuth callback
-    if 'code' in query_params:
-        # Handle the callback - this will process the code and redirect
-        handle_google_callback()
-        # After handling, clear params and rerun to avoid reprocessing
+    if 'code' in query_params and not st.session_state.get('logged_in', False):
+        from modules.google_auth import handle_google_callback
+        
+        # ✅ Process the callback
+        user_data = handle_google_callback()
+        
+        # If login was successful, redirect to dashboard
+        if user_data and user_data.get('logged_in'):
+            user_role = st.session_state.get('user_role', 'viewer')
+            if user_role in ['admin', 'system_admin']:
+                st.session_state.page = "admin_dashboard"
+            elif user_role == 'company_admin':
+                st.session_state.page = "company_dashboard"
+            else:
+                st.session_state.page = "dashboard"
+            
+            st.query_params.clear()
+            st.rerun()
+            return
+        
+        # If registration needed, redirect to register
+        if user_data and user_data.get('show_registration'):
+            st.session_state.page = "register"
+            st.query_params.clear()
+            st.rerun()
+            return
+        
+        # If we get here, something went wrong
         st.query_params.clear()
         st.rerun()
         return
 
     debug_print(f"🚀 App render | Page: {st.session_state.page} | Auth: {st.session_state.logged_in}")
+    
     
     # Hide Streamlit's default chrome elements
     st.markdown("""
@@ -1450,14 +1707,32 @@ def debug_competitor_bids_state(location: str):
         debug_print(f"  Sample: {comp_bids[0] if comp_bids else 'None'}")
 
 def upgrade_admin_once():
+    """Upgrade admin to professional plan if on free plan"""
     if st.session_state.get('_admin_upgraded', False):
         return
-    if st.session_state.get('logged_in') and st.session_state.get('user_role') == 'admin':
-        sub = db.get_user_subscription(st.session_state.user_id)
-        if sub.get('plan') == 'free':
-            db.update_subscription(st.session_state.user_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
-            st.session_state.subscription_plan = 'professional'
-            st.session_state._admin_upgraded = True
+    
+    if st.session_state.get('logged_in') and st.session_state.get('user_role') in ['admin', 'system_admin']:
+        user_id = st.session_state.user_id
+        company_id = st.session_state.get('company_id')
+        
+        # ✅ Check user subscription
+        sub = db.get_user_subscription(user_id)
+        
+        if sub.get('subscription_tier') == 'free':
+            print(f"🔧 Upgrading admin {user_id} to professional...")
+            
+            # ✅ Try user subscription first
+            success = db.update_user_subscription(user_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
+            
+            # ✅ If no user subscription, try company subscription
+            if not success and company_id:
+                success = db.update_company_subscription(company_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
+            
+            if success:
+                st.session_state.subscription_plan = 'professional'
+                st.session_state._admin_upgraded = True
+                print(f"✅ Admin {user_id} upgraded to professional")
+
 
 # =============================================================================
 # 🎬 APP LAUNCH (Final safety)

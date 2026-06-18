@@ -1,65 +1,98 @@
-"""
-Google OAuth Authentication Module
-Simple Google Sign-In for TenderAI
-"""
+# modules/google_auth.py - Updated with debug logging
 
 import streamlit as st
 import requests
 import json
-from datetime import datetime
-import hashlib
-import secrets
 import os
-from config import debug_print
+import secrets
+import urllib.parse
+from datetime import datetime
+from database.unified_db_manager import UnifiedDatabaseManager
 
+db = UnifiedDatabaseManager()
+
+# =============================================================================
+# CREDENTIALS - Lazy Loading
+# =============================================================================
+
+_google_client_id = None
+_google_client_secret = None
 
 def get_google_credentials():
-    """Get Google OAuth credentials from secrets"""
+    """Get Google OAuth credentials from secrets - tries multiple formats"""
+    global _google_client_id, _google_client_secret
+    
+    if _google_client_id:
+        return _google_client_id, _google_client_secret
+    
+    client_id = ""
+    client_secret = ""
+    
     try:
-        # Try to get from st.secrets (Streamlit Cloud)
         client_id = st.secrets["GOOGLE_CLIENT_ID"]
         client_secret = st.secrets["GOOGLE_CLIENT_SECRET"]
+        print("✅ Found credentials in flat structure")
     except:
-        # Fallback to environment variables (local development)
+        pass
+    
+    if not client_id:
+        try:
+            client_id = st.secrets["google"]["client_id"]
+            client_secret = st.secrets["google"]["client_secret"]
+            print("✅ Found credentials under [google]")
+        except:
+            pass
+    
+    if not client_id:
+        try:
+            client_id = st.secrets["auth"]["google_client_id"]
+            client_secret = st.secrets["auth"]["google_client_secret"]
+            print("✅ Found credentials under [auth]")
+        except:
+            pass
+    
+    if not client_id:
         client_id = os.getenv("GOOGLE_CLIENT_ID", "")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+        if client_id:
+            print("✅ Found credentials in environment variables")
+    
+    if client_id:
+        _google_client_id = client_id
+        _google_client_secret = client_secret
+        print(f"✅ Google Client ID: {client_id[:20]}...")
+    else:
+        print("❌ No Google credentials found!")
     
     return client_id, client_secret
 
-# Get credentials
-GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET = get_google_credentials()
 
 def get_redirect_uri():
     """Get the correct redirect URI dynamically"""
-    # Priority 1: From secrets (recommended)
     try:
         if "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]:
             return st.secrets["auth"]["redirect_uri"]
     except:
         pass
     
-    # Priority 2: Streamlit Cloud detection
     if os.getenv("STREAMLIT_SHARE") or "streamlit.app" in os.getenv("STREAMLIT_SERVER_HEADLESS", ""):
         return "https://itender-bd.streamlit.app/oauth2callback"
     
-    # Priority 3: Local
     return "http://localhost:8501/oauth2callback"
 
-def get_redirect_uri_bak():
-    """Get the correct redirect URI for the current environment"""
-    # Check if running on Streamlit Cloud
-    if 'STREAMLIT_SERVER_PORT' in os.environ:
-        return "https://itender-bd.streamlit.app/oauth2callback"
-    else:
-        return "http://localhost:8501/oauth2callback"
 
 def get_google_auth_url():
     """Generate Google OAuth URL"""
-    import urllib.parse
+    client_id, _ = get_google_credentials()
+    
+    if not client_id:
+        return None
+    
+    redirect_uri = get_redirect_uri()
     
     params = {
-        'client_id': GOOGLE_CLIENT_ID,
-        'redirect_uri': get_redirect_uri(),
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
@@ -67,163 +100,152 @@ def get_google_auth_url():
     }
     
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    print(f"🔗 Auth URL: {auth_url[:100]}...")
     return auth_url
+
 
 def exchange_code_for_token(code):
     """Exchange authorization code for access token"""
-    import urllib.parse
+    client_id, client_secret = get_google_credentials()
+    
+    print(f"🔑 Exchanging code for token...")
+    print(f"   Client ID: {client_id[:20] if client_id else 'MISSING'}...")
+    print(f"   Client Secret: {'FOUND' if client_secret else 'MISSING'}")
+    
+    if not client_id or not client_secret:
+        st.error("❌ Google OAuth not configured")
+        return None
+    
+    redirect_uri = get_redirect_uri()
+    print(f"   Redirect URI: {redirect_uri}")
     
     data = {
-        'client_id': GOOGLE_CLIENT_ID,
-        'client_secret': GOOGLE_CLIENT_SECRET,
+        'client_id': client_id,
+        'client_secret': client_secret,
         'code': code,
-        'redirect_uri': get_redirect_uri(),
+        'redirect_uri': redirect_uri,
         'grant_type': 'authorization_code'
     }
     
-    response = requests.post('https://oauth2.googleapis.com/token', data=data)
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        st.error(f"Failed to get token: {response.text}")
+    try:
+        print("📤 Sending token request...")
+        response = requests.post('https://oauth2.googleapis.com/token', data=data, timeout=10)
+        
+        print(f"📥 Token response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            print("✅ Token received successfully")
+            return token_data
+        else:
+            print(f"❌ Token error: {response.text}")
+            st.error(f"Failed to get token: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Token exchange error: {str(e)}")
+        st.error(f"Error exchanging code: {str(e)}")
         return None
+
 
 def get_user_info(access_token):
     """Get user information from Google"""
     headers = {'Authorization': f'Bearer {access_token}'}
-    response = requests.get('https://www.googleapis.com/oauth2/v2/userinfo', headers=headers)
     
-    if response.status_code == 200:
-        return response.json()
-    else:
-        st.error(f"Failed to get user info: {response.text}")
+    print("👤 Getting user info...")
+    
+    try:
+        response = requests.get('https://www.googleapis.com/oauth2/v2/userinfo', headers=headers, timeout=10)
+        
+        print(f"📥 User info response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            user_info = response.json()
+            print(f"✅ User info received: {user_info.get('email')}")
+            return user_info
+        else:
+            print(f"❌ User info error: {response.text}")
+            st.error(f"Failed to get user info: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ User info error: {str(e)}")
+        st.error(f"Error getting user info: {str(e)}")
         return None
 
-def generate_username_from_email(email):
-    """Generate username from email"""
-    username = email.split('@')[0]
-    # Clean username (remove special characters)
-    username = ''.join(c for c in username if c.isalnum() or c == '_')
-    # Add random suffix if needed
-    return username + secrets.token_hex(2)[:4]
+# modules/google_auth.py - In handle_google_callback
 
 def handle_google_callback():
     """Handle Google OAuth callback from URL parameters"""
     
-    # Get code from query parameters
     params = st.query_params
     
     if 'code' not in params:
-        return None  # Not a callback
+        return None
     
+    # ✅ Save the code and immediately clear it from URL
     code = params['code']
+    print(f"🔑 Code received: {code[:10]}...")
+    
+    # ✅ CRITICAL: Clear the code from URL immediately
+    # This prevents re-processing on page refresh
+    st.query_params.clear()
     
     with st.spinner("Authenticating with Google..."):
         token_data = exchange_code_for_token(code)
         
-        if token_data and 'access_token' in token_data:
-            user_info = get_user_info(token_data['access_token'])
+        if not token_data or 'access_token' not in token_data:
+            st.error("❌ Failed to authenticate with Google")
+            return None
+        
+        user_info = get_user_info(token_data['access_token'])
+        
+        if not user_info:
+            st.error("❌ Failed to get user information")
+            return None
+        
+        email = user_info.get('email')
+        name = user_info.get('name', email.split('@')[0])
+        
+        # Check if user exists
+        existing_user = db.get_user_by_email(email)
+        
+        if existing_user:
+            from modules.auth import login_user
+            login_user(existing_user, None, remember_me=True)
+            st.success(f"Welcome back, {existing_user.get('full_name', name)}! 🎉")
             
-            if user_info:
-                email = user_info.get('email')
-                name = user_info.get('name', email.split('@')[0])
-                
-                from database.unified_db_manager import UnifiedDatabaseManager
-                import bcrypt
-                import secrets
-                
-                db = UnifiedDatabaseManager()
-                
-                # Check if user exists
-                existing_user = db.get_user_by_email(email)
-                
-                if existing_user:
-                    # Return user data for session restoration
-                    return {
-                        'logged_in': True,
-                        'user_id': existing_user['id'],
-                        'username': existing_user['username'],
-                        'user_email': email,
-                        'full_name': existing_user['full_name'] or name,
-                        'user_role': existing_user.get('role', 'individual'),
-                        'account_type': existing_user.get('account_type', 'individual'),
-                        'company_id': existing_user['company_id'],
-                        'page': 'dashboard'
-                    }
-                else:
-                    # Create new individual account
-                    try:
-                        # Create individual company
-                        company_data = {
-                            'company_name': f"{name} - Individual Consultant",
-                            'email': email,
-                            'phone': '',
-                            'division': 'Consultant',
-                            'is_individual': True
-                        }
-                        
-                        success, company_id = db.create_company(company_data)
-                        
-                        if success and company_id:
-                            # Generate random password
-                            temp_password = secrets.token_urlsafe(12)
-                            hashed_password = bcrypt.hashpw(temp_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                            
-                            # Generate unique username
-                            username = email.split('@')[0]
-                            base_username = username
-                            counter = 1
-                            while db.get_user_by_username(username):
-                                username = f"{base_username}{counter}"
-                                counter += 1
-                            
-                            # Create user
-                            user_data = {
-                                'username': username,
-                                'password': hashed_password,
-                                'email': email,
-                                'full_name': name,
-                                'phone': '',
-                                'role': 'individual',
-                                'account_type': 'individual',
-                                'specialization': 'Consultant',
-                                'years_experience': 0,
-                                'is_approved': True,
-                                'auth_provider': 'google'
-                            }
-                            
-                            user_success, user_id = db.create_user(company_id, user_data, 'individual')
-                            
-                            if user_success:
-                                return {
-                                    'logged_in': True,
-                                    'user_id': user_id,
-                                    'username': username,
-                                    'user_email': email,
-                                    'full_name': name,
-                                    'user_role': 'individual',
-                                    'account_type': 'individual',
-                                    'company_id': company_id,
-                                    'company_name': company_data['company_name'],
-                                    'page': 'dashboard'
-                                }
-                            else:
-                                st.error(f"Failed to create user: {user_id}")
-                        else:
-                            st.error(f"Failed to create company: {success}")
-                            
-                    except Exception as e:
-                        st.error(f"Error creating account: {str(e)}")
-                
-                # Clear query params
-                st.query_params.clear()
+            # ✅ Save session to URL (with remember_me)
+            from modules.auth import save_session_to_url
+            save_session_to_url(True)
+            
+            return {'logged_in': True, 'user_id': existing_user['id']}
+        else:
+            st.session_state.pending_google_signup = {
+                'email': email,
+                'name': name,
+                'google_id': user_info.get('id')
+            }
+            st.session_state.show_google_registration = True
+            return {'show_registration': True}
     
     return None
 
 
+
+
 def render_google_login_button():
     """Render Google Sign-In button"""
+    
+    client_id, _ = get_google_credentials()
+    
+    if not client_id:
+        st.warning("⚠️ Google Sign-In is not configured. Please contact administrator.")
+        return
+    
+    auth_url = get_google_auth_url()
+    
+    if not auth_url:
+        st.error("❌ Failed to generate login URL")
+        return
     
     st.markdown("""
     <style>
@@ -231,32 +253,33 @@ def render_google_login_button():
         background-color: #ffffff;
         color: #757575;
         border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 10px 16px;
-        font-size: 14px;
+        border-radius: 8px;
+        padding: 12px 20px;
+        font-size: 15px;
         font-weight: 500;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 12px;
-        transition: background-color 0.2s, box-shadow 0.2s;
+        transition: all 0.2s ease;
         width: 100%;
+        text-decoration: none;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .google-btn:hover {
         background-color: #f5f5f5;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+        text-decoration: none;
     }
     .google-icon {
-        width: 18px;
-        height: 18px;
+        width: 20px;
+        height: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    auth_url = get_google_auth_url()
-    
-    # HTML button that redirects to Google
     st.markdown(f"""
     <a href="{auth_url}" target="_self" style="text-decoration: none;">
         <div class="google-btn">
@@ -271,11 +294,9 @@ def render_google_login_button():
     </a>
     """, unsafe_allow_html=True)
 
+
 def render_google_registration_form():
     """Render registration completion form for Google users"""
-    
-    st.markdown("### Complete Your Registration")
-    st.info("Welcome! Please complete your account setup.")
     
     user_info = st.session_state.get('pending_google_signup', {})
     
@@ -284,20 +305,21 @@ def render_google_registration_form():
         st.session_state.show_google_registration = False
         return
     
+    st.markdown("### Complete Your Registration")
+    st.info(f"Welcome {user_info.get('name', '')}! Please complete your registration.")
+    
     with st.form("google_registration_form"):
         st.text_input("Email", value=user_info.get('email', ''), disabled=True)
-        full_name = st.text_input("Full Name", value=user_info.get('name', ''), key="google_full_name")
-        username = st.text_input("Username", value=user_info.get('email', '').split('@')[0], key="google_username")
-        phone = st.text_input("Phone (Optional)", key="google_phone")
+        full_name = st.text_input("Full Name", value=user_info.get('name', ''))
+        username = st.text_input("Username", value=user_info.get('email', '').split('@')[0])
+        phone = st.text_input("Phone (Optional)")
         specialization = st.selectbox(
             "Specialization",
             ["Construction Consultant", "Bid Analyst", "Quantity Surveyor", 
-             "Project Manager", "Civil Engineer", "Architect", "Other"],
-            key="google_specialization"
+             "Project Manager", "Civil Engineer", "Architect", "Other"]
         )
-        years_experience = st.slider("Years of Experience", 0, 40, 5, key="google_years")
-        
-        terms = st.checkbox("I agree to the Terms of Service and Privacy Policy *", key="google_terms")
+        years_experience = st.slider("Years of Experience", 0, 40, 5)
+        terms = st.checkbox("I agree to the Terms of Service and Privacy Policy *")
         
         submitted = st.form_submit_button("Complete Registration", type="primary")
         
@@ -307,12 +329,8 @@ def render_google_registration_form():
             elif not terms:
                 st.error("Please accept the terms to continue")
             else:
-                from database.unified_db_manager import UnifiedDatabaseManager
                 import bcrypt
                 
-                db = UnifiedDatabaseManager()
-                
-                # Create individual company
                 company_data = {
                     'company_name': f"{full_name} - Individual Consultant",
                     'email': user_info['email'],
@@ -321,16 +339,12 @@ def render_google_registration_form():
                     'is_individual': True
                 }
                 
-                success, result = db.create_company(company_data)
+                success, company_id = db.create_company(company_data)
                 
-                if success:
-                    company_id = result
-                    
-                    # Generate random password for Google user
+                if success and company_id:
                     temp_password = secrets.token_urlsafe(12)
                     hashed_password = bcrypt.hashpw(temp_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                     
-                    # Create user
                     user_data = {
                         'username': username,
                         'password': hashed_password,
@@ -351,14 +365,10 @@ def render_google_registration_form():
                     if user_success:
                         st.balloons()
                         st.success("Registration successful! You can now login with Google.")
-                        
                         st.session_state.show_google_registration = False
                         st.session_state.pending_google_signup = None
-                        
-                        if st.button("Go to Login", use_container_width=True):
-                            st.session_state.page = "individual_login"
-                            st.rerun()
+                        st.rerun()
                     else:
                         st.error(f"Failed to create user: {user_result}")
                 else:
-                    st.error(f"Failed to create account: {success}")
+                    st.error(f"Failed to create account")

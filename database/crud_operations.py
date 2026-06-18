@@ -403,19 +403,16 @@ class DatabaseCRUD:
             
             return cursor.rowcount > 0
     
-    # database/crud_operations.py - Add this method
-
-    
-    # database/crud_operations.py - Fixed get_all_users
-
     def get_all_users(self, company_id=None, role=None):
         """Get all users as dictionaries"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             
             query = '''
-            SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-                u.created_at, u.last_login, c.company_name, u.is_approved
+            SELECT u.id, u.username, u.email, u.full_name, u.phone,
+                u.mobile_number, u.mobile_verified,  -- ✅ ADD THESE
+                u.role, u.is_active, u.created_at, u.last_login, 
+                c.company_name, u.is_approved
             FROM users u
             JOIN companies c ON u.company_id = c.id
             WHERE 1=1
@@ -434,16 +431,17 @@ class DatabaseCRUD:
             cursor.execute(query, params)
             rows = cursor.fetchall()
             
-            # Convert to list of dictionaries using dict keys
+            # Convert to list of dictionaries
             users = []
             for row in rows:
-                # row is now a dict-like object
                 users.append({
                     'id': row.get('id'),
                     'username': row.get('username'),
                     'email': row.get('email'),
                     'full_name': row.get('full_name'),
                     'phone': row.get('phone', ''),
+                    'mobile_number': row.get('mobile_number', ''),  # ✅ ADDED
+                    'mobile_verified': row.get('mobile_verified', 0),  # ✅ ADDED
                     'role': row.get('role', 'viewer'),
                     'is_active': row.get('is_active', 1),
                     'created_at': row.get('created_at'),
@@ -462,8 +460,10 @@ class DatabaseCRUD:
             if company_id == -1:
                 # Special case: get system users only (company_id IS NULL)
                 query = """
-                    SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-                        u.created_at, u.last_login, NULL as company_name, u.is_approved
+                    SELECT u.id, u.username, u.email, u.full_name, u.phone, 
+                        u.mobile_number, u.mobile_verified,
+                        u.role, u.is_active, u.created_at, u.last_login, 
+                        NULL as company_name, u.is_approved
                     FROM users u
                     WHERE u.company_id IS NULL
                 """
@@ -471,8 +471,10 @@ class DatabaseCRUD:
             elif company_id and company_id > 0:
                 # Get users for a specific company
                 query = """
-                    SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-                        u.created_at, u.last_login, c.company_name, u.is_approved
+                    SELECT u.id, u.username, u.email, u.full_name, u.phone,
+                        u.mobile_number, u.mobile_verified,
+                        u.role, u.is_active, u.created_at, u.last_login, 
+                        c.company_name, u.is_approved
                     FROM users u
                     LEFT JOIN companies c ON u.company_id = c.id
                     WHERE u.company_id = ?
@@ -481,8 +483,10 @@ class DatabaseCRUD:
             else:
                 # Get all users (including system users) - for system admin
                 query = """
-                    SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, 
-                        u.created_at, u.last_login, c.company_name, u.is_approved
+                    SELECT u.id, u.username, u.email, u.full_name, u.phone,
+                        u.mobile_number, u.mobile_verified,
+                        u.role, u.is_active, u.created_at, u.last_login, 
+                        c.company_name, u.is_approved
                     FROM users u
                     LEFT JOIN companies c ON u.company_id = c.id
                     WHERE 1=1
@@ -506,7 +510,7 @@ class DatabaseCRUD:
             
             # Create count query
             count_query = query.replace(
-                "SELECT u.id, u.username, u.email, u.full_name, u.phone, u.role, u.is_active, u.created_at, u.last_login, c.company_name, u.is_approved",
+                "SELECT u.id, u.username, u.email, u.full_name, u.phone, u.mobile_number, u.mobile_verified, u.role, u.is_active, u.created_at, u.last_login, c.company_name, u.is_approved",
                 "SELECT COUNT(*)"
             )
             
@@ -514,8 +518,7 @@ class DatabaseCRUD:
             try:
                 cursor.execute(count_query, params)
                 count_result = cursor.fetchone()
-                # FIX: Use dict key access instead of index
-                total = count_result.get('COUNT(*)', 0) if count_result else 0
+                total = count_result[0] if count_result else 0
             except Exception as e:
                 print(f"Count query error: {e}")
                 total = 0
@@ -541,6 +544,8 @@ class DatabaseCRUD:
                     'email': row.get('email'),
                     'full_name': row.get('full_name'),
                     'phone': row.get('phone', ''),
+                    'mobile_number': row.get('mobile_number', ''),  # ✅ ADDED
+                    'mobile_verified': row.get('mobile_verified', 0),  # ✅ ADDED
                     'role': row.get('role', 'viewer'),
                     'is_active': row.get('is_active', 1),
                     'created_at': row.get('created_at'),
@@ -550,6 +555,8 @@ class DatabaseCRUD:
                 })
             
             return users, total
+
+
     # ==================== SYSTEM CONFIG METHODS ====================
     
     def get_config(self, key: str, default: Any = None) -> Any:
@@ -696,83 +703,456 @@ class DatabaseCRUD:
 
     # ==================== SUBSCRIPTION METHODS ====================
     
-    # Fix subscription methods to use subscriptions table instead of users table
     def get_user_subscription(self, user_id: int) -> Dict:
-        """Get user's subscription details from subscriptions table"""
+        """Get user's subscription details"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
+            
+            # ✅ Try user's own subscription first
             cursor.execute("""
-                SELECT plan as subscription_tier, status, start_date, end_date,
-                    analyses_used as api_calls_used, analyses_limit as api_calls_limit,
-                    max_boq_generations, max_bid_optimizations
+                SELECT 
+                    plan as subscription_tier,
+                    status,
+                    start_date,
+                    end_date,
+                    analyses_limit as max_projects,
+                    analyses_used,
+                    max_boq_generations,
+                    max_bid_optimizations,
+                    can_export_data,
+                    can_edit_rates,
+                    can_delete_rates,
+                    can_create_versions,
+                    can_manage_team
                 FROM subscriptions 
                 WHERE user_id = ? AND status = 'active'
-                ORDER BY start_date DESC LIMIT 1
+                ORDER BY id DESC
+                LIMIT 1
             """, (user_id,))
             
             row = cursor.fetchone()
             if row:
                 return dict(row)
-            return {'subscription_tier': 'free', 'api_calls_used': 0, 'api_calls_limit': 5}
-
-    
+            
+            # ✅ If no user subscription, check company subscription
+            cursor.execute("""
+                SELECT 
+                    u.company_id,
+                    s.plan as subscription_tier,
+                    s.status,
+                    s.start_date,
+                    s.end_date,
+                    s.analyses_limit as max_projects,
+                    s.analyses_used,
+                    s.max_boq_generations,
+                    s.max_bid_optimizations,
+                    s.can_export_data,
+                    s.can_edit_rates,
+                    s.can_delete_rates,
+                    s.can_create_versions,
+                    s.can_manage_team
+                FROM users u
+                LEFT JOIN subscriptions s ON u.company_id = s.company_id AND s.status = 'active'
+                WHERE u.id = ?
+                ORDER BY s.id DESC
+                LIMIT 1
+            """, (user_id,))
+            
+            row = cursor.fetchone()
+            if row and row.get('subscription_tier'):
+                return dict(row)
+            
+            return {
+                'subscription_tier': 'free',
+                'status': 'active',
+                'max_projects': 5,
+                'analyses_used': 0,
+                'max_boq_generations': 5,
+                'max_bid_optimizations': 5,
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False
+            }
     def get_company_subscription(self, company_id: int) -> Dict:
         """Get company's subscription details"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
+            
+            # ✅ Get the latest active subscription ordered by id DESC
             cursor.execute("""
-                SELECT plan as subscription_tier, status, start_date, end_date,
-                    analyses_limit as max_projects
+                SELECT 
+                    s.plan as subscription_tier,
+                    s.status,
+                    s.start_date,
+                    s.end_date,
+                    s.analyses_limit as max_projects,
+                    s.analyses_used,
+                    s.max_boq_generations,
+                    s.max_bid_optimizations,
+                    s.boq_used,
+                    s.bid_optimizations_used,
+                    s.can_export_data,
+                    s.can_edit_rates,
+                    s.can_delete_rates,
+                    s.can_create_versions,
+                    s.can_manage_team,
+                    s.payment_method,
+                    s.transaction_id,
+                    s.updated_at,
+                    sp.max_users,
+                    sp.extension_auto_fills,
+                    sp.plan_name
+                FROM subscriptions s
+                LEFT JOIN subscription_plans sp ON s.plan = sp.plan_name
+                WHERE s.company_id = ? AND s.status = 'active'
+                ORDER BY s.id DESC
+                LIMIT 1
+            """, (company_id,))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                result = dict(row)
+                # ✅ Debug print to see what's being returned
+                print(f"📊 get_company_subscription for company {company_id}: plan={result.get('subscription_tier')}")
+                return result
+            
+            # ✅ If no active subscription, check if there's any subscription
+            cursor.execute("""
+                SELECT 
+                    plan as subscription_tier,
+                    status,
+                    start_date,
+                    end_date,
+                    analyses_limit as max_projects,
+                    analyses_used
                 FROM subscriptions 
-                WHERE company_id = ? AND status = 'active'
-                ORDER BY start_date DESC LIMIT 1
+                WHERE company_id = ?
+                ORDER BY id DESC
+                LIMIT 1
             """, (company_id,))
             
             row = cursor.fetchone()
             if row:
-                return dict(row)
-            return {'subscription_tier': 'free', 'max_users': 5, 'max_projects': 5}
-
+                result = dict(row)
+                print(f"⚠️ Found inactive subscription for company {company_id}: {result.get('subscription_tier')}")
+                return result
+            
+            print(f"⚠️ No subscription found for company {company_id}")
+            return {
+                'subscription_tier': 'free',
+                'status': 'active',
+                'max_projects': 5,
+                'max_users': 1,
+                'analyses_used': 0,
+                'max_boq_generations': 5,
+                'max_bid_optimizations': 5,
+                'boq_used': 0,
+                'bid_optimizations_used': 0,
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False,
+                'extension_auto_fills': 5
+            }
     
-    def update_subscription(self, user_id: int = None, company_id: int = None,
-                           tier: str = None, expiry_days: int = None) -> bool:
-        """Update subscription for user or company"""
+    # database/crud_operations.py - Update update_company_subscription
+
+    def update_company_subscription(self, company_id: int, plan: str, 
+                                    duration: str = 'monthly', 
+                                    payment_method: str = 'admin', 
+                                    transaction_id: str = None) -> bool:
+        """Update or create subscription for a company"""
+        from datetime import datetime, timedelta
+        
+        print("\n" + "=" * 60)
+        print("📝 update_company_subscription() CALLED")
+        print("=" * 60)
+        print(f"   company_id: {company_id}")
+        print(f"   plan: {plan}")
+        print(f"   duration: {duration}")
+        print(f"   payment_method: {payment_method}")
+        print(f"   transaction_id: {transaction_id}")
+        
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             
-            if user_id:
-                updates = ["subscription_tier = ?"]
-                values = [tier]
-                
-                if expiry_days:
-                    updates.append("subscription_expiry = DATE('now', ?)")
-                    values.append(f"+{expiry_days} days")
-                
-                values.append(user_id)
-                cursor.execute(f"""
-                    UPDATE users 
-                    SET {', '.join(updates)}
-                    WHERE id = ?
-                """, values)
-                
-            elif company_id:
-                updates = ["subscription_tier = ?"]
-                values = [tier]
-                
-                if expiry_days:
-                    updates.append("subscription_expiry = DATE('now', ?)")
-                    values.append(f"+{expiry_days} days")
-                
-                values.append(company_id)
-                cursor.execute(f"""
-                    UPDATE companies 
-                    SET {', '.join(updates)}
-                    WHERE id = ?
-                """, values)
-            else:
-                return False
+            start_date = datetime.now().date()
+            print(f"   start_date: {start_date}")
             
-            return cursor.rowcount > 0
+            # Plan limits and features
+            plan_limits = {
+                'free': {'limit': 5, 'max_boq': 5, 'max_bid': 5},
+                'basic': {'limit': 30, 'max_boq': 30, 'max_bid': 30},
+                'professional': {'limit': -1, 'max_boq': 100, 'max_bid': 100},
+                'enterprise': {'limit': -1, 'max_boq': -1, 'max_bid': -1}
+            }
+            
+            plan_features = {
+                'free': {'can_export': 0, 'can_edit_rates': 0, 'can_delete_rates': 0, 
+                        'can_create_versions': 0, 'can_manage_team': 0},
+                'basic': {'can_export': 1, 'can_edit_rates': 0, 'can_delete_rates': 0,
+                        'can_create_versions': 0, 'can_manage_team': 0},
+                'professional': {'can_export': 1, 'can_edit_rates': 1, 'can_delete_rates': 0,
+                                'can_create_versions': 1, 'can_manage_team': 1},
+                'enterprise': {'can_export': 1, 'can_edit_rates': 1, 'can_delete_rates': 1,
+                            'can_create_versions': 1, 'can_manage_team': 1}
+            }
+            
+            features = plan_features.get(plan, plan_features['free'])
+            limits = plan_limits.get(plan, plan_limits['free'])
+            
+            if duration == 'monthly':
+                end_date = start_date + timedelta(days=30)
+            else:
+                end_date = start_date + timedelta(days=365)
+            print(f"   end_date: {end_date}")
+            
+            trans_id = transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Check if subscription exists
+            cursor.execute("""
+                SELECT id, plan FROM subscriptions 
+                WHERE company_id = ? AND company_id IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+            """, (company_id,))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                print(f"   ✅ Found existing subscription ID: {existing['id']}, Current plan: {existing['plan']}")
+                
+                # UPDATE existing subscription
+                cursor.execute("""
+                    UPDATE subscriptions 
+                    SET plan = ?, 
+                        status = 'active', 
+                        start_date = ?, 
+                        end_date = ?,
+                        analyses_limit = ?,
+                        max_boq_generations = ?,
+                        max_bid_optimizations = ?,
+                        can_export_data = ?,
+                        can_edit_rates = ?,
+                        can_delete_rates = ?,
+                        can_create_versions = ?,
+                        can_manage_team = ?,
+                        payment_method = ?,
+                        transaction_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (
+                    plan,
+                    start_date,
+                    end_date,
+                    limits['limit'],
+                    limits['max_boq'],
+                    limits['max_bid'],
+                    features['can_export'],
+                    features['can_edit_rates'],
+                    features['can_delete_rates'],
+                    features['can_create_versions'],
+                    features['can_manage_team'],
+                    payment_method,
+                    trans_id,
+                    existing['id']
+                ))
+                print(f"   ✅ Updated subscription ID {existing['id']} to {plan}")
+                
+            else:
+                print(f"   ⚠️ No existing subscription found, creating new one")
+                
+                # INSERT new subscription
+                cursor.execute("""
+                    INSERT INTO subscriptions (
+                        company_id, plan, status, start_date, end_date,
+                        analyses_limit, analyses_used,
+                        max_boq_generations, max_bid_optimizations,
+                        can_export_data, can_edit_rates, can_delete_rates,
+                        can_create_versions, can_manage_team,
+                        payment_method, transaction_id,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'active', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (
+                    company_id,
+                    plan,
+                    start_date,
+                    end_date,
+                    limits['limit'],
+                    limits['max_boq'],
+                    limits['max_bid'],
+                    features['can_export'],
+                    features['can_edit_rates'],
+                    features['can_delete_rates'],
+                    features['can_create_versions'],
+                    features['can_manage_team'],
+                    payment_method,
+                    trans_id
+                ))
+                print(f"   ✅ Created new subscription for company {company_id} with plan {plan}")
+            
+            # Verify the update worked
+            print("\n   🔍 Verifying update...")
+            cursor.execute("""
+                SELECT id, plan, status, start_date, end_date 
+                FROM subscriptions 
+                WHERE company_id = ? AND company_id IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+            """, (company_id,))
+            verify = cursor.fetchone()
+            if verify:
+                print(f"   ✅ Verification: Subscription ID {verify['id']} now has plan {verify['plan']}")
+                return verify['plan'] == plan
+            
+            print("   ✅ Update completed successfully")
+            return True
+    
+    def cancel_user_subscription(self, user_id: int) -> bool:
+        """Cancel user subscription (set to free)"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                UPDATE subscriptions 
+                SET plan = 'free',
+                    status = 'active',
+                    analyses_limit = 5,
+                    max_boq_generations = 5,
+                    max_bid_optimizations = 5,
+                    can_export_data = 0,
+                    can_edit_rates = 0,
+                    can_delete_rates = 0,
+                    can_create_versions = 0,
+                    can_manage_team = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND user_id IS NOT NULL
+            """, (user_id,))
+            
+            return True
+    def cancel_company_subscription(self, company_id: int) -> bool:
+        """Cancel subscription for a company (set to free)"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                UPDATE subscriptions 
+                SET plan = 'free',
+                    status = 'active',
+                    analyses_limit = 5,
+                    max_boq_generations = 5,
+                    max_bid_optimizations = 5,
+                    can_export_data = 0,
+                    can_edit_rates = 0,
+                    can_delete_rates = 0,
+                    can_create_versions = 0,
+                    can_manage_team = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE company_id = ?
+            """, (company_id,))
+            
+            print(f"✅ Cancelled subscription for company {company_id}")
+            return True
+
+    
+
+    def update_user_subscription(self, user_id: int, plan: str, 
+                             duration: str = 'monthly',
+                             payment_method: str = 'admin',
+                             transaction_id: str = None) -> bool:
+        """Update or create subscription for a user"""
+        from datetime import datetime, timedelta
+        
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            start_date = datetime.now().date()
+            
+            # Plan limits
+            plan_limits = {
+                'free': {'limit': 5, 'max_boq': 5, 'max_bid': 5},
+                'basic': {'limit': 30, 'max_boq': 30, 'max_bid': 30},
+                'professional': {'limit': -1, 'max_boq': 100, 'max_bid': 100},
+                'enterprise': {'limit': -1, 'max_boq': -1, 'max_bid': -1}
+            }
+            
+            plan_features = {
+                'free': {'can_export': 0, 'can_edit_rates': 0, 'can_delete_rates': 0, 
+                        'can_create_versions': 0, 'can_manage_team': 0},
+                'basic': {'can_export': 1, 'can_edit_rates': 0, 'can_delete_rates': 0,
+                        'can_create_versions': 0, 'can_manage_team': 0},
+                'professional': {'can_export': 1, 'can_edit_rates': 1, 'can_delete_rates': 0,
+                                'can_create_versions': 1, 'can_manage_team': 1},
+                'enterprise': {'can_export': 1, 'can_edit_rates': 1, 'can_delete_rates': 1,
+                            'can_create_versions': 1, 'can_manage_team': 1}
+            }
+            
+            features = plan_features.get(plan, plan_features['free'])
+            limits = plan_limits.get(plan, plan_limits['free'])
+            
+            if duration == 'monthly':
+                end_date = start_date + timedelta(days=30)
+            else:
+                end_date = start_date + timedelta(days=365)
+            
+            trans_id = transaction_id or f"USER_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Check if subscription exists
+            cursor.execute('SELECT id FROM subscriptions WHERE user_id = ? AND user_id IS NOT NULL', (user_id,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                cursor.execute("""
+                    UPDATE subscriptions 
+                    SET plan = ?, 
+                        status = 'active', 
+                        start_date = ?, 
+                        end_date = ?,
+                        analyses_limit = ?,
+                        max_boq_generations = ?,
+                        max_bid_optimizations = ?,
+                        can_export_data = ?,
+                        can_edit_rates = ?,
+                        can_delete_rates = ?,
+                        can_create_versions = ?,
+                        can_manage_team = ?,
+                        payment_method = ?,
+                        transaction_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                """, (
+                    plan, start_date, end_date,
+                    limits['limit'], limits['max_boq'], limits['max_bid'],
+                    features['can_export'], features['can_edit_rates'],
+                    features['can_delete_rates'], features['can_create_versions'],
+                    features['can_manage_team'],
+                    payment_method, trans_id, user_id
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO subscriptions (
+                        user_id, plan, status, start_date, end_date,
+                        analyses_limit, analyses_used,
+                        max_boq_generations, max_bid_optimizations,
+                        can_export_data, can_edit_rates, can_delete_rates,
+                        can_create_versions, can_manage_team,
+                        payment_method, transaction_id,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'active', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (
+                    user_id, plan, start_date, end_date,
+                    limits['limit'], limits['max_boq'], limits['max_bid'],
+                    features['can_export'], features['can_edit_rates'],
+                    features['can_delete_rates'], features['can_create_versions'],
+                    features['can_manage_team'],
+                    payment_method, trans_id
+                ))
+            
+            return True
+    
+    
     
     def increment_api_usage(self, user_id: int) -> bool:
         """Increment API call count for user"""
@@ -985,109 +1365,86 @@ class DatabaseCRUD:
             cursor.execute(query, values)
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_winning_statistics(self, contractor_name: str = None) -> Dict:
-        """Get winning statistics for contractors"""
+    def get_winning_statistics_by_contractor(self, contractor_name: str = None) -> Dict:
+        """Get winning statistics for a specific contractor"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             
             if contractor_name:
                 cursor.execute("""
-                    SELECT contractor, COUNT(*) as wins, 
-                           AVG(awarded_amount) as avg_amount,
-                           SUM(awarded_amount) as total_amount,
-                           MIN(award_date) as first_win,
-                           MAX(award_date) as last_win
+                    SELECT winning_competitor as contractor, COUNT(*) as wins, 
+                        AVG(awarded_price) as avg_amount,
+                        SUM(awarded_price) as total_amount,
+                        MIN(award_date) as first_win,
+                        MAX(award_date) as last_win
                     FROM historical_tenders
-                    WHERE contractor = ?
-                    GROUP BY contractor
+                    WHERE winning_competitor = ?
+                    GROUP BY winning_competitor
                 """, (contractor_name,))
             else:
                 cursor.execute("""
-                    SELECT contractor, COUNT(*) as wins, 
-                           AVG(awarded_amount) as avg_amount,
-                           SUM(awarded_amount) as total_amount,
-                           MIN(award_date) as first_win,
-                           MAX(award_date) as last_win
+                    SELECT winning_competitor as contractor, COUNT(*) as wins, 
+                        AVG(awarded_price) as avg_amount,
+                        SUM(awarded_price) as total_amount,
+                        MIN(award_date) as first_win,
+                        MAX(award_date) as last_win
                     FROM historical_tenders
-                    WHERE contractor IS NOT NULL
-                    GROUP BY contractor
+                    WHERE winning_competitor IS NOT NULL
+                    GROUP BY winning_competitor
                     ORDER BY wins DESC
                     LIMIT 50
                 """)
             
-            row = cursor.fetchone()
-            return dict(row) if row else {}
-    
-    # ==================== COMPETITOR METHODS ====================
-    
-    def get_competitor_master_list(self, company_id: int) -> List[Dict]:
-        """Get competitor master list for a company"""
+            result = cursor.fetchone()
+            return dict(result) if result else {}
+
+    def get_winning_statistics(self, company_id: int, procurement_type: str = None) -> Dict:
+        """Get winning statistics for analysis"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
-            cursor.execute("""
-                SELECT c.*, 
-                       COUNT(DISTINCT ct.tender_id) as tracked_tenders,
-                       MAX(ct.last_updated) as last_activity
-                FROM competitors c
-                LEFT JOIN competitor_tracking ct ON c.id = ct.competitor_id
-                WHERE c.company_id = ?
-                GROUP BY c.id
-                ORDER BY c.name
-            """, (company_id,))
             
-            return [dict(row) for row in cursor.fetchall()]
-    
-    def add_competitor_to_master(self, company_id: int, name: str, 
-                                 registration_no: str = None, 
-                                 website: str = None) -> int:
-        """Add competitor to master list"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            cursor.execute("""
-                INSERT INTO competitors (company_id, name, registration_no, website)
-                VALUES (?, ?, ?, ?)
-            """, (company_id, name, registration_no, website))
+            query = '''
+            SELECT 
+                COUNT(*) as total_tenders,
+                SUM(CASE WHEN winning_company_type = 'Our Company' THEN 1 ELSE 0 END) as our_wins,
+                SUM(CASE WHEN winning_company_type = 'Competitor' THEN 1 ELSE 0 END) as competitor_wins,
+                SUM(CASE WHEN winning_company_type = 'Unknown' THEN 1 ELSE 0 END) as unknown_wins,
+                AVG(CASE WHEN winning_company_type = 'Our Company' THEN awarded_price ELSE NULL END) as avg_our_winning_price,
+                AVG(CASE WHEN winning_company_type = 'Competitor' THEN awarded_price ELSE NULL END) as avg_competitor_winning_price,
+                AVG(official_estimate) as avg_estimate,
+                MIN(CASE WHEN winning_company_type = 'Our Company' THEN awarded_price ELSE NULL END) as min_our_winning_price,
+                MAX(CASE WHEN winning_company_type = 'Our Company' THEN awarded_price ELSE NULL END) as max_our_winning_price,
+                MIN(CASE WHEN winning_company_type = 'Competitor' THEN awarded_price ELSE NULL END) as min_competitor_winning_price,
+                MAX(CASE WHEN winning_company_type = 'Competitor' THEN awarded_price ELSE NULL END) as max_competitor_winning_price
+            FROM historical_tenders 
+            WHERE company_id = ?
+            '''
+            params = [company_id]
             
-            return cursor.lastrowid
-    
-    def update_competitor_info(self, competitor_id: int, **kwargs) -> bool:
-        """Update competitor information"""
-        allowed_fields = ['name', 'registration_no', 'website', 'notes']
-        
-        updates = []
-        values = []
-        
-        for key, value in kwargs.items():
-            if key in allowed_fields:
-                updates.append(f"{key} = ?")
-                values.append(value)
-        
-        if not updates:
-            return False
-        
-        values.append(competitor_id)
-        
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            cursor.execute(f"""
-                UPDATE competitors 
-                SET {', '.join(updates)}
-                WHERE id = ?
-            """, values)
+            if procurement_type:
+                query += " AND procurement_type = ?"
+                params.append(procurement_type)
             
-            return cursor.rowcount > 0
-    
-    def track_competitor_tender(self, competitor_id: int, tender_id: str, 
-                               amount: float = None, status: str = 'tracking') -> int:
-        """Track a competitor's tender activity"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            cursor.execute("""
-                INSERT INTO competitor_tracking (competitor_id, tender_id, amount, status)
-                VALUES (?, ?, ?, ?)
-            """, (competitor_id, tender_id, amount, status))
+            cursor.execute(query, params)
+            result = cursor.fetchone()
             
-            return cursor.lastrowid
+            if result:
+                return {
+                    'total_tenders': result['total_tenders'] or 0,
+                    'our_wins': result['our_wins'] or 0,
+                    'competitor_wins': result['competitor_wins'] or 0,
+                    'unknown_wins': result['unknown_wins'] or 0,
+                    'our_win_rate': (result['our_wins'] / result['total_tenders'] * 100) if result['total_tenders'] > 0 else 0,
+                    'avg_our_winning_price': result['avg_our_winning_price'] or 0,
+                    'avg_competitor_winning_price': result['avg_competitor_winning_price'] or 0,
+                    'avg_estimate': result['avg_estimate'] or 0,
+                    'min_our_winning_price': result['min_our_winning_price'] or 0,
+                    'max_our_winning_price': result['max_our_winning_price'] or 0,
+                    'min_competitor_winning_price': result['min_competitor_winning_price'] or 0,
+                    'max_competitor_winning_price': result['max_competitor_winning_price'] or 0
+                }
+            return None
+
     
     # ==================== KNOWLEDGE REPOSITORY METHODS ====================
     
@@ -1777,7 +2134,20 @@ class DatabaseCRUD:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    
+    def get_company_by_name(self, company_name: str) -> Optional[Dict]:
+        """Get company by name"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("""
+                SELECT id, company_name, email, phone, mobile_number, division, district,
+                    address, registration_number, vat_number, created_at, is_active
+                FROM companies 
+                WHERE company_name = ?
+            """, (company_name,))
+            
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_company_by_mobile(self, mobile_number: str) -> Optional[Dict]:
         """Get company by mobile number"""
         with self.get_connection() as conn:
@@ -1792,8 +2162,6 @@ class DatabaseCRUD:
             
             row = cursor.fetchone()
             return dict(row) if row else None
-
-
     
     
     def update_company(self, company_id: int, **kwargs) -> bool:
@@ -2369,36 +2737,6 @@ class DatabaseCRUD:
             logger.error(f"Error calculating win probability: {e}")
             return None, f"Error: {str(e)}"
 
-    
-    @st.cache_data(ttl=300)
-    def get_company_tenders_cached(company_id: int) -> pd.DataFrame:
-        """Cached helper to fetch company tenders as DataFrame"""
-        try:
-            conn = db.get_connection()
-            cursor = self.db_conn.get_cursor(conn)
-            
-            cursor.execute('''
-            SELECT 
-                t.id, t.company_id, t.tender_id, t.tender_title, t.procuring_entity,
-                t.division, t.district, t.thana, t.country, t.procurement_type,
-                t.official_estimate, t.submission_deadline, t.tender_security,
-                t.document_fee, t.evaluation_type,
-                t.is_locked, t.is_copy, t.original_tender_id, t.is_active,
-                t.created_at, t.updated_at
-            FROM company_tenders t
-            WHERE t.company_id = ? 
-            ORDER BY t.created_at DESC
-            ''', (company_id,))
-            
-            columns = [desc[0] for desc in cursor.description]
-            data = cursor.fetchall()
-            conn.close()
-            
-            return pd.DataFrame(data, columns=columns) if data else pd.DataFrame()
-            
-        except Exception as e:
-            print(f"Failed to fetch cached tenders: {e}")
-            return pd.DataFrame()
     # ==================== BATCH 1: USER MANAGEMENT & AUTHENTICATION ====================
 
     def store_password_reset_token(self, email: str, token: str, expires_in_minutes: int = 60) -> bool:
@@ -2520,18 +2858,36 @@ class DatabaseCRUD:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_system_users(self) -> List[Dict]:
+    def get_system_users(self):
         """Get all system-level users (company_id IS NULL)"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             cursor.execute("""
-                SELECT id, username, email, full_name, phone, role, is_active, 
-                    created_at, last_login
+                SELECT id, username, email, full_name, phone, 
+                    mobile_number, mobile_verified,  -- ✅ ADD THESE
+                    role, is_active, created_at, last_login
                 FROM users
                 WHERE company_id IS NULL
                 ORDER BY created_at DESC
             """)
-            return [dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            
+            users = []
+            for row in rows:
+                users.append({
+                    'id': row.get('id'),
+                    'username': row.get('username'),
+                    'email': row.get('email'),
+                    'full_name': row.get('full_name'),
+                    'phone': row.get('phone', ''),
+                    'mobile_number': row.get('mobile_number', ''),  # ✅ ADDED
+                    'mobile_verified': row.get('mobile_verified', 0),  # ✅ ADDED
+                    'role': row.get('role', 'viewer'),
+                    'is_active': row.get('is_active', 1),
+                    'created_at': row.get('created_at'),
+                    'last_login': row.get('last_login')
+                })
+            return users
     
 
     def get_company_users(self, company_id: int) -> List[Dict]:
@@ -2747,68 +3103,126 @@ class DatabaseCRUD:
             with self.get_connection() as conn:
                 cursor = self.db_conn.get_cursor(conn)
                 
-                # Priority 1: Company subscription
+                # Priority 1: Company subscription (latest active)
                 if company_id:
                     cursor.execute('''
-                        SELECT plan, status, analyses_used, analyses_limit 
+                        SELECT plan, status, analyses_used, analyses_limit,
+                            max_boq_generations, max_bid_optimizations,
+                            can_export_data, can_edit_rates, can_delete_rates,
+                            can_create_versions, can_manage_team,
+                            end_date
                         FROM subscriptions 
-                        WHERE company_id = ? AND status = 'active' AND company_id IS NOT NULL
+                        WHERE company_id = ? AND status = 'active'
+                        ORDER BY id DESC
                         LIMIT 1
                     ''', (company_id,))
                     row = cursor.fetchone()
                     if row and row.get('status') == 'active':
                         return {
-                            'owner_type': 'company', 'owner_id': company_id,
-                            'plan': row.get('plan', 'free'), 'status': 'active',
-                            'analyses_used': row.get('analyses_used', 0), 
-                            'analyses_limit': row.get('analyses_limit', 5)
+                            'owner_type': 'company',
+                            'owner_id': company_id,
+                            'plan': row.get('plan', 'free'),
+                            'status': 'active',
+                            'analyses_used': row.get('analyses_used', 0),
+                            'analyses_limit': row.get('analyses_limit', 5),
+                            'max_boq_generations': row.get('max_boq_generations', 5),
+                            'max_bid_optimizations': row.get('max_bid_optimizations', 5),
+                            'can_export_data': row.get('can_export_data', False),
+                            'can_edit_rates': row.get('can_edit_rates', False),
+                            'can_delete_rates': row.get('can_delete_rates', False),
+                            'can_create_versions': row.get('can_create_versions', False),
+                            'can_manage_team': row.get('can_manage_team', False),
+                            'end_date': row.get('end_date')
                         }
                 
-                # Priority 2: Personal subscription
+                # Priority 2: User subscription
                 cursor.execute('''
-                    SELECT plan, status, analyses_used, analyses_limit 
+                    SELECT plan, status, analyses_used, analyses_limit,
+                        max_boq_generations, max_bid_optimizations,
+                        can_export_data, can_edit_rates, can_delete_rates,
+                        can_create_versions, can_manage_team,
+                        end_date
                     FROM subscriptions 
-                    WHERE user_id = ? AND status = 'active' AND user_id IS NOT NULL
+                    WHERE user_id = ? AND status = 'active'
+                    ORDER BY id DESC
                     LIMIT 1
                 ''', (user_id,))
                 row = cursor.fetchone()
                 if row and row.get('status') == 'active':
                     return {
-                        'owner_type': 'user', 'owner_id': user_id,
-                        'plan': row.get('plan', 'free'), 'status': 'active',
-                        'analyses_used': row.get('analyses_used', 0), 
-                        'analyses_limit': row.get('analyses_limit', 5)
+                        'owner_type': 'user',
+                        'owner_id': user_id,
+                        'plan': row.get('plan', 'free'),
+                        'status': 'active',
+                        'analyses_used': row.get('analyses_used', 0),
+                        'analyses_limit': row.get('analyses_limit', 5),
+                        'max_boq_generations': row.get('max_boq_generations', 5),
+                        'max_bid_optimizations': row.get('max_bid_optimizations', 5),
+                        'can_export_data': row.get('can_export_data', False),
+                        'can_edit_rates': row.get('can_edit_rates', False),
+                        'can_delete_rates': row.get('can_delete_rates', False),
+                        'can_create_versions': row.get('can_create_versions', False),
+                        'can_manage_team': row.get('can_manage_team', False),
+                        'end_date': row.get('end_date')
                     }
                     
-            return {'owner_type': 'free', 'plan': 'free', 'status': 'active', 
-                    'analyses_used': 0, 'analyses_limit': 5}
+            return {
+                'owner_type': 'free',
+                'plan': 'free',
+                'status': 'active',
+                'analyses_used': 0,
+                'analyses_limit': 5,
+                'max_boq_generations': 5,
+                'max_bid_optimizations': 5,
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False
+            }
                     
         except Exception as e:
             logger.error(f"Subscription lookup error: {e}")
-            return {'owner_type': 'free', 'plan': 'free', 'analyses_used': 0, 'analyses_limit': 5}
-    # database/crud_operations.py - Replace your get_all_subscriptions with this
+            return {
+                'owner_type': 'free',
+                'plan': 'free',
+                'analyses_used': 0,
+                'analyses_limit': 5,
+                'max_boq_generations': 5,
+                'max_bid_optimizations': 5,
+                'can_export_data': False,
+                'can_edit_rates': False,
+                'can_delete_rates': False,
+                'can_create_versions': False,
+                'can_manage_team': False
+            }
+    
 
     def get_all_subscriptions(self):
         """Get all subscriptions for admin - returns TUPLES for backward compatibility"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             cursor.execute('''
-                SELECT s.id, s.user_id, s.plan, s.status, s.start_date, s.end_date, 
+                SELECT 
+                    s.id, s.user_id, s.plan, s.status, s.start_date, s.end_date, 
                     s.analyses_used, s.analyses_limit, s.company_id, s.created_at,
-                    u.username, u.email, u.full_name, c.company_name
+                    COALESCE(u.username, 'N/A') as username,
+                    COALESCE(u.email, 'N/A') as email,
+                    COALESCE(u.full_name, 'N/A') as full_name,
+                    COALESCE(c.company_name, 'N/A') as company_name
                 FROM subscriptions s
-                JOIN users u ON s.user_id = u.id
-                JOIN companies c ON u.company_id = c.id
+                LEFT JOIN users u ON s.user_id = u.id
+                LEFT JOIN companies c ON s.company_id = c.id
                 ORDER BY s.updated_at DESC
             ''')
             rows = cursor.fetchall()
             
-            # Return as TUPLES (so your page can use s[2], s[3], etc.)
+            # Return as TUPLES
             return [(
                 row['id'],           # 0
                 row['user_id'],      # 1
-                row['plan'],         # 2 - YOUR PAGE USES s[2]
-                row['status'],       # 3 - YOUR PAGE USES s[3]
+                row['plan'],         # 2
+                row['status'],       # 3
                 row['start_date'],   # 4
                 row['end_date'],     # 5
                 row['analyses_used'],# 6
@@ -2820,74 +3234,6 @@ class DatabaseCRUD:
                 row['full_name'],    # 12
                 row['company_name']  # 13
             ) for row in rows]
-    
-
-    def get_company_subscription(self, company_id: int) -> Dict:
-        """Get subscription details for a company"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            cursor.execute('''
-                SELECT id, plan, status, start_date, end_date, analyses_used, analyses_limit,
-                    payment_method, transaction_id, updated_at
-                FROM subscriptions 
-                WHERE company_id = ? AND company_id IS NOT NULL
-                ORDER BY created_at DESC LIMIT 1
-            ''', (company_id,))
-            row = cursor.fetchone()
-            
-            if row:
-                return dict(row)
-            
-            return {
-                'plan': 'free',
-                'status': 'active',
-                'analyses_used': 0,
-                'analyses_limit': 5,
-                'start_date': datetime.now().date(),
-                'end_date': datetime.now().date() + timedelta(days=30)
-            }
-
-    def update_company_subscription(self, company_id: int, plan: str, duration: str = 'monthly', 
-                                    payment_method: str = 'admin', transaction_id: str = None) -> bool:
-        """Update or create subscription for a company"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            
-            start_date = datetime.now().date()
-            
-            plan_limits = {
-                'free': {'limit': 5, 'price': 0},
-                'basic': {'limit': 30, 'price': 4999},
-                'professional': {'limit': -1, 'price': 14999},
-                'enterprise': {'limit': -1, 'price': 49999}
-            }
-            
-            if duration == 'monthly':
-                end_date = start_date + timedelta(days=30)
-            else:
-                end_date = start_date + timedelta(days=365)
-            
-            cursor.execute('SELECT id FROM subscriptions WHERE company_id = ? AND company_id IS NOT NULL', (company_id,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                cursor.execute('''
-                    UPDATE subscriptions 
-                    SET plan = ?, status = 'active', start_date = ?, end_date = ?, 
-                        analyses_limit = ?, payment_method = ?, transaction_id = ?, updated_at = ?
-                    WHERE company_id = ?
-                ''', (plan, start_date, end_date, plan_limits[plan]['limit'], 
-                    payment_method, transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}", 
-                    datetime.now(), company_id))
-            else:
-                cursor.execute('''
-                    INSERT INTO subscriptions (company_id, plan, status, start_date, end_date, 
-                                            analyses_limit, payment_method, transaction_id)
-                    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
-                ''', (company_id, plan, start_date, end_date, plan_limits[plan]['limit'], 
-                    payment_method, transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}"))
-            
-            return True
 
     def can_perform_analysis(self, user_id: int) -> tuple:
         """Check if user can perform an analysis"""
@@ -2920,28 +3266,7 @@ class DatabaseCRUD:
 
     # ==================== BATCH 3: COMPETITOR & HISTORICAL TENDER METHODS ====================
 
-    def get_competitor_by_id(self, competitor_id: int) -> Optional[Dict]:
-        """Get competitor details by ID"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            cursor.execute('SELECT * FROM competitor_master WHERE id = ?', (competitor_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
 
-    def update_competitor_master(self, competitor_id: int, update_data: Dict) -> bool:
-        """Update competitor information"""
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            fields = []
-            values = []
-            for key, value in update_data.items():
-                fields.append(f"{key} = ?")
-                values.append(value)
-            values.append(competitor_id)
-            query = f"UPDATE competitor_master SET {', '.join(fields)}, updated_at = ? WHERE id = ?"
-            values.insert(0, datetime.now())
-            cursor.execute(query, values)
-            return True
 
     def delete_competitor(self, competitor_id: int) -> bool:
         """Soft delete competitor (mark inactive)"""
@@ -3324,21 +3649,49 @@ class DatabaseCRUD:
         """Get statistics for a specific company"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
-            cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ?', (company_id,))
-            total_users = cursor.fetchone()[0]
-            cursor.execute('SELECT COUNT(*) FROM tender_analyses WHERE company_id = ?', (company_id,))
-            total_analyses = cursor.fetchone()[0]
-            cursor.execute('''
-                SELECT COUNT(*) FROM tender_analyses 
-                WHERE company_id = ? AND bid_status = 'Won'
-            ''', (company_id,))
-            won_tenders = cursor.fetchone()[0]
-            return {
-                'total_users': total_users,
-                'total_analyses': total_analyses,
-                'won_tenders': won_tenders,
-                'win_rate': (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
-            }
+            
+            try:
+                # Get total users
+                cursor.execute('SELECT COUNT(*) as total FROM users WHERE company_id = ?', (company_id,))
+                row = cursor.fetchone()
+                total_users = row['total'] if row else 0
+                print(f"📊 total_users: {total_users}")
+                
+                # Get total analyses
+                cursor.execute('SELECT COUNT(*) as total FROM tender_analyses WHERE company_id = ?', (company_id,))
+                row = cursor.fetchone()
+                total_analyses = row['total'] if row else 0
+                print(f"📊 total_analyses: {total_analyses}")
+                
+                # Get won tenders
+                cursor.execute('''
+                    SELECT COUNT(*) as total FROM tender_analyses 
+                    WHERE company_id = ? AND bid_status = 'Won'
+                ''', (company_id,))
+                row = cursor.fetchone()
+                won_tenders = row['total'] if row else 0
+                print(f"📊 won_tenders: {won_tenders}")
+                
+                win_rate = (won_tenders / total_analyses * 100) if total_analyses > 0 else 0
+                print(f"📊 win_rate: {win_rate:.1f}%")
+                
+                return {
+                    'total_users': total_users,
+                    'total_analyses': total_analyses,
+                    'won_tenders': won_tenders,
+                    'win_rate': win_rate
+                }
+                
+            except Exception as e:
+                print(f"❌ Error in get_company_stats_by_id: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'total_users': 0,
+                    'total_analyses': 0,
+                    'won_tenders': 0,
+                    'win_rate': 0
+                }
 
     def get_company_profile(self, company_id: int) -> Optional[Dict]:
         """Get company profile information"""
@@ -5006,49 +5359,7 @@ class DatabaseCRUD:
             print(f"Error clearing PWD version data: {e}")
             return False
 
-    def update_company_subscription(self, company_id: int, plan: str, duration: str = 'monthly', 
-                                    payment_method: str = 'admin', transaction_id: str = None) -> bool:
-        """Update or create subscription for a company"""
-        from datetime import datetime, timedelta
-        
-        with self.get_connection() as conn:
-            cursor = self.db_conn.get_cursor(conn)
-            
-            start_date = datetime.now().date()
-            
-            plan_limits = {
-                'free': {'limit': 5, 'price': 0},
-                'basic': {'limit': 30, 'price': 4999},
-                'professional': {'limit': -1, 'price': 14999},
-                'enterprise': {'limit': -1, 'price': 49999}
-            }
-            
-            if duration == 'monthly':
-                end_date = start_date + timedelta(days=30)
-            else:
-                end_date = start_date + timedelta(days=365)
-            
-            # Check if subscription exists
-            cursor.execute('SELECT id FROM subscriptions WHERE company_id = ? AND company_id IS NOT NULL', (company_id,))
-            existing = cursor.fetchone()
-            
-            trans_id = transaction_id or f"ADMIN_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            if existing:
-                cursor.execute("""
-                    UPDATE subscriptions 
-                    SET plan = ?, status = 'active', start_date = ?, end_date = ?, 
-                        analyses_limit = ?, payment_method = ?, transaction_id = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE company_id = ?
-                """, (plan, start_date, end_date, plan_limits[plan]['limit'], payment_method, trans_id, company_id))
-            else:
-                cursor.execute("""
-                    INSERT INTO subscriptions (company_id, plan, status, start_date, end_date, 
-                                            analyses_limit, payment_method, transaction_id)
-                    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
-                """, (company_id, plan, start_date, end_date, plan_limits[plan]['limit'], payment_method, trans_id))
-            
-            return True    
+    
     # =========================================================
     # BATCH 3: TABLE INITIALIZATION METHODS
     # =========================================================
@@ -5322,340 +5633,673 @@ class DatabaseCRUD:
             """, conn, params=(f"%{search_term}%", f"%{search_term}%", limit))    
 
     # =========================================================
-# BATCH 4: UPDATE METHODS
-# =========================================================
+    # COMPETITOR METHODS - KEEP THESE (CLEAN VERSIONS)
+    # =========================================================
 
-def update_competitor_master(self, competitor_id: int, update_data: Dict) -> bool:
-    """Update competitor information"""
-    from datetime import datetime
-    
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
-        
-        fields = []
-        values = []
-        for key, value in update_data.items():
-            fields.append(f"{key} = ?")
-            values.append(value)
-        
-        values.append(competitor_id)
-        query = f"UPDATE competitor_master SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        cursor.execute(query, values)
-        return True
+    def get_competitor_master_list(self, company_id: int, active_only: bool = True) -> List[Dict]:
+        """Get competitor master list for a company"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            query = "SELECT * FROM competitor_master WHERE company_id = ?"
+            params = [company_id]
+            
+            if active_only:
+                query += " AND is_active = 1"
+            
+            query += " ORDER BY competitor_name"
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
 
-def update_historical_tender_schema(self):
-    """Add new columns for winner tracking if not exists"""
-    import sqlite3
-    
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
-        
-        try:
-            cursor.execute("ALTER TABLE historical_tenders ADD COLUMN winning_company_type TEXT")
-            print("✓ Added winning_company_type column")
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute("ALTER TABLE historical_tenders ADD COLUMN our_awarded_price REAL")
-            print("✓ Added our_awarded_price column")
-        except sqlite3.OperationalError:
-            pass
+    def get_competitor_by_id(self, competitor_id: int) -> Optional[Dict]:
+        """Get competitor details by ID"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute('SELECT * FROM competitor_master WHERE id = ?', (competitor_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
-def update_tender_lock_status(self, tender_id: int, locked: bool) -> bool:
-    """Update the lock status of a tender"""
-    import streamlit as st
-    from datetime import datetime
-    
-    try:
+    def add_competitor_to_master(self, company_id: int, competitor_data: Dict) -> int:
+        """Add competitor to master list"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            # Check if exists
+            cursor.execute(
+                "SELECT id FROM competitor_master WHERE company_id = ? AND competitor_name = ?",
+                (company_id, competitor_data['competitor_name'])
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing
+                cursor.execute("""
+                    UPDATE competitor_master
+                    SET business_type = ?, contact_person = ?, phone = ?, email = ?,
+                        address = ?, notes = ?, preferred_strategy = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (
+                    competitor_data.get('business_type', ''),
+                    competitor_data.get('contact_person', ''),
+                    competitor_data.get('phone', ''),
+                    competitor_data.get('email', ''),
+                    competitor_data.get('address', ''),
+                    competitor_data.get('notes', ''),
+                    competitor_data.get('preferred_strategy', 'Unknown'),
+                    existing['id']
+                ))
+                return existing['id']
+            else:
+                # Insert new
+                cursor.execute("""
+                    INSERT INTO competitor_master (
+                        company_id, competitor_name, business_type, contact_person,
+                        phone, email, address, notes, preferred_strategy,
+                        first_seen, last_seen, is_active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    company_id,
+                    competitor_data['competitor_name'],
+                    competitor_data.get('business_type', ''),
+                    competitor_data.get('contact_person', ''),
+                    competitor_data.get('phone', ''),
+                    competitor_data.get('email', ''),
+                    competitor_data.get('address', ''),
+                    competitor_data.get('notes', ''),
+                    competitor_data.get('preferred_strategy', 'Unknown'),
+                    datetime.now().date(),
+                    datetime.now().date(),
+                    1
+                ))
+                return cursor.lastrowid
+
+    def update_competitor_master(self, competitor_id: int, update_data: Dict) -> bool:
+        """Update competitor information"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            allowed_fields = ['business_type', 'contact_person', 'phone', 'email', 
+                            'address', 'notes', 'preferred_strategy', 'is_active']
+            
+            updates = []
+            values = []
+            
+            for key, value in update_data.items():
+                if key in allowed_fields:
+                    updates.append(f"{key} = ?")
+                    values.append(value)
+            
+            if not updates:
+                return False
+            
+            values.append(competitor_id)
+            cursor.execute(f"""
+                UPDATE competitor_master 
+                SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, values)
+            
+            return cursor.rowcount > 0
+
+    def delete_competitor(self, competitor_id: int) -> bool:
+        """Soft delete competitor (mark inactive)"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute('UPDATE competitor_master SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', (competitor_id,))
+            return True
+
+    def update_competitor_stats_from_bid(self, company_id: int, competitor_name: str, 
+                                        bid_ratio: float, was_winner: bool) -> bool:
+        """Update competitor statistics from a bid"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                SELECT id, total_bids, total_wins, avg_bid_ratio 
+                FROM competitor_master 
+                WHERE company_id = ? AND competitor_name = ?
+            """, (company_id, competitor_name))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                comp_id = existing['id']
+                total_bids = existing['total_bids']
+                total_wins = existing['total_wins']
+                avg_ratio = existing['avg_bid_ratio']
+                
+                new_total_bids = total_bids + 1
+                new_total_wins = total_wins + (1 if was_winner else 0)
+                new_avg_ratio = ((avg_ratio * total_bids) + bid_ratio) / new_total_bids if new_total_bids > 0 else bid_ratio
+                
+                cursor.execute("""
+                    UPDATE competitor_master 
+                    SET total_bids = ?, total_wins = ?, avg_bid_ratio = ?,
+                        last_seen = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_total_bids, new_total_wins, new_avg_ratio, datetime.now().date(), comp_id))
+                
+                # Also update competitor_profiles
+                self._update_competitor_profile(company_id, competitor_name, bid_ratio, was_winner)
+                
+                return True
+            else:
+                # Create new competitor
+                cursor.execute("""
+                    INSERT INTO competitor_master (
+                        company_id, competitor_name, total_bids, total_wins, 
+                        avg_bid_ratio, first_seen, last_seen
+                    ) VALUES (?, ?, 1, ?, ?, ?, ?)
+                """, (company_id, competitor_name, 1 if was_winner else 0, bid_ratio, 
+                    datetime.now().date(), datetime.now().date()))
+                
+                self._update_competitor_profile(company_id, competitor_name, bid_ratio, was_winner)
+                return True
+
+    def _update_competitor_profile(self, company_id: int, competitor_name: str, 
+                                bid_ratio: float, was_winner: bool) -> bool:
+        """Update competitor profile for analytics"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                SELECT id, total_appearances, wins_count, avg_bid_ratio, bid_std_dev
+                FROM competitor_profiles 
+                WHERE company_id = ? AND competitor_name = ?
+            """, (company_id, competitor_name))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                comp_id, total, wins, avg_ratio, std_dev = existing
+                new_total = total + 1
+                new_wins = wins + (1 if was_winner else 0)
+                new_avg_ratio = ((avg_ratio * total) + bid_ratio) / new_total if new_total > 0 else bid_ratio
+                
+                if new_avg_ratio < 0.88:
+                    strategy = "Aggressive"
+                elif new_avg_ratio < 0.93:
+                    strategy = "Moderate"
+                else:
+                    strategy = "Conservative"
+                
+                cursor.execute("""
+                    UPDATE competitor_profiles 
+                    SET total_appearances = ?, wins_count = ?, avg_bid_ratio = ?,
+                        strategy = ?, last_seen = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_total, new_wins, new_avg_ratio, strategy, datetime.now().date(), comp_id))
+            else:
+                strategy = "Aggressive" if bid_ratio < 0.88 else "Moderate" if bid_ratio < 0.93 else "Conservative"
+                cursor.execute("""
+                    INSERT INTO competitor_profiles (
+                        company_id, competitor_name, first_seen, last_seen,
+                        total_appearances, wins_count, avg_bid_ratio, strategy
+                    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+                """, (company_id, competitor_name, datetime.now().date(), datetime.now().date(),
+                    1 if was_winner else 0, bid_ratio, strategy))
+            
+            return True
+
+    def get_competitor_profiles(self, company_id: int) -> List[Dict]:
+        """Get all competitor profiles for analytics"""
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
             cursor.execute("""
-                UPDATE company_tenders 
-                SET is_locked = ?, locked_at = ?, locked_by = ?
-                WHERE id = ?
-            """, (
-                1 if locked else 0,
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S') if locked else None,
-                st.session_state.get('user_id') if locked else None,
-                tender_id
-            ))
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update tender lock status: {e}")
-        return False
+                SELECT * FROM competitor_profiles
+                WHERE company_id = ?
+                ORDER BY total_appearances DESC
+            """, (company_id,))
+            return [dict(row) for row in cursor.fetchall()]
 
-def update_role_permissions_for_rates(self):
-    """Add rate management permissions to role_permissions table"""
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
+    def get_competitor_bid_history(self, company_id: int, competitor_name: str = None,
+                                limit: int = 100) -> List[Dict]:
+        """Get competitor bid history"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            if competitor_name:
+                cursor.execute("""
+                    SELECT * FROM competitor_bid_history
+                    WHERE company_id = ? AND competitor_name = ?
+                    ORDER BY bid_date DESC
+                    LIMIT ?
+                """, (company_id, competitor_name, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM competitor_bid_history
+                    WHERE company_id = ?
+                    ORDER BY bid_date DESC
+                    LIMIT ?
+                """, (company_id, limit))
+            
+            return [dict(row) for row in cursor.fetchall()]
+
+    def add_competitor_bid_history(self, company_id: int, competitor_name: str,
+                                tender_id: str, bid_amount: float,
+                                official_estimate: float, was_winner: bool = False,
+                                bid_date: str = None) -> bool:
+        """Add a competitor bid to history"""
+        if not bid_date:
+            bid_date = datetime.now().date()
         
-        rate_permissions = {
-            'admin': {
-                'manage_zones': True, 'manage_chapters': True, 'manage_parents': True,
-                'manage_children': True, 'manage_versions': True, 'view_rates': True,
-                'edit_rates': True, 'delete_rates': True
-            },
-            'system_admin': {
-                'manage_zones': True, 'manage_chapters': True, 'manage_parents': True,
-                'manage_children': True, 'manage_versions': True, 'view_rates': True,
-                'edit_rates': True, 'delete_rates': True
-            },
-            'company_admin': {
-                'manage_zones': False, 'manage_chapters': True, 'manage_parents': True,
-                'manage_children': True, 'manage_versions': True, 'view_rates': True,
-                'edit_rates': True, 'delete_rates': False
-            },
-            'manager': {
-                'manage_zones': False, 'manage_chapters': True, 'manage_parents': True,
-                'manage_children': True, 'manage_versions': False, 'view_rates': True,
-                'edit_rates': True, 'delete_rates': False
-            },
-            'analyst': {
-                'manage_zones': False, 'manage_chapters': False, 'manage_parents': False,
-                'manage_children': True, 'manage_versions': False, 'view_rates': True,
-                'edit_rates': True, 'delete_rates': False
-            },
-            'viewer': {
-                'manage_zones': False, 'manage_chapters': False, 'manage_parents': False,
-                'manage_children': False, 'manage_versions': False, 'view_rates': True,
-                'edit_rates': False, 'delete_rates': False
+        bid_ratio = bid_amount / official_estimate if official_estimate > 0 else 1.0
+        
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                INSERT INTO competitor_bid_history (
+                    company_id, competitor_name, tender_id, bid_amount,
+                    official_estimate, bid_ratio, was_winner, bid_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (company_id, competitor_name, tender_id, bid_amount,
+                official_estimate, bid_ratio, 1 if was_winner else 0, bid_date))
+            
+            self.update_competitor_stats_from_bid(company_id, competitor_name, bid_ratio, was_winner)
+            
+            return True
+
+    def get_competitor_insights(self, company_id: int) -> Dict:
+        """Get aggregated competitor insights"""
+        profiles = self.get_competitor_profiles(company_id)
+        
+        if not profiles:
+            return {
+                'total_competitors': 0,
+                'aggressive_count': 0,
+                'moderate_count': 0,
+                'conservative_count': 0,
+                'avg_market_ratio': 0.90
             }
+        
+        strategies = [p.get('strategy', 'Moderate') for p in profiles]
+        
+        return {
+            'total_competitors': len(profiles),
+            'aggressive_count': strategies.count('Aggressive'),
+            'moderate_count': strategies.count('Moderate'),
+            'conservative_count': strategies.count('Conservative'),
+            'avg_market_ratio': sum(p.get('avg_bid_ratio', 0.90) for p in profiles) / len(profiles)
         }
+
+    def predict_competitor_bid_ratio(self, company_id: int, competitor_name: str) -> Dict:
+        """Predict competitor's bid ratio based on historical data"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("""
+                SELECT avg_bid_ratio, bid_std_dev, strategy, total_appearances
+                FROM competitor_profiles 
+                WHERE company_id = ? AND competitor_name = ?
+            """, (company_id, competitor_name))
+            
+            profile = cursor.fetchone()
+            
+            if profile:
+                return {
+                    'avg_bid_ratio': profile['avg_bid_ratio'],
+                    'bid_std_dev': profile['bid_std_dev'],
+                    'strategy': profile['strategy'],
+                    'appearances': profile['total_appearances'],
+                    'confidence': min(0.95, 0.50 + (profile['total_appearances'] * 0.03))
+                }
+            else:
+                return {
+                    'avg_bid_ratio': 0.92,
+                    'bid_std_dev': 0.03,
+                    'strategy': 'Unknown',
+                    'appearances': 0,
+                    'confidence': 0.40
+                }
+    # =========================================================
+    # BATCH 4: UPDATE METHODS
+    # =========================================================
+
+
+    def update_historical_tender_schema(self):
+        """Add new columns for winner tracking if not exists"""
+        import sqlite3
         
-        for role, perms in rate_permissions.items():
-            existing = self.get_role_permissions(role)
-            existing.update(perms)
-            self.update_role_permissions(role, existing)
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            try:
+                cursor.execute("ALTER TABLE historical_tenders ADD COLUMN winning_company_type TEXT")
+                print("✓ Added winning_company_type column")
+            except sqlite3.OperationalError:
+                pass
+            
+            try:
+                cursor.execute("ALTER TABLE historical_tenders ADD COLUMN our_awarded_price REAL")
+                print("✓ Added our_awarded_price column")
+            except sqlite3.OperationalError:
+                pass
+
+    def update_tender_lock_status(self, tender_id: int, locked: bool) -> bool:
+        """Update the lock status of a tender"""
+        import streamlit as st
+        from datetime import datetime
         
-        print("✅ Rate management permissions added to roles")
+        try:
+            with self.get_connection() as conn:
+                cursor = self.db_conn.get_cursor(conn)
+                cursor.execute("""
+                    UPDATE company_tenders 
+                    SET is_locked = ?, locked_at = ?, locked_by = ?
+                    WHERE id = ?
+                """, (
+                    1 if locked else 0,
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S') if locked else None,
+                    st.session_state.get('user_id') if locked else None,
+                    tender_id
+                ))
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update tender lock status: {e}")
+            return False
+
+    def update_role_permissions_for_rates(self):
+        """Add rate management permissions to role_permissions table"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            rate_permissions = {
+                'admin': {
+                    'manage_zones': True, 'manage_chapters': True, 'manage_parents': True,
+                    'manage_children': True, 'manage_versions': True, 'view_rates': True,
+                    'edit_rates': True, 'delete_rates': True
+                },
+                'system_admin': {
+                    'manage_zones': True, 'manage_chapters': True, 'manage_parents': True,
+                    'manage_children': True, 'manage_versions': True, 'view_rates': True,
+                    'edit_rates': True, 'delete_rates': True
+                },
+                'company_admin': {
+                    'manage_zones': False, 'manage_chapters': True, 'manage_parents': True,
+                    'manage_children': True, 'manage_versions': True, 'view_rates': True,
+                    'edit_rates': True, 'delete_rates': False
+                },
+                'manager': {
+                    'manage_zones': False, 'manage_chapters': True, 'manage_parents': True,
+                    'manage_children': True, 'manage_versions': False, 'view_rates': True,
+                    'edit_rates': True, 'delete_rates': False
+                },
+                'analyst': {
+                    'manage_zones': False, 'manage_chapters': False, 'manage_parents': False,
+                    'manage_children': True, 'manage_versions': False, 'view_rates': True,
+                    'edit_rates': True, 'delete_rates': False
+                },
+                'viewer': {
+                    'manage_zones': False, 'manage_chapters': False, 'manage_parents': False,
+                    'manage_children': False, 'manage_versions': False, 'view_rates': True,
+                    'edit_rates': False, 'delete_rates': False
+                }
+            }
+            
+            for role, perms in rate_permissions.items():
+                existing = self.get_role_permissions(role)
+                existing.update(perms)
+                self.update_role_permissions(role, existing)
+            
+            print("✅ Rate management permissions added to roles")
 
         # =========================================================
-# BATCH 5: HIERARCHY UPDATE METHODS
-# =========================================================
+    # BATCH 5: HIERARCHY UPDATE METHODS
+    # =========================================================
 
-def migrate_lged_tables_for_parent_types(self):
-    """Migrate existing LGED tables to support parent types"""
-    import sqlite3
-    
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
+    def migrate_lged_tables_for_parent_types(self):
+        """Migrate existing LGED tables to support parent types"""
+        import sqlite3
         
-        cursor.execute("PRAGMA table_info(lged_parents)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'parent_type' not in columns:
-            cursor.execute("ALTER TABLE lged_parents ADD COLUMN parent_type TEXT DEFAULT 'section_header'")
-            print("✅ Added parent_type to lged_parents")
-        
-        if 'has_children' not in columns:
-            cursor.execute("ALTER TABLE lged_parents ADD COLUMN has_children BOOLEAN DEFAULT 0")
-            print("✅ Added has_children to lged_parents")
-        
-        if 'unit' not in columns:
-            cursor.execute("ALTER TABLE lged_parents ADD COLUMN unit TEXT")
-            print("✅ Added unit to lged_parents")
-        
-        cursor.execute("PRAGMA table_info(lged_children)")
-        child_columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'zone_a' not in child_columns:
-            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_a REAL")
-            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_b REAL")
-            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_c REAL")
-            cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_d REAL")
-            print("✅ Added zone rate columns to lged_children")
-
-def update_lged_hierarchy(self, hierarchy: Dict, edition_year: int, notes: str = None) -> Dict:
-    """UPDATE existing active version (replaces data, no version increment)"""
-    from datetime import datetime
-    
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
-        
-        # Get the active version
-        cursor.execute("""
-            SELECT id, version_number FROM rate_versions 
-            WHERE source = 'LGED' AND edition_year = ? AND is_active = 1
-        """, (edition_year,))
-        
-        result = cursor.fetchone()
-        if not result:
-            return {
-                'success': False,
-                'error': f"No active version found for LGED {edition_year}",
-                'message': "❌ No active version found"
-            }
-        
-        version_id = result['id']
-        current_version = result['version_number']
-        
-        # Clear existing data
-        cursor.execute("DELETE FROM lged_zone_rates WHERE version_id = ?", (version_id,))
-        cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
-        cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
-        
-        section_headers = hierarchy.get('section_headers', [])
-        leaf_items = hierarchy.get('leaf_items', [])
-        children = hierarchy.get('children', [])
-        
-        parent_ids = {}
-        
-        # Save section headers
-        for header in section_headers:
-            cursor.execute("""
-                INSERT INTO lged_parents (code, description, chapter_number, section_number, 
-                                        parent_type, has_children, version_id)
-                VALUES (?, ?, ?, ?, 'section_header', ?, ?)
-            """, (header['code'], header.get('description', '')[:500], 
-                  header.get('chapter_number', ''), header.get('section_number', ''),
-                  1 if header.get('has_children') else 0, version_id))
-            parent_ids[header['code']] = cursor.lastrowid
-        
-        # Save leaf items
-        for leaf in leaf_items:
-            cursor.execute("""
-                INSERT INTO lged_parents (code, description, chapter_number, section_number, 
-                                        parent_type, has_children, unit, version_id)
-                VALUES (?, ?, ?, ?, 'leaf_item', 0, ?, ?)
-            """, (leaf['code'], leaf.get('description', '')[:500], 
-                  leaf.get('chapter_number', ''), leaf.get('section_number', ''),
-                  leaf.get('unit', ''), version_id))
-            parent_id = cursor.lastrowid
-            parent_ids[leaf['code']] = parent_id
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
             
-            for zone, rate in leaf.get('rates', {}).items():
-                cursor.execute("""
-                    INSERT INTO lged_zone_rates (parent_id, zone_name, unit_rate, version_id)
-                    VALUES (?, ?, ?, ?)
-                """, (parent_id, zone, rate, version_id))
-        
-        # Save child items
-        for child in children:
-            cursor.execute("""
-                INSERT INTO lged_children (code, parent_code, description, unit, 
-                                        chapter_number, section_number,
-                                        zone_a, zone_b, zone_c, zone_d,
-                                        edition_year, version_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (child['code'], child.get('parent_code', ''), child.get('description', '')[:500], 
-                  child.get('unit', ''), child.get('chapter_number', ''), child.get('section_number', ''),
-                  child.get('zone_a'), child.get('zone_b'), child.get('zone_c'), child.get('zone_d'),
-                  edition_year, version_id))
-        
-        total_parents = len(section_headers) + len(leaf_items)
-        total_children = len(children)
-        total_rates = len(leaf_items) + len(children)
-        
-        cursor.execute("""
-            UPDATE rate_versions 
-            SET total_parents = ?, total_children = ?, total_rates = ?,
-                updated_at = CURRENT_TIMESTAMP, notes = ?
-            WHERE id = ?
-        """, (total_parents, total_children, total_rates, notes or "Updated via import", version_id))
-        
-        return {
-            'success': True,
-            'version_id': version_id,
-            'version_number': current_version,
-            'mode': 'update_existing',
-            'message': f"✅ Updated existing version {current_version} for LGED {edition_year}"
-        }
+            cursor.execute("PRAGMA table_info(lged_parents)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'parent_type' not in columns:
+                cursor.execute("ALTER TABLE lged_parents ADD COLUMN parent_type TEXT DEFAULT 'section_header'")
+                print("✅ Added parent_type to lged_parents")
+            
+            if 'has_children' not in columns:
+                cursor.execute("ALTER TABLE lged_parents ADD COLUMN has_children BOOLEAN DEFAULT 0")
+                print("✅ Added has_children to lged_parents")
+            
+            if 'unit' not in columns:
+                cursor.execute("ALTER TABLE lged_parents ADD COLUMN unit TEXT")
+                print("✅ Added unit to lged_parents")
+            
+            cursor.execute("PRAGMA table_info(lged_children)")
+            child_columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'zone_a' not in child_columns:
+                cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_a REAL")
+                cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_b REAL")
+                cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_c REAL")
+                cursor.execute("ALTER TABLE lged_children ADD COLUMN zone_d REAL")
+                print("✅ Added zone rate columns to lged_children")
 
-def update_lged_chapter_section(self, hierarchy: Dict, version_id: int, edition_year: int,
-                                chapter_num: str, section_num: str = None, notes: str = None) -> Dict:
-    """Update data for a specific chapter/section within an existing version"""
-    from datetime import datetime
-    
-    with self.get_connection() as conn:
-        cursor = self.db_conn.get_cursor(conn)
+    def update_lged_hierarchy(self, hierarchy: Dict, edition_year: int, notes: str = None) -> Dict:
+        """UPDATE existing active version (replaces data, no version increment)"""
+        from datetime import datetime
         
-        cursor.execute("SELECT id, version_number FROM rate_versions WHERE id = ? AND source = 'LGED'", (version_id,))
-        version = cursor.fetchone()
-        
-        if not version:
-            return {'success': False, 'error': f"Version {version_id} not found", 'message': "Version not found"}
-        
-        version_number = version['version_number']
-        
-        section_headers = hierarchy.get('section_headers', [])
-        rate_items = hierarchy.get('rate_items', [])
-        
-        # Delete existing data for this specific chapter/section
-        if section_num:
-            cursor.execute("DELETE FROM lged_children WHERE version_id = ? AND chapter_number = ? AND section_number = ?", 
-                          (version_id, chapter_num, section_num))
-            cursor.execute("DELETE FROM lged_parents WHERE version_id = ? AND chapter_number = ? AND section_number = ?", 
-                          (version_id, chapter_num, section_num))
-        else:
-            cursor.execute("DELETE FROM lged_children WHERE version_id = ? AND chapter_number = ?", 
-                          (version_id, chapter_num))
-            cursor.execute("DELETE FROM lged_parents WHERE version_id = ? AND chapter_number = ?", 
-                          (version_id, chapter_num))
-        
-        # Save section headers
-        for header in section_headers:
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            # Get the active version
             cursor.execute("""
-                INSERT INTO lged_parents (code, description, chapter_number, section_number, 
-                                        parent_type, has_children, version_id)
-                VALUES (?, ?, ?, ?, 'section_header', ?, ?)
-            """, (header['code'], header.get('description', '')[:500], 
-                  header.get('chapter_number', chapter_num), 
-                  header.get('section_number', section_num or ''),
-                  1 if header.get('has_children') else 0, version_id))
-        
-        # Save rate items
-        for item in rate_items:
+                SELECT id, version_number FROM rate_versions 
+                WHERE source = 'LGED' AND edition_year = ? AND is_active = 1
+            """, (edition_year,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return {
+                    'success': False,
+                    'error': f"No active version found for LGED {edition_year}",
+                    'message': "❌ No active version found"
+                }
+            
+            version_id = result['id']
+            current_version = result['version_number']
+            
+            # Clear existing data
+            cursor.execute("DELETE FROM lged_zone_rates WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_children WHERE version_id = ?", (version_id,))
+            cursor.execute("DELETE FROM lged_parents WHERE version_id = ?", (version_id,))
+            
+            section_headers = hierarchy.get('section_headers', [])
+            leaf_items = hierarchy.get('leaf_items', [])
+            children = hierarchy.get('children', [])
+            
+            parent_ids = {}
+            
+            # Save section headers
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', '')[:500], 
+                    header.get('chapter_number', ''), header.get('section_number', ''),
+                    1 if header.get('has_children') else 0, version_id))
+                parent_ids[header['code']] = cursor.lastrowid
+            
+            # Save leaf items
+            for leaf in leaf_items:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, unit, version_id)
+                    VALUES (?, ?, ?, ?, 'leaf_item', 0, ?, ?)
+                """, (leaf['code'], leaf.get('description', '')[:500], 
+                    leaf.get('chapter_number', ''), leaf.get('section_number', ''),
+                    leaf.get('unit', ''), version_id))
+                parent_id = cursor.lastrowid
+                parent_ids[leaf['code']] = parent_id
+                
+                for zone, rate in leaf.get('rates', {}).items():
+                    cursor.execute("""
+                        INSERT INTO lged_zone_rates (parent_id, zone_name, unit_rate, version_id)
+                        VALUES (?, ?, ?, ?)
+                    """, (parent_id, zone, rate, version_id))
+            
+            # Save child items
+            for child in children:
+                cursor.execute("""
+                    INSERT INTO lged_children (code, parent_code, description, unit, 
+                                            chapter_number, section_number,
+                                            zone_a, zone_b, zone_c, zone_d,
+                                            edition_year, version_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (child['code'], child.get('parent_code', ''), child.get('description', '')[:500], 
+                    child.get('unit', ''), child.get('chapter_number', ''), child.get('section_number', ''),
+                    child.get('zone_a'), child.get('zone_b'), child.get('zone_c'), child.get('zone_d'),
+                    edition_year, version_id))
+            
+            total_parents = len(section_headers) + len(leaf_items)
+            total_children = len(children)
+            total_rates = len(leaf_items) + len(children)
+            
             cursor.execute("""
-                INSERT INTO lged_children (code, parent_code, description, unit, 
-                                        chapter_number, section_number,
-                                        zone_a, zone_b, zone_c, zone_d,
-                                        edition_year, version_id, is_parent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (item['code'], item.get('parent_code'), item.get('description', '')[:500], 
-                  item.get('unit', ''), item.get('chapter_number', chapter_num), 
-                  item.get('section_number', section_num or ''),
-                  item.get('zone_a'), item.get('zone_b'), item.get('zone_c'), item.get('zone_d'),
-                  edition_year, version_id, 1 if item.get('is_parent') else 0))
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    updated_at = CURRENT_TIMESTAMP, notes = ?
+                WHERE id = ?
+            """, (total_parents, total_children, total_rates, notes or "Updated via import", version_id))
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': current_version,
+                'mode': 'update_existing',
+                'message': f"✅ Updated existing version {current_version} for LGED {edition_year}"
+            }
+
+    def update_lged_chapter_section(self, hierarchy: Dict, version_id: int, edition_year: int,
+                                    chapter_num: str, section_num: str = None, notes: str = None) -> Dict:
+        """Update data for a specific chapter/section within an existing version"""
+        from datetime import datetime
         
-        # Update version statistics
-        cursor.execute("SELECT COUNT(*) FROM lged_parents WHERE version_id = ?", (version_id,))
-        total_parents = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM lged_children WHERE version_id = ?", (version_id,))
-        total_children = cursor.fetchone()[0]
-        total_rates = total_children * 4
-        
-        cursor.execute("""
-            UPDATE rate_versions 
-            SET total_parents = ?, total_children = ?, total_rates = ?,
-                updated_at = CURRENT_TIMESTAMP, notes = ?
-            WHERE id = ?
-        """, (total_parents, total_children, total_rates, notes, version_id))
-        
-        return {
-            'success': True,
-            'version_id': version_id,
-            'version_number': version_number,
-            'chapter': chapter_num,
-            'section': section_num,
-            'mode': 'update_chapter_section',
-            'message': f"✅ Updated Chapter {chapter_num}{' Section ' + section_num if section_num else ''} in Version {version_number}"
-        }
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            cursor.execute("SELECT id, version_number FROM rate_versions WHERE id = ? AND source = 'LGED'", (version_id,))
+            version = cursor.fetchone()
+            
+            if not version:
+                return {'success': False, 'error': f"Version {version_id} not found", 'message': "Version not found"}
+            
+            version_number = version['version_number']
+            
+            section_headers = hierarchy.get('section_headers', [])
+            rate_items = hierarchy.get('rate_items', [])
+            
+            # Delete existing data for this specific chapter/section
+            if section_num:
+                cursor.execute("DELETE FROM lged_children WHERE version_id = ? AND chapter_number = ? AND section_number = ?", 
+                            (version_id, chapter_num, section_num))
+                cursor.execute("DELETE FROM lged_parents WHERE version_id = ? AND chapter_number = ? AND section_number = ?", 
+                            (version_id, chapter_num, section_num))
+            else:
+                cursor.execute("DELETE FROM lged_children WHERE version_id = ? AND chapter_number = ?", 
+                            (version_id, chapter_num))
+                cursor.execute("DELETE FROM lged_parents WHERE version_id = ? AND chapter_number = ?", 
+                            (version_id, chapter_num))
+            
+            # Save section headers
+            for header in section_headers:
+                cursor.execute("""
+                    INSERT INTO lged_parents (code, description, chapter_number, section_number, 
+                                            parent_type, has_children, version_id)
+                    VALUES (?, ?, ?, ?, 'section_header', ?, ?)
+                """, (header['code'], header.get('description', '')[:500], 
+                    header.get('chapter_number', chapter_num), 
+                    header.get('section_number', section_num or ''),
+                    1 if header.get('has_children') else 0, version_id))
+            
+            # Save rate items
+            for item in rate_items:
+                cursor.execute("""
+                    INSERT INTO lged_children (code, parent_code, description, unit, 
+                                            chapter_number, section_number,
+                                            zone_a, zone_b, zone_c, zone_d,
+                                            edition_year, version_id, is_parent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (item['code'], item.get('parent_code'), item.get('description', '')[:500], 
+                    item.get('unit', ''), item.get('chapter_number', chapter_num), 
+                    item.get('section_number', section_num or ''),
+                    item.get('zone_a'), item.get('zone_b'), item.get('zone_c'), item.get('zone_d'),
+                    edition_year, version_id, 1 if item.get('is_parent') else 0))
+            
+            # Update version statistics
+            cursor.execute("SELECT COUNT(*) FROM lged_parents WHERE version_id = ?", (version_id,))
+            total_parents = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM lged_children WHERE version_id = ?", (version_id,))
+            total_children = cursor.fetchone()[0]
+            total_rates = total_children * 4
+            
+            cursor.execute("""
+                UPDATE rate_versions 
+                SET total_parents = ?, total_children = ?, total_rates = ?,
+                    updated_at = CURRENT_TIMESTAMP, notes = ?
+                WHERE id = ?
+            """, (total_parents, total_children, total_rates, notes, version_id))
+            
+            return {
+                'success': True,
+                'version_id': version_id,
+                'version_number': version_number,
+                'chapter': chapter_num,
+                'section': section_num,
+                'mode': 'update_chapter_section',
+                'message': f"✅ Updated Chapter {chapter_num}{' Section ' + section_num if section_num else ''} in Version {version_number}"
+            }
     # =========================================================
     # BATCH 6: REMAINING METHODS
     # =========================================================
 
-    def get_company_tenders(self, company_id: int, limit: int = 100):
-        """Get all tenders for a company"""
-        import pandas as pd
-        with self.get_connection() as conn:
-            return pd.read_sql_query("""
-                SELECT * FROM company_tenders 
-                WHERE company_id = ? AND is_active = 1
-                ORDER BY created_at DESC
-                LIMIT ?
-            """, conn, params=[company_id, limit])
+    def get_company_tenders(self, company_id: int, search_term: str = "", limit: int = 100) -> pd.DataFrame:
+        """Get company tenders with optional search"""
+        import pandas as pd  # ✅ Ensure pandas is imported
+        
+        try:
+            # ✅ Ensure company_id is integer
+            if company_id is None:
+                print("⚠️ get_company_tenders: company_id is None")
+                return pd.DataFrame()
+            
+            company_id = int(company_id)
+            
+            print(f"🔍 get_company_tenders: company_id={company_id}, search='{search_term}'")
+            
+            with self.get_connection() as conn:
+                query = """
+                    SELECT * FROM company_tenders 
+                    WHERE company_id = ? AND is_active = 1
+                """
+                params = [company_id]
+                
+                if search_term:
+                    query += " AND (tender_id LIKE ? OR tender_title LIKE ?)"
+                    params.extend([f"%{search_term}%", f"%{search_term}%"])
+                
+                query += " ORDER BY created_at DESC LIMIT ?"
+                params.append(limit)
+                
+                print(f"   Query: {query}")
+                print(f"   Params: {params}")
+                
+                return pd.read_sql_query(query, conn, params=params)
+                
+        except Exception as e:
+            print(f"❌ Error in get_company_tenders: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+
 
     def create_tender(self, company_id: int, tender_data: Dict) -> Optional[int]:
         """Create a new tender"""

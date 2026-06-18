@@ -22,23 +22,29 @@ def save_session_to_url(remember_me=False):
         return
     
     if st.session_state.get('logged_in', False):
+        # ✅ Save to URL parameters
         st.query_params['user_id'] = str(st.session_state.user_id)
         st.query_params['username'] = st.session_state.username
         st.query_params['expiry'] = str(int(time.time()) + 30 * 24 * 3600)
-        logger.info(f"Session saved to URL for user: {st.session_state.username}")
+        print(f"✅ Session saved to URL for user: {st.session_state.username}")
+        print(f"   Params: {dict(st.query_params)}")  # Debug
 
+
+# modules/auth.py - Update restore_session_from_url
 
 def restore_session_from_url():
     """Restore session from URL parameters"""
-    logger.info("Restoring session from URL...")
+    print("=" * 50)
+    print("RESTORE_SESSION_FROM_URL CALLED")
     
     # Already logged in
     if st.session_state.get('logged_in', False):
-        logger.info("User already logged in, skipping restore")
+        print("User already logged in, skipping restore")
         return True
     
     # Check URL parameters
     params = st.query_params
+    print(f"URL params: {dict(params)}")
     
     if 'user_id' in params and 'username' in params and 'expiry' in params:
         try:
@@ -47,30 +53,31 @@ def restore_session_from_url():
             expiry_time = int(params['expiry'])
             
             if expiry_time <= current_time:
-                logger.warning("Session expired")
+                print("Session expired")
                 st.query_params.clear()
                 return False
             
             user_id = int(params['user_id'])
             username = params['username']
+            print(f"Looking up user: id={user_id}")
             
-            # Get user from database (returns DICT now)
+            # Get user from database
             user = db.get_user_by_id(user_id)
             
             if not user:
-                logger.warning(f"User not found: id={user_id}")
+                print("User not found")
                 st.query_params.clear()
                 return False
             
             # Verify username matches
             if user.get('username') != username:
-                logger.warning(f"Username mismatch: DB='{user.get('username')}', URL='{username}'")
+                print(f"Username mismatch: DB='{user.get('username')}', URL='{username}'")
                 st.query_params.clear()
                 return False
             
-            logger.info(f"User verified: {user.get('username')}")
+            print(f"✅ User verified: {user.get('username')}")
             
-            # Restore session from DICT
+            # Restore session from dictionary
             st.session_state.logged_in = True
             st.session_state.user_id = user.get('id')
             st.session_state.username = user.get('username')
@@ -81,10 +88,9 @@ def restore_session_from_url():
             st.session_state.company_id = user.get('company_id')
             st.session_state.mobile_verified = user.get('mobile_verified', False)
             st.session_state.email_verified = user.get('email_verified', False)
-            st.session_state.account_type = 'company' if user.get('company_id') else 'individual'
             st.session_state.remember_me = True
             
-            # Get company name if exists
+            # Get company name
             if st.session_state.company_id:
                 company = db.get_company_by_id(st.session_state.company_id)
                 st.session_state.company_name = company.get('company_name', 'N/A') if company else 'N/A'
@@ -98,18 +104,23 @@ def restore_session_from_url():
                 st.session_state.subscription_plan = 'free'
             st.session_state.subscription_status = 'active'
             
-            logger.info(f"Session restored for user: {st.session_state.username}")
+            print(f"✅ Session restored for user: {st.session_state.username}")
+            print(f"✅ Role: {st.session_state.user_role}")
+            print(f"✅ Company: {st.session_state.company_name}")
             
-            # Clear URL params after restore
+            # ✅ CRITICAL: Clear URL params after restore
             st.query_params.clear()
+            print("✅ URL params cleared")
             
             return True
             
         except Exception as e:
-            logger.error(f"Restore error: {e}")
+            print(f"Restore error: {e}")
+            import traceback
             traceback.print_exc()
             st.query_params.clear()
     
+    print("❌ No valid session params found in URL")
     return False
 
 
@@ -117,20 +128,14 @@ def clear_session_url():
     """Clear session from URL"""
     st.query_params.clear()
 
+# modules/auth.py
+
 def login_user(user_data: Dict, password: str = None, remember_me: bool = False) -> bool:
-    """
-    Login user and set session state
-    
-    Args:
-        user_data: User dictionary from authenticate_user()
-        password: Optional password (for password login)
-        remember_me: Whether to remember the session
-    """
+    """Login user and set session state"""
     if not user_data:
         return False
     
     try:
-        # user_data is a DICTIONARY - use .get() not indexes!
         st.session_state.logged_in = True
         st.session_state.user_id = user_data.get('id')
         st.session_state.username = user_data.get('username')
@@ -160,11 +165,11 @@ def login_user(user_data: Dict, password: str = None, remember_me: bool = False)
             st.session_state.subscription_plan = 'free'
         st.session_state.subscription_status = 'active'
         
-        # ✅ ADD THIS: Refresh RBAC role cache
+        # ✅ Refresh RBAC role cache
         from modules.rbac import _rbac
         _rbac.refresh_role()
         
-        # Save to URL if remember_me is checked
+        # ✅ Save to URL if remember_me is checked
         if remember_me:
             save_session_to_url(remember_me)
         
@@ -313,3 +318,7 @@ def navigate_to(page: str, success_msg: str = None):
     if success_msg:
         st.success(success_msg)
     st.session_state.page = page
+
+def is_oauth_callback() -> bool:
+    """Check if current request is an OAuth callback"""
+    return 'code' in st.query_params

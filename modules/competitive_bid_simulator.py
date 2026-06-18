@@ -11,7 +11,7 @@ import json
 import base64
 import streamlit as st
 from typing import Dict, List, Optional, Tuple, Any
-
+from config import DEBUG_MODE, debug_print
 
 from modules.advanced_bid_optimizer import (
     calculate_optimal_bid_ppr2025,
@@ -30,7 +30,10 @@ from modules.rbac import (
 )
 
 from modules.competitive_bid_simulator_html_report_generator import HTMLReportGenerator
+from modules.tender_selector import render_tender_selector
 
+from modules.subscription_manager import SubscriptionManager, check_subscription_access
+from modules.subscription import is_premium_plan, get_plan
 
 class PriceToWinSimulator:
     """Price-to-Win Simulator - Generate optimal bid price with competitor scenarios."""
@@ -143,6 +146,8 @@ class PriceToWinSimulator:
                 'slt_threshold': optimization_result['slt_threshold'],
                 'nppi_factor': nppi_factor,
                 'expected_profit': optimization_result.get('expected_profit', 0),
+                # ✅ ADD THIS: Pass official_estimate to each scenario
+                'official_estimate': self.official_estimate,
                 'competitor_stats': {
                     'min': min(bid_values) if bid_values else 0,
                     'max': max(bid_values) if bid_values else 0,
@@ -260,25 +265,6 @@ Based on analysis of {len(scenarios)} scenarios with {min(num_comps_list)} to {m
 """
 
 
-def check_subscription_access(company_id, subscription_manager=None):
-    """Check subscription plan access."""
-    user_role = get_user_role()
-    if user_role == 'system_admin':
-        return True, 'system_admin', "System Admin - Full access"
-    
-    if not subscription_manager or not company_id:
-        return False, 'free', "Subscription check failed"
-    
-    try:
-        sub = subscription_manager.get_company_subscription(company_id)
-        plan = sub.get('plan', 'free')
-        if plan in ['professional', 'enterprise']:
-            return True, plan, f"Access granted - {plan.upper()} plan"
-        return False, plan, f"Requires Professional or Enterprise plan. Your plan: {plan.upper()}"
-    except:
-        return False, 'free', "Unable to verify subscription"
-
-
 def get_tenders_for_company(db, company_id, search_term=""):
     """Get tenders for a company."""
     try:
@@ -298,12 +284,10 @@ def get_tenders_for_company(db, company_id, search_term=""):
         return df
     except:
         return pd.DataFrame()
-
-
 def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
     """Main UI function."""
     
-    st.markdown("## 🎯 Price-to-Win Simulator")
+    st.markdown("## 🎯 Competitive Bid Simulator")
     st.markdown("*AI-powered bid optimization with competitor scenario analysis*")
     
     render_role_badge()
@@ -323,36 +307,54 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
         st.error(sub_msg)
         return
     
-    st.success(f"✅ Access Granted - {current_plan.upper()} Plan" if current_plan != 'system_admin' else "✅ System Admin Access")
+    st.success(f"✅ Access Granted 2- {current_plan.upper()} Plan" if current_plan != 'system_admin' else "✅ System Admin Access")
     
     can_generate = can_generate_scenarios()
     
-    # Tender selection
-    st.markdown("### 📋 Select Tender")
+    # # Tender selection
+    # st.markdown("### 📋 Select Tender")
     
+    # search_term = st.text_input("🔍 Search Tender", placeholder="Enter tender ID or title...")
+    # tenders_df = get_tenders_for_company(db, company_id, search_term)
+    
+    # if tenders_df.empty:
+    #     st.info("No tenders found. Please add tenders in Tender Management.")
+    #     official_estimate = st.number_input("OCE - BDT", min_value=10000.0, value=7500000.0, step=100000.0, format="%.3f")
+    #     procurement_type = st.selectbox("Procurement Type", ['goods', 'works', 'services'], index=1)
+    #     selected_tender_id = None
+    #     tender_title = "Manual Entry"
+    #     procuring_entity = "Manual Entry"
+    #     division = "Dhaka"
+    #     district = "Dhaka"
+    # else:
+    #     st.dataframe(tenders_df[['id', 'tender_id', 'tender_title', 'official_estimate']], use_container_width=True, hide_index=True)
+    #     selected = st.selectbox("Select Tender", tenders_df.to_dict('records'), format_func=lambda x: f"{x['tender_id']} - {x['tender_title'][:50]}")
+    #     official_estimate = selected['official_estimate']
+    #     procurement_type = selected.get('procurement_type', 'works')
+    #     selected_tender_id = selected['id']
+    #     tender_title = selected['tender_title']
+    #     procuring_entity = selected.get('procuring_entity', 'N/A')
+    #     division = selected.get('division', 'Dhaka')
+    #     district = selected.get('district', 'Dhaka')
+    
+    # ========== TENDER SELECTION ==========
     search_term = st.text_input("🔍 Search Tender", placeholder="Enter tender ID or title...")
-    tenders_df = get_tenders_for_company(db, company_id, search_term)
     
-    if tenders_df.empty:
-        st.info("No tenders found. Please add tenders in Tender Management.")
-        official_estimate = st.number_input("OCE - BDT", min_value=10000.0, value=7500000.0, step=100000.0, format="%.3f")
-        procurement_type = st.selectbox("Procurement Type", ['goods', 'works', 'services'], index=1)
-        selected_tender_id = None
-        tender_title = "Manual Entry"
-        procuring_entity = "Manual Entry"
-        division = "Dhaka"
-        district = "Dhaka"
-    else:
-        st.dataframe(tenders_df[['id', 'tender_id', 'tender_title', 'official_estimate']], use_container_width=True, hide_index=True)
-        selected = st.selectbox("Select Tender", tenders_df.to_dict('records'), format_func=lambda x: f"{x['tender_id']} - {x['tender_title'][:50]}")
-        official_estimate = selected['official_estimate']
-        procurement_type = selected.get('procurement_type', 'works')
-        selected_tender_id = selected['id']
-        tender_title = selected['tender_title']
-        procuring_entity = selected.get('procuring_entity', 'N/A')
-        division = selected.get('division', 'Dhaka')
-        district = selected.get('district', 'Dhaka')
+    selected_tender_id, tender_title, official_estimate, procurement_type, \
+    procuring_entity, division, district = render_tender_selector(
+        db=db,
+        company_id=st.session_state.get('company_id'),
+        search_term=search_term,
+        include_manual_entry=True,
+        title="📋 Select Tender",
+        show_table=True,
+        show_summary=True
+    )
     
+    if not selected_tender_id and not tender_title:
+        st.warning("Please select or enter a tender")
+        return
+
     # Configuration
     st.markdown("---")
     st.markdown("### ⚙️ Configuration")
@@ -361,7 +363,7 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
     with col1:
         min_price_pct = st.number_input("Min Bid (% of OCE)", 70, 95, 88, 1) / 100.0
     with col2:
-        max_price_pct = st.number_input("Max Bid (% of OCE)", 102, 120, 108, 1) / 100.0
+        max_price_pct = st.number_input("Max Bid (% of OCE)", 100, 120, 108, 1) / 100.0
     
     if min_price_pct >= max_price_pct:
         st.error("❌ Minimum must be less than maximum")
@@ -448,7 +450,8 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
                     'risk_level': s['risk_level'],
                     'expected_profit': s['expected_profit'],
                     'slt_threshold': s['slt_threshold'],
-                    'nppi_factor': s['nppi_factor']
+                    'nppi_factor': s['nppi_factor'],
+                    'official_estimate': official_estimate  # ✅ ADD THIS
                 })
                 scenarios_full.append({
                     'scenario_id': s['scenario_id'],
@@ -462,8 +465,11 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
                     'slt_threshold': s['slt_threshold'],
                     'expected_profit': s['expected_profit'],
                     'nppi_factor': s['nppi_factor'],
-                    'competitor_stats': s['competitor_stats']
+                    'competitor_stats': s['competitor_stats'],
+                    # ✅ ADD THIS
+                    'official_estimate': official_estimate
                 })
+
             
             # Get tier comparison
             tier_comparison = get_three_tier_comparison(
@@ -518,7 +524,7 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
             st.session_state.recommendation = recommendation
             st.session_state.analysis_generated = True
     
-    # Display results
+    # ========== DISPLAY RESULTS (when generated) ==========
     if st.session_state.get('analysis_generated'):
         analysis_data = st.session_state.analysis_data
         recommendation = st.session_state.recommendation
@@ -536,39 +542,154 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
         with col3:
             st.metric("Avg NPPI Used", f"{analysis_data.get('nppi_factor', 0):.4f}")
         
-        # Display NPPI factors per scenario
-        nppi_df = pd.DataFrame([{
-            'Scenario': s['scenario_id'],
-            'Competitors': s['num_competitors'],
-            'NPPI Factor': f"{s['nppi_factor']:.4f}"
-        } for s in scenarios])
-        st.dataframe(nppi_df, use_container_width=True, hide_index=True)
+        # ========== NPPI FACTORS TABLE (Formatted) ==========
+        st.markdown("### 📊 NPPI Factors per Scenario")
         
-        # Display recommendation
+        nppi_data = []
+        for s in scenarios:
+            nppi_data.append({
+                'Scenario': f"#{s['scenario_id']}",
+                'Competitors': s['num_competitors'],
+                'NPPI Factor': s['nppi_factor']
+            })
+        nppi_df = pd.DataFrame(nppi_data)
+        
+        # ✅ Consistent styling for NPPI table
+        st.dataframe(
+            nppi_df.style
+            .set_properties(**{'text-align': 'center'})
+            .set_table_styles([
+                {'selector': 'thead tr th', 'props': [('background-color', '#1a1a3e'), ('color', 'white'), ('font-weight', 'bold'), ('padding', '10px'), ('text-align', 'center')]},
+                {'selector': 'tbody tr:nth-child(even)', 'props': [('background-color', '#f5f3f8')]},
+                {'selector': 'tbody tr:hover', 'props': [('background-color', '#e8e0f0')]},
+                {'selector': 'td', 'props': [('padding', '8px')]},
+            ])
+            .format({'NPPI Factor': '{:.4f}'}),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # ========== AI RECOMMENDATION ==========
         st.markdown("## 🤖 AI Recommendation")
+        
+        # Calculate bid comparison
+        bid_ratio_pct = recommendation.get('bid_ratio', 0) * 100
+        less_or_above_than_oce = 100 - bid_ratio_pct
+        
+        # ✅ CORRECTED: Below OCE = Green (good), Above OCE = Red (bad)
+        if less_or_above_than_oce > 0:
+            arrow = "⬇️"  # Bidding below OCE (going down)
+            comparison_text = f"{less_or_above_than_oce:.1f}% below OCE"
+            delta_color = "normal"  # Green
+        else:
+            arrow = "⬆️"  # Bidding above OCE (going up)
+            comparison_text = f"{abs(less_or_above_than_oce):.1f}% above OCE"
+            delta_color = "inverse"  # Red
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Recommended Bid", f"BDT {recommendation['recommended_bid']:,.3f}", f"{recommendation['bid_ratio']*100:.1f}% of OCE")
+            st.metric(
+                "Recommended Bid", 
+                f"BDT {recommendation['recommended_bid']:,.3f}",
+                f"{arrow} {comparison_text}",
+                delta_color=delta_color
+            )
         with col2:
-            st.metric("Win Probability", f"{recommendation['expected_win_probability']*100:.0f}%")
+            win_pct = recommendation['expected_win_probability']*100
+            st.metric("Win Probability", f"{win_pct:.0f}%")
+            if win_pct >= 70:
+                st.caption("🟢 High chance of winning")
+            elif win_pct >= 40:
+                st.caption("🟡 Moderate chance")
+            else:
+                st.caption("🔴 Low chance")
         with col3:
             st.metric("Confidence Score", f"{recommendation['confidence_score']*100:.0f}%")
         with col4:
             st.metric("Avg NPPI", f"{recommendation.get('avg_nppi_factor', 0):.4f}")
         
-        # Scenarios table
+        # ========== SCENARIO RESULTS TABLE (Formatted) ==========
         st.markdown("## 📈 Scenario Results")
-        df_scenarios = pd.DataFrame([{
-            'Scenario': s['scenario_id'],
-            'Competitors': s['num_competitors'],
-            'Optimal Bid': f"BDT {s['optimized_bid']:,.3f}",
-            'Win Prob': f"{s['win_probability']*100:.0f}%",
-            'NPPI': f"{s['nppi_factor']:.4f}",
-            'Risk': s['risk_level']
-        } for s in scenarios])
-        st.dataframe(df_scenarios, use_container_width=True, hide_index=True)
         
-        # Export section
+        oce_value = analysis_data.get('official_estimate', 0)
+        
+        scenario_data = []
+        for s in scenarios:
+            bid_amount = s['optimized_bid']
+            bid_ratio = bid_amount / oce_value if oce_value > 0 else 0
+            bid_ratio_pct = bid_ratio * 100
+            less_or_above_than_oce = 100 - bid_ratio_pct
+            
+            # ✅ CORRECTED: Below OCE = Green, Above OCE = Red
+            if less_or_above_than_oce > 0:
+                comparison_text = f"⬇️ {less_or_above_than_oce:.1f}% below"
+                vs_color = "green"
+            else:
+                comparison_text = f"⬆️ {abs(less_or_above_than_oce):.1f}% above"
+                vs_color = "red"
+            
+            # Risk icon
+            risk = s['risk_level']
+            if risk.lower() == 'low':
+                risk_icon = "🟢"
+            elif risk.lower() == 'medium':
+                risk_icon = "🟡"
+            else:
+                risk_icon = "🔴"
+            
+            scenario_data.append({
+                'Scenario': f"#{s['scenario_id']}",
+                'Competitors': s['num_competitors'],
+                'Optimal Bid': s['optimized_bid'],
+                'vs OCE': comparison_text,
+                'Win Prob': s['win_probability'] * 100,
+                'NPPI': s['nppi_factor'],
+                'Risk': f"{risk_icon} {risk.title()}"
+            })
+        
+        df_scenarios = pd.DataFrame(scenario_data)
+        
+        st.dataframe(
+            df_scenarios.style
+            .set_properties(**{'text-align': 'center'})
+            .set_table_styles([
+                {'selector': 'thead tr th', 'props': [('background-color', '#1a1a3e'), ('color', 'white'), ('font-weight', 'bold'), ('padding', '10px'), ('text-align', 'center')]},
+                {'selector': 'tbody tr:nth-child(even)', 'props': [('background-color', '#f5f3f8')]},
+                {'selector': 'tbody tr:hover', 'props': [('background-color', '#e8e0f0')]},
+                {'selector': 'td', 'props': [('padding', '8px')]},
+            ])
+            # ✅ CORRECTED: Below OCE (contains "below") = Green, Above OCE (contains "above") = Red
+            .applymap(lambda x: 'color: #28a745; font-weight: bold;' if 'above' in str(x) else ('color: #dc3545; font-weight: bold;' if 'above' in str(x) else ''), subset=['vs OCE'])
+            .applymap(lambda x: 'color: #28a745; font-weight: bold;' if '🟢' in str(x) else ('color: #ffc107; font-weight: bold;' if '🟡' in str(x) else ('color: #dc3545; font-weight: bold;' if '🔴' in str(x) else '')), subset=['Risk'])
+            .format({'Optimal Bid': 'BDT {:,.3f}'})
+            .format({'Win Prob': '{:.0f}%'})
+            .format({'NPPI': '{:.4f}'}),
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # ========== SCENARIO SUMMARY ==========
+        st.markdown("### 🎯 Scenario Summary")
+        
+        best_scenario = max(scenarios, key=lambda x: x['win_probability'])
+        worst_scenario = min(scenarios, key=lambda x: x['win_probability'])
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.success(f"🏆 **Best Scenario: #{best_scenario['scenario_id']}**")
+            st.write(f"- Win Probability: {best_scenario['win_probability']*100:.0f}%")
+            st.write(f"- Optimal Bid: BDT {best_scenario['optimized_bid']:,.3f}")
+            st.write(f"- Risk Level: {best_scenario['risk_level'].title()}")
+            st.write(f"- # of Competitors: {best_scenario['num_competitors']}")
+        
+        with col2:
+            st.warning(f"⚠️ **Worst Scenario: #{worst_scenario['scenario_id']}**")
+            st.write(f"- Win Probability: {worst_scenario['win_probability']*100:.0f}%")
+            st.write(f"- Optimal Bid: BDT {worst_scenario['optimized_bid']:,.3f}")
+            st.write(f"- Risk Level: {worst_scenario['risk_level'].title()}")
+            st.write(f"- # of Competitors: {worst_scenario['num_competitors']}")
+        
+        # ========== EXPORT SECTION ==========
         from modules.competitive_bid_simulator_html_report_generator import render_report_section
         render_report_section(analysis_data)

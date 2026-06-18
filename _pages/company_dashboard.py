@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from database.unified_db_manager import UnifiedDatabaseManager
+from modules.subscription import render_simple_subscription_status
 
 db = UnifiedDatabaseManager()
 

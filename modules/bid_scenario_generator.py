@@ -28,6 +28,8 @@ from modules.rbac import (
     get_user_role,
     render_role_badge
 )
+from modules.tender_selector import render_tender_selector
+from modules.subscription_manager import SubscriptionManager, check_subscription_access
 
 
 class BidScenarioGenerator:
@@ -222,30 +224,6 @@ Based on analysis of {len(scenarios)} scenarios with {min(num_comps_list)} to {m
 • All calculations comply with PPR 2025 SLT evaluation criteria
 """
         return reasoning.strip()
-
-
-def check_subscription_access(company_id, subscription_manager=None):
-    """Check if company has required subscription plan."""
-    user_role = get_user_role()
-    is_system_admin = user_role == 'system_admin'
-    
-    if is_system_admin:
-        return True, 'system_admin', "System Admin - Full access"
-    
-    if not subscription_manager or not company_id:
-        return False, 'free', "Subscription check failed"
-    
-    try:
-        sub = subscription_manager.get_company_subscription(company_id)
-        plan = sub.get('plan', 'free')
-        
-        if plan in ['professional', 'enterprise']:
-            return True, plan, f"Access granted - {plan.upper()} plan"
-        else:
-            return False, plan, f"Scenario Generator requires Professional or Enterprise plan. Your plan: {plan.upper()}"
-    except Exception as e:
-        print(f"Subscription check error: {e}")
-        return False, 'free', "Unable to verify subscription"
 
 
 def get_tenders_for_company(db, company_id, search_term=""):
@@ -495,40 +473,24 @@ def render_bid_scenario_generator_ui(db=None, subscription_manager=None):
     can_export = can_export_scenarios()
         
     
-    # ========== TENDER SELECTION SECTION ==========
-    st.markdown("### 📋 Select Tender")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        search_term = st.text_input("🔍 Search Tender by ID or Title", placeholder="Enter tender ID or title...", key="tender_search")
-    with col2:
-        if st.button("🔄 Refresh", use_container_width=True, key="refresh_tenders"):
-            st.rerun()
-    
-    tenders_df = get_tenders_for_company(db, company_id, search_term)
-    
-    if tenders_df.empty:
-        st.info("No tenders found. Please add tenders in Tender Management first.")
-        use_manual = st.checkbox("Enter tender details manually", key="manual_tender")
-        if not use_manual:
-            return
-        official_estimate = st.number_input("OCE - BDT", min_value=10000.0, value=7500000.0, step=100000.0, format="%.3f", key="manual_oce")
-        procurement_type = st.selectbox("Procurement Type", ['goods', 'works', 'services'], index=1, key="manual_procurement")
-        selected_tender_id = None
-        tender_title = "Manual Entry"
-    else:
-        st.dataframe(
-            tenders_df[['id', 'tender_id', 'tender_title', 'official_estimate', 'procurement_type']], 
-            use_container_width=True, 
-            hide_index=True
-        )
-        
-        selected_tender_row = st.selectbox(
-            "Select a Tender",
-            options=tenders_df.to_dict('records'),
-            format_func=lambda x: f"{x['tender_id']} - {x['tender_title'][:50]}",
-            key="tender_select"
-        )
+    # ========== TENDER SELECTION ==========
+    search_term = st.text_input("🔍 Search Tender", placeholder="Enter tender ID or title...")
+
+    selected_tender_id, tender_title, official_estimate, procurement_type, \
+    procuring_entity, division, district = render_tender_selector(
+        db=db,
+        company_id=st.session_state.get('company_id'),
+        search_term=search_term,
+        include_manual_entry=True,
+        title="📋 Select Tender",
+        show_table=True,
+        show_summary=True
+    )
+
+    if not selected_tender_id and not tender_title:
+        st.warning("Please select or enter a tender")
+        return
+
         
         official_estimate = selected_tender_row['official_estimate']
         procurement_type = selected_tender_row['procurement_type']

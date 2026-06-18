@@ -8,7 +8,7 @@ from modules.rbac import (
     rbac, can_view_boq, can_create_boq, can_edit_boq, 
     can_delete_boq, can_export_data, render_role_badge
 )
-
+from modules.tender_selector import render_tender_selector
 class BOQGeneratorUI:
     """BOQ Generator for Subscribers - Read-only rates, custom items allowed"""
     
@@ -283,29 +283,27 @@ def _render_boq_generation_form(boq_ui, db, company_id, permissions):
     can_edit = permissions.get('can_edit_boq', False)
     
     # Step 1: Select Rate Source & Zone
-    st.markdown("### Step 1: Select Rate Source")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        rate_source = st.radio("Rate Schedule", ["PWD", "LGED"], horizontal=True)
-
-    with col2:
-        zones = ["Zone-A", "Zone-B", "Zone-C", "Zone-D"]
-        zone_labels = {
-            "Zone-A": "Dhaka & Mymensingh Division",
-            "Zone-B": "Chattogram & Sylhet Division",
-            "Zone-C": "Rajshahi & Rangpur Division" if rate_source == "LGED" else "Khulna & Barisal Division",
-            "Zone-D": "Khulna & Barishal Division" if rate_source == "LGED" else "Rajshahi & Rangpur Division"
-        }
-        
-        selected_zone = st.selectbox(
-            "Select Zone",
-            options=zones,
-            format_func=lambda x: f"{x} - {zone_labels.get(x, x)}"
-        )
+    # ========== TENDER SELECTION ==========
+    search_term = st.text_input("🔍 Search Tender", placeholder="Enter tender ID or title...")
+    
+    selected_tender_id, tender_title, official_estimate, procurement_type, \
+    procuring_entity, division, district = render_tender_selector(
+        db=db,
+        company_id=st.session_state.get('company_id'),
+        search_term=search_term,
+        include_manual_entry=True,
+        title="📋 Select Tender",
+        show_table=True,
+        show_summary=True
+    )
+    
+    if not selected_tender_id and not tender_title:
+        st.warning("Please select or enter a tender")
+        return
     
     # Step 2: Select Tender
-    st.markdown("### Step 2: Select Tender")
+    st.markdown("### Step 1: Select Tender")
     
     try:
         conn = db.get_connection()
@@ -336,6 +334,28 @@ def _render_boq_generation_form(boq_ui, db, company_id, permissions):
     if selected_tender:
         tender_info = tenders[tenders['id'] == selected_tender].iloc[0]
         st.info(f"**Official Estimate:** BDT {tender_info['official_estimate']:,.2f}")
+
+    st.markdown("### Step 2: Select Rate Source")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        rate_source = st.radio("Rate Schedule", ["PWD", "LGED"], horizontal=True)
+
+    with col2:
+        zones = ["Zone-A", "Zone-B", "Zone-C", "Zone-D"]
+        zone_labels = {
+            "Zone-A": "Dhaka & Mymensingh Division",
+            "Zone-B": "Chattogram & Sylhet Division",
+            "Zone-C": "Rajshahi & Rangpur Division" if rate_source == "LGED" else "Khulna & Barisal Division",
+            "Zone-D": "Khulna & Barishal Division" if rate_source == "LGED" else "Rajshahi & Rangpur Division"
+        }
+        
+        selected_zone = st.selectbox(
+            "Select Zone",
+            options=zones,
+            format_func=lambda x: f"{x} - {zone_labels.get(x, x)}"
+        )
+    
     
     # Step 3: Select Items from Master Rates
     st.markdown("### Step 3: Select Items from Master Rates")

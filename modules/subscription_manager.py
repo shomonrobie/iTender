@@ -1,116 +1,16 @@
 # modules/subscription_manager.py
 
 import streamlit as st
-import pandas as pd
 from datetime import datetime
-from typing import Tuple, Dict, Any, Optional  # ← ADD THIS LINE
+from typing import Tuple, Dict, Any, Optional
+from modules.subscription import get_plans, get_plan, is_premium_plan
 
+PLANS = get_plans()
 
-# Plan definitions with limits and permissions
-PLANS = {
-    'free': {
-        'name': 'Free',
-        'price_monthly': 0,
-        'price_yearly': 0,
-        'analyses_limit': 5,
-        'max_boq_generations': 5,
-        'max_bid_optimizations': 5,
-        'extension_auto_fills': 5,  # ← ADD THIS LINE
-        'users_limit': 1,
-        'can_edit_rates': False,
-        'can_delete_rates': False,
-        'can_create_versions': False,
-        'can_export_data': False,
-        'can_manage_team': False,
-        'color': '#gray',
-        'features': [
-            '✓ 5 BOQ generations/month',
-            '✓ 5 Bid optimizations/month',
-            '✓ 5 Tender analyses/month',
-            '✓ View rates only',
-            '✓ Email support',
-            '✓ 7-day history'
-        ]
-    },
-    'basic': {
-        'name': 'Basic',
-        'price_monthly': 4999,
-        'price_yearly': 49990,
-        'analyses_limit': 30,
-        'max_boq_generations': 30,
-        'max_bid_optimizations': 30,
-        'extension_auto_fills': 30,  # ← ADD THIS LINE
-        'users_limit': 3,
-        'can_edit_rates': False,
-        'can_delete_rates': False,
-        'can_create_versions': False,
-        'can_export_data': True,
-        'can_manage_team': False,
-        'color': '#4CAF50',
-        'features': [
-            '✓ 30 BOQ generations/month',
-            '✓ 30 Bid optimizations/month',
-            '✓ 30 Tender analyses/month',
-            '✓ Export reports (CSV/Excel)',
-            '✓ AI-powered predictions',
-            '✓ 30-day history',
-            '✓ Email support'
-        ]
-    },
-    'professional': {
-        'name': 'Professional',
-        'price_monthly': 14999,
-        'price_yearly': 149990,
-        'analyses_limit': -1,
-        'max_boq_generations': 100,
-        'max_bid_optimizations': 100,
-        'extension_auto_fills': 100,  # ← ADD THIS LINE
-        'users_limit': 10,
-        'can_edit_rates': True,
-        'can_delete_rates': False,
-        'can_create_versions': True,
-        'can_export_data': True,
-        'can_manage_team': True,
-        'color': '#2196F3',
-        'features': [
-            '✓ 100 BOQ generations/month',
-            '✓ 100 Bid optimizations/month',
-            '✓ Unlimited tender analyses',
-            '✓ Edit rates & create versions',
-            '✓ Team collaboration (up to 10 users)',
-            '✓ Competitor tracking',
-            '✓ API access',
-            '✓ Priority support'
-        ]
-    },
-    'enterprise': {
-        'name': 'Enterprise',
-        'price_monthly': 49999,
-        'price_yearly': 499990,
-        'analyses_limit': -1,
-        'max_boq_generations': -1,
-        'max_bid_optimizations': -1,
-        'extension_auto_fills': -1,  # ← ADD THIS LINE (unlimited)
-        'users_limit': -1,
-        'can_edit_rates': True,
-        'can_delete_rates': True,
-        'can_create_versions': True,
-        'can_export_data': True,
-        'can_manage_team': True,
-        'color': '#9C27B0',
-        'features': [
-            '✓ Unlimited BOQ generations',
-            '✓ Unlimited Bid optimizations',
-            '✓ Unlimited Tender analyses',
-            '✓ Delete rates & manage all data',
-            '✓ Unlimited team members',
-            '✓ Custom AI model',
-            '✓ Dedicated support',
-            '✓ SLA guarantee',
-            '✓ On-premise deployment option'
-        ]
-    }
-}
+from database.unified_db_manager import UnifiedDatabaseManager
+db = UnifiedDatabaseManager()
+
+DB_PATH = db.db_path
 
 
 class SubscriptionManager:
@@ -119,130 +19,19 @@ class SubscriptionManager:
     def __init__(self, db):
         self.db = db
     
-    def get_company_subscription(self, company_id):
-        """Get active subscription for a company"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT s.*, p.plan_name, p.max_boq_generations, p.max_bid_optimizations,
-                       p.max_tender_analyses, p.max_users, p.can_export_data,
-                       p.can_edit_rates, p.can_delete_rates, p.can_create_versions,
-                       p.can_manage_team
-                FROM subscriptions s
-                LEFT JOIN subscription_plans p ON s.plan = p.plan_name
-                WHERE s.company_id = ? AND s.status = 'active'
-                ORDER BY s.created_at DESC LIMIT 1
-            """, (company_id,))
-            
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row:
-                # Get the plan from subscriptions table
-                plan_name = row[3]  # plan column index
-                
-                # Get plan config
-                plan_config = PLANS.get(plan_name, PLANS['free'])
-                
-                # Get usage values (handle potential missing columns)
-                boq_used = 0
-                bid_used = 0
-                analyses_used = 0
-                
-                # Try to get column indices
-                try:
-                    # Try to find column positions
-                    cursor.execute("PRAGMA table_info(subscriptions)")
-                    columns = [col[1] for col in cursor.fetchall()]
-                    
-                    if 'boq_used' in columns:
-                        boq_used = row[columns.index('boq_used')] if len(row) > columns.index('boq_used') else 0
-                    if 'bid_optimizations_used' in columns:
-                        bid_used = row[columns.index('bid_optimizations_used')] if len(row) > columns.index('bid_optimizations_used') else 0
-                    if 'analyses_used' in columns:
-                        analyses_used = row[columns.index('analyses_used')] if len(row) > columns.index('analyses_used') else 0
-                except:
-                    pass
-                
-                return {
-                    'plan': plan_name,
-                    'plan_name': plan_config['name'],
-                    'status': row[4] if len(row) > 4 else 'active',
-                    'analyses_used': analyses_used,
-                    'boq_used': boq_used,
-                    'bid_optimizations_used': bid_used,
-                    'max_boq_generations': plan_config['max_boq_generations'],
-                    'max_bid_optimizations': plan_config['max_bid_optimizations'],
-                    'max_tender_analyses': plan_config['analyses_limit'],
-                    'max_users': plan_config['users_limit'],
-                    'can_export_data': plan_config['can_export_data'],
-                    'can_edit_rates': plan_config['can_edit_rates'],
-                    'can_delete_rates': plan_config['can_delete_rates'],
-                    'can_create_versions': plan_config['can_create_versions'],
-                    'can_manage_team': plan_config['can_manage_team'],
-                    'end_date': row[5] if len(row) > 5 else None
-                }
-            
-            # Return default free plan if no subscription found
-            return self._get_default_free_plan()
-            
-        except Exception as e:
-            print(f"Error getting subscription: {e}")
-            return self._get_default_free_plan()
-    def get_extension_limit_for_plan(self, plan_name: str) -> int:
-        """Get extension auto-fill limit for a plan (configurable by admin)"""
-        # This can be stored in database or config file
-        # For now, use hardcoded limits
-        plan_limits = {
-            'free': 5,
-            'basic': 30,
-            'professional': 100,
-            'enterprise': -1  # Unlimited
-        }
-        return plan_limits.get(plan_name, 5)
+    # ✅ DELEGATE to crud_operations.py - NO duplicate logic
+    def get_company_subscription(self, company_id: int) -> Dict[str, Any]:
+        """Get active subscription for a company - delegates to CRUD"""
+        return self.db.get_company_subscription(company_id)
     
-    def update_extension_limit_for_plan(self, plan_name: str, new_limit: int) -> bool:
-        """Update extension limit for a plan (admin only)"""
-        # Store in database
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                UPDATE subscription_plans 
-                SET extension_auto_fills = ? 
-                WHERE plan_name = ?
-            """, (new_limit, plan_name))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Error updating plan limit: {e}")
-            return False
-    def _get_default_free_plan(self):
-        """Return default free plan"""
-        free_plan = PLANS['free']
-        return {
-            'plan': 'free',
-            'plan_name': free_plan['name'],
-            'status': 'active',
-            'analyses_used': 0,
-            'boq_used': 0,
-            'bid_optimizations_used': 0,
-            'max_boq_generations': free_plan['max_boq_generations'],
-            'max_bid_optimizations': free_plan['max_bid_optimizations'],
-            'max_tender_analyses': free_plan['analyses_limit'],
-            'max_users': free_plan['users_limit'],
-            'can_export_data': free_plan['can_export_data'],
-            'can_edit_rates': free_plan['can_edit_rates'],
-            'can_delete_rates': free_plan['can_delete_rates'],
-            'can_create_versions': free_plan['can_create_versions'],
-            'can_manage_team': free_plan['can_manage_team'],
-            'end_date': None
-        }
+    def get_user_subscription(self, user_id: int) -> Dict[str, Any]:
+        """Get active subscription for a user - delegates to CRUD"""
+        return self.db.get_user_subscription(user_id)
+    
+    def get_plan_config(self, plan_name: str) -> Dict[str, Any]:
+        """Get plan configuration from PLANS dict"""
+        return PLANS.get(plan_name, PLANS['free'])
+    
     def check_extension_limit(self, company_id: int) -> Tuple[bool, int, str]:
         """
         Check if company has reached its extension auto-fill limit.
@@ -251,28 +40,27 @@ class SubscriptionManager:
             (can_proceed, remaining, message)
         """
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
+            # ✅ Use the CRUD method
+            sub = self.db.get_company_subscription(company_id)
+            plan = sub.get('subscription_tier', 'free')
             
-            # Get subscription plan
-            sub = self.get_company_subscription(company_id)
-            plan = sub.get('plan', 'free')
-            
-            # Get limit from plan
+            # Get plan config
             plan_config = PLANS.get(plan, PLANS['free'])
             limit = plan_config.get('extension_auto_fills', 5)
             
             # Get current month usage
-            now = datetime.now()
-            start_of_month = datetime(now.year, now.month, 1)
-            
-            cursor.execute("""
-                SELECT COUNT(*) FROM extension_auto_fill_log
-                WHERE company_id = ? AND filled_at >= ?
-            """, (company_id, start_of_month))
-            
-            used = cursor.fetchone()[0] or 0
-            conn.close()
+            with self.db.get_connection() as conn:
+                cursor = self.db.db_conn.get_cursor(conn)
+                now = datetime.now()
+                start_of_month = datetime(now.year, now.month, 1)
+                
+                cursor.execute("""
+                    SELECT COUNT(*) FROM extension_auto_fill_log
+                    WHERE company_id = ? AND filled_at >= ?
+                """, (company_id, start_of_month))
+                
+                row = cursor.fetchone()
+                used = row[0] if row else 0
             
             if limit == -1:
                 return True, -1, "Unlimited auto-fills"
@@ -288,7 +76,7 @@ class SubscriptionManager:
             print(f"Error checking extension limit: {e}")
             return True, -1, "Unable to check limit, proceeding anyway"
 
-    def check_limit(self, company_id, resource_type):
+    def check_limit(self, company_id: int, resource_type: str) -> Tuple[bool, int, str]:
         """
         Check if company has reached its limit for a resource.
         
@@ -299,7 +87,8 @@ class SubscriptionManager:
         Returns:
             (can_proceed, remaining, message)
         """
-        sub = self.get_company_subscription(company_id)
+        # ✅ Use the CRUD method
+        sub = self.db.get_company_subscription(company_id)
         
         resource_map = {
             'boq': ('max_boq_generations', 'boq_used', 'BOQ generations'),
@@ -312,7 +101,12 @@ class SubscriptionManager:
             return True, -1, "Unknown resource"
         
         max_field, used_field, name = resource_map[resource_type]
-        max_limit = sub.get(max_field, 5)
+        
+        # Use subscription_tier from the returned dict
+        plan = sub.get('subscription_tier', 'free')
+        plan_config = PLANS.get(plan, PLANS['free'])
+        
+        max_limit = sub.get(max_field, plan_config.get(max_field, 5))
         
         if resource_type == 'users':
             current_used = self._get_company_user_count(company_id)
@@ -329,10 +123,10 @@ class SubscriptionManager:
         else:
             return False, 0, f"No {name} remaining. Please upgrade your plan."
     
-    def increment_usage(self, company_id, resource_type):
+    def increment_usage(self, company_id: int, resource_type: str) -> bool:
         """Increment usage counter for a company resource"""
         conn = self.db.get_connection()
-        cursor = conn.cursor()
+        cursor = self.db.db_conn.get_cursor(conn)
         
         field_map = {
             'boq': 'boq_used',
@@ -348,9 +142,9 @@ class SubscriptionManager:
         try:
             cursor.execute(f"""
                 UPDATE subscriptions 
-                SET {field} = {field} + 1, updated_at = ?
+                SET {field} = {field} + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE company_id = ? AND status = 'active'
-            """, (datetime.now(), company_id))
+            """, (company_id,))
             conn.commit()
             conn.close()
             return True
@@ -359,26 +153,25 @@ class SubscriptionManager:
             conn.close()
             return False
     
-    def _get_company_user_count(self, company_id):
+    def _get_company_user_count(self, company_id: int) -> int:
         """Get number of active users in a company"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT COUNT(*) FROM users 
-                WHERE company_id = ? AND is_active = 1
-            """, (company_id,))
-            
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count
+            with self.db.get_connection() as conn:
+                cursor = self.db.db_conn.get_cursor(conn)
+                cursor.execute("""
+                    SELECT COUNT(*) FROM users 
+                    WHERE company_id = ? AND is_active = 1
+                """, (company_id,))
+                
+                row = cursor.fetchone()
+                return row[0] if row else 1
         except:
             return 1
     
-    def has_permission(self, company_id, permission):
+    def has_permission(self, company_id: int, permission: str) -> bool:
         """Check if company has a specific permission"""
-        sub = self.get_company_subscription(company_id)
+        # ✅ Use the CRUD method
+        sub = self.db.get_company_subscription(company_id)
         
         permission_map = {
             'edit_rates': sub.get('can_edit_rates', False),
@@ -390,7 +183,106 @@ class SubscriptionManager:
         
         return permission_map.get(permission, False)
 
+        
+    # modules/subscription_manager.py - Add this method to the SubscriptionManager class
 
+    def render_usage_stats(self, user_id: int = None) -> None:
+        """
+        Render usage statistics in sidebar or any UI component.
+        
+        Args:
+            user_id: User ID (defaults to session state)
+        """
+        import streamlit as st
+        
+        if user_id is None:
+            user_id = st.session_state.get('user_id')
+        
+        if not user_id:
+            return
+        
+        # Check if user has premium access
+        from modules.subscription import is_premium_plan, get_current_user_plan_name
+        is_premium = is_premium_plan(get_current_user_plan_name())
+        
+        if not is_premium:
+            return
+        
+        try:
+            # Get user subscription
+            sub = self.db.get_user_subscription(user_id)
+            limit = sub.get('max_projects', 5)
+            used = sub.get('analyses_used', 0)
+            
+            # Only show if there's a limit
+            if limit <= 0:
+                return
+            
+            remaining = max(0, limit - used)
+            pct_used = min(100, (used / limit) * 100) if limit > 0 else 0
+            
+            st.markdown(f"""
+            <div style="font-size: 0.8rem; color: #666; text-align: center; margin-top: 0.5rem;">
+                <strong>📊 Monthly Usage</strong><br>
+                {used}/{limit} analyses used<br>
+                <div style="background: #e5e7eb; border-radius: 4px; height: 4px; margin: 4px 0;">
+                    <div style="background: #667eea; width: {pct_used}%; height: 100%; border-radius: 4px;"></div>
+                </div>
+                <small>{remaining} remaining this month</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:
+            # Silently fail - don't break the UI
+            pass
+
+
+    def render_extension_usage_stats(self, company_id: int = None) -> None:
+        """
+        Render extension usage statistics in sidebar.
+        
+        Args:
+            company_id: Company ID (defaults to session state)
+        """
+        import streamlit as st
+        
+        if company_id is None:
+            company_id = st.session_state.get('company_id')
+        
+        if not company_id:
+            return
+        
+        try:
+            usage = self.db.get_extension_fill_usage(company_id)
+            is_unlimited = usage.get('is_unlimited', False)
+            remaining = usage.get('remaining', 0)
+            used = usage.get('used', 0)
+            limit = usage.get('limit', 5)
+            
+            if is_unlimited:
+                st.markdown("""
+                <div style="font-size: 0.8rem; color: #666; text-align: center;">
+                    <strong>🤖 Extension</strong><br>
+                    <span style="color: #10b981;">Unlimited auto-fills</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="font-size: 0.8rem; color: #666; text-align: center;">
+                    <strong>🤖 Extension Auto-Fills</strong><br>
+                    {remaining} remaining this month<br>
+                    <div style="background: #e5e7eb; border-radius: 4px; height: 4px; margin: 4px 0;">
+                        <div style="background: #667eea; width: {min(100, (used / limit) * 100) if limit > 0 else 0}%; height: 100%; border-radius: 4px;"></div>
+                    </div>
+                    <small>{used} used this month</small>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
+        except Exception as e:
+            # Silently fail
+            pass
 def check_subscription_and_permission(db, resource_type=None, permission=None):
     """
     Check subscription limits and permissions.
@@ -426,3 +318,115 @@ def check_subscription_and_permission(db, resource_type=None, permission=None):
             return False, f"You don't have permission to {permission.replace('_', ' ')}. Please upgrade your plan."
     
     return True, "OK"
+
+# =============================================================================
+# SUBSCRIPTION ACCESS CHECK
+# =============================================================================
+
+def check_subscription_access(company_id: int = None, user_id: int = None, subscription_manager: Optional['SubscriptionManager'] = None) -> Tuple[bool, str, str]:
+    """
+    Check subscription access - uses correct logic based on user type
+    
+    Args:
+        company_id: Company ID (optional)
+        user_id: User ID (optional, defaults to current user)
+        subscription_manager: Optional SubscriptionManager instance
+    
+    Returns:
+        (has_access: bool, plan: str, message: str)
+    """
+    print("=" * 60)
+    print("🔍 check_subscription_access() called")
+    print("=" * 60)
+    
+    # Get user info
+    from modules.rbac import get_current_user_role
+    user_role = get_current_user_role()
+    print(f"   👤 User role: {user_role}")
+    
+    # System admin bypass - full access
+    if user_role in ['system_admin', 'admin']:
+        print("   ✅ System admin - Full access granted")
+        return True, 'system_admin', "System Admin - Full access"
+    
+    # Get user_id if not provided
+    if user_id is None:
+        user_id = st.session_state.get('user_id')
+    
+    if not user_id:
+        print("   ❌ No user ID found")
+        return False, 'free', "User not found"
+    
+    # ✅ Get the effective plan using the new logic
+    from modules.subscription import get_effective_plan_for_user
+    effective = get_effective_plan_for_user(user_id)
+    
+    plan = effective.get('plan', 'free')
+    source = effective.get('source', 'none')
+    
+    print(f"   📊 Effective Plan: {plan} (Source: {source})")
+    
+    if plan != 'free':
+        print(f"   ✅ Access granted - {plan.upper()} plan ({source})")
+        return True, plan, f"{source.upper()} subscription - {plan.upper()} plan"
+    
+    print(f"   ❌ No active subscription found")
+    return False, 'free', "No active subscription found. Please subscribe."
+
+
+
+def check_premium_access(company_id: int) -> bool:
+    """
+    Quick check if company has premium access (Professional or Enterprise)
+    
+    Args:
+        company_id: Company ID
+    
+    Returns:
+        bool: True if premium access, False otherwise
+    """
+    has_access, _, _ = check_subscription_access(company_id)
+    return has_access
+
+
+
+def render_subscription_badge(self, user_id: int = None) -> None:
+    """
+    Render a small subscription badge for the sidebar.
+    
+    Args:
+        user_id: User ID (defaults to session state)
+    """
+    import streamlit as st
+    
+    if user_id is None:
+        user_id = st.session_state.get('user_id')
+    
+    if not user_id:
+        return
+    
+    from modules.subscription import get_plan, get_current_user_plan_name
+    
+    plan_name = get_current_user_plan_name()
+    plan_config = get_plan(plan_name)
+    
+    if not plan_config:
+        return
+    
+    is_premium = plan_name in ['professional', 'enterprise']
+    badge_color = plan_config.get('color', '#6c757d')
+    badge_icon = plan_config.get('badge', '📋')
+    display_name = plan_config.get('name', plan_name.title())
+    
+    st.markdown(f"""
+    <div style="text-align: center; background: {badge_color}15; 
+                padding: 0.4rem; border-radius: 6px; margin: 0.5rem 0; 
+                border: 1px solid {badge_color}30;">
+        <span style="color: {badge_color}; font-weight: 600; font-size: 0.85rem;">
+            {badge_icon} {display_name}
+        </span>
+        <span style="font-size: 0.7rem; color: {badge_color}; opacity: 0.7; margin-left: 4px;">
+            {'✨ PREMIUM' if is_premium else '🆓 FREE'}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)

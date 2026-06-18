@@ -154,6 +154,7 @@ def render_add_competitor_form():
                 }
                 
                 comp_id = db.add_competitor_to_master(st.session_state.company_id, competitor_data)
+
                 st.success(f"✅ Competitor '{competitor_name}' added to master list!")
                 st.balloons()
 

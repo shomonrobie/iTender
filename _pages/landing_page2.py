@@ -2568,91 +2568,13 @@ def show_landing_page():
     """, unsafe_allow_html=True)
     
     st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
-    
     # ==================== PRICING SECTION ====================
     st.markdown('<div id="pricing"></div>', unsafe_allow_html=True)
-    st.markdown("""
-    <h2 class="section-title">💰 Simple, Transparent Pricing</h2>
-    <p class="section-subtitle">আপনার ব্যবসার জন্য সেরা প্ল্যান বেছে নিন</p>
-    """, unsafe_allow_html=True)
     
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown("""
-        <div class="pricing-card">
-            <div class="pricing-icon">🆓</div>
-            <div class="pricing-name">Free</div>
-            <div class="pricing-price">৳0<span>/mo</span></div>
-            <div class="pricing-features">
-                <div>✅ 5 analyses/mo</div>
-                <div>✅ Basic reports</div>
-                <div>✅ Email support</div>
-                <div>✅ 7-day history</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Choose Free", key="plan_free", use_container_width=True):
-            st.session_state.page = "register"
-            st.rerun()
-    
-    with col2:
-        st.markdown("""
-        <div class="pricing-card">
-            <div class="pricing-icon">📊</div>
-            <div class="pricing-name">Basic</div>
-            <div class="pricing-price">৳4,999<span>/mo</span></div>
-            <div class="pricing-features">
-                <div>✅ 30 analyses/mo</div>
-                <div>✅ AI predictions</div>
-                <div>✅ Export reports</div>
-                <div>✅ Priority support</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Choose Basic", key="plan_basic", use_container_width=True):
-            st.session_state.page = "register"
-            st.rerun()
-    
-    with col3:
-        st.markdown("""
-        <div class="pricing-card popular">
-            <div class="popular-badge">🔥 Most Popular</div>
-            <div class="pricing-icon">🚀</div>
-            <div class="pricing-name">Professional</div>
-            <div class="pricing-price">৳14,999<span>/mo</span></div>
-            <div class="pricing-features">
-                <div>✅ Unlimited analyses</div>
-                <div>✅ ML predictions</div>
-                <div>✅ Team collaboration</div>
-                <div>✅ Priority support</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Choose Professional", key="plan_pro", use_container_width=True, type="primary"):
-            st.session_state.page = "register"
-            st.rerun()
-    
-    with col4:
-        st.markdown("""
-        <div class="pricing-card">
-            <div class="pricing-icon">🏢</div>
-            <div class="pricing-name">Enterprise</div>
-            <div class="pricing-price">৳49,999<span>/mo</span></div>
-            <div class="pricing-features">
-                <div>✅ Everything in Pro</div>
-                <div>✅ Custom AI model</div>
-                <div>✅ Dedicated support</div>
-                <div>✅ SLA guarantee</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Choose Enterprise", key="plan_enterprise", use_container_width=True):
-            st.session_state.page = "register"
-            st.rerun()
-    
-    st.markdown('<div class="modern-divider"></div>', unsafe_allow_html=True)
-    
+    # ✅ Use the dynamic plan comparison page
+    from modules.subscription_plan_comparison import render_plan_comparison_page
+    render_plan_comparison_page()
+
     # ==================== TESTIMONIALS ====================
     st.markdown('<div id="testimonials"></div>', unsafe_allow_html=True)
     st.markdown("""

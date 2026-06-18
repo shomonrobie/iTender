@@ -479,6 +479,10 @@ class RBACManager:
 
 _rbac = RBACManager()
 
+def get_current_user_role() -> str:
+    """Get current user's role"""
+    return _rbac.get_current_user_role()
+
 # ========== Rate Management Permissions ==========
 def can_view_rates() -> bool:
     return _rbac.has_permission('can_view_rates')

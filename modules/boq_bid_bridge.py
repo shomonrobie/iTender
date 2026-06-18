@@ -13,6 +13,7 @@ from modules.rbac import (
     render_role_badge, require_permission
 )
 
+from modules.tender_selector import render_tender_selector
 DB_PATH = "data/tender_system.db"
 
 

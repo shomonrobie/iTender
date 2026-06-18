@@ -54,16 +54,30 @@ def model_to_form():
     st.session_state.input_document_fee = st.session_state.tender_form_data['document_fee']
     st.session_state.input_procurement_type = st.session_state.tender_form_data['procurement_type']
     st.session_state.analysis_risk_tolerance = st.session_state.tender_form_data['risk_tolerance']
+# utils/analysis_helpers.py
 
 def ensure_admin_premium():
     """Force admin to have professional plan for testing"""
-    if st.session_state.get('logged_in') and st.session_state.get('user_role') == 'admin':
-        sub = db.get_user_subscription(st.session_state.user_id)
-        if sub.get('plan') == 'free':
-            db.update_subscription(st.session_state.user_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
-            st.session_state.subscription_plan = 'professional'
-            debug_print("🎁 Auto-upgraded admin to professional plan")
-            return True
+    if st.session_state.get('logged_in') and st.session_state.get('user_role') in ['admin', 'system_admin']:
+        user_id = st.session_state.user_id
+        company_id = st.session_state.get('company_id')
+        
+        # ✅ Check user subscription first
+        sub = db.get_user_subscription(user_id)
+        
+        if sub.get('subscription_tier') == 'free':
+            # ✅ Try to update user subscription
+            success = db.update_user_subscription(user_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
+            
+            # ✅ If no user subscription, try company subscription
+            if not success and company_id:
+                success = db.update_company_subscription(company_id, 'professional', 'monthly', 'system', 'ADMIN_UPGRADE')
+            
+            if success:
+                st.session_state.subscription_plan = 'professional'
+                debug_print("🎁 Auto-upgraded admin to professional plan")
+                return True
+    
     return False
 
 def _save_analysis_callback():

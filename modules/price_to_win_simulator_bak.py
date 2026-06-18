@@ -30,6 +30,7 @@ from modules.rbac import (
 )
 
 from modules.competitive_bid_simulator_html_report_generator import HTMLReportGenerator
+from modules.subscription_manager import SubscriptionManager, check_subscription_access
 
 
 class PriceToWinSimulator:
@@ -220,25 +221,6 @@ Based on analysis of {len(scenarios)} scenarios with {min(num_comps_list)} to {m
 • Scenario optimal bids ranged from BDT {min(optimal_bids):,.3f} to BDT {max(optimal_bids):,.3f}
 • All calculations comply with PPR 2025 SLT evaluation criteria
 """
-
-
-def check_subscription_access(company_id, subscription_manager=None):
-    """Check subscription plan access."""
-    user_role = get_user_role()
-    if user_role == 'system_admin':
-        return True, 'system_admin', "System Admin - Full access"
-    
-    if not subscription_manager or not company_id:
-        return False, 'free', "Subscription check failed"
-    
-    try:
-        sub = subscription_manager.get_company_subscription(company_id)
-        plan = sub.get('plan', 'free')
-        if plan in ['professional', 'enterprise']:
-            return True, plan, f"Access granted - {plan.upper()} plan"
-        return False, plan, f"Requires Professional or Enterprise plan. Your plan: {plan.upper()}"
-    except:
-        return False, 'free', "Unable to verify subscription"
 
 
 def get_tenders_for_company(db, company_id, search_term=""):

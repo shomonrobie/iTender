@@ -140,6 +140,13 @@ def navigate_to(page: str, success_msg: Optional[str] = None, error_msg: Optiona
     
     st.session_state.page = page
     st.rerun()
+def navigate_to_2(page: str, success_msg: str = None):
+    """Navigate to a page"""
+    if success_msg:
+        st.success(success_msg)
+    st.session_state.page = page
+    # ✅ Force rerun after setting page
+    st.rerun()
 
 
 

@@ -1189,14 +1189,25 @@ def render_company_management():
                 with comp_tab2:
                     st.markdown("#### 💳 Subscription Management")
                     
+                    # ✅ Debug: Log current subscription state
+                    print("=" * 60)
+                    print("📊 SUBSCRIPTION MANAGEMENT UI LOADED")
+                    print("=" * 60)
+                    print(f"   Company: {company.get('company_name', 'Unknown')} (ID: {company['id']})")
+                    print(f"   Current Subscription Data: {subscription}")
+                    
                     # Display current subscription
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Current Plan", subscription.get('plan', 'free').upper())
+                        current_plan = subscription.get('subscription_tier') or subscription.get('plan', 'free')
+                        st.metric("Current Plan", current_plan.upper())
+                        print(f"   📋 Current Plan: {current_plan}")
+                    
                     with col2:
                         st.metric("Status", subscription.get('status', 'active').upper())
+                    
                     with col3:
-                        limit = subscription.get('analyses_limit', 5)
+                        limit = subscription.get('max_projects') or subscription.get('analyses_limit', 5)
                         used = subscription.get('analyses_used', 0)
                         if limit == -1:
                             st.metric("Analyses", "Unlimited")
@@ -1207,14 +1218,21 @@ def render_company_management():
                     st.markdown("---")
                     st.markdown("#### Update Subscription")
                     
+                    # ✅ Get available plans from database
+                    from modules.subscription_plans import get_plans
+                    plans = get_plans()
+                    plan_options = list(plans.keys())
+                    
                     col1, col2 = st.columns(2)
                     with col1:
+                        # ✅ Use plan_options from database
                         new_plan = st.selectbox(
                             "Select Plan",
-                            options=["free", "basic", "professional", "enterprise"],
-                            index=["free", "basic", "professional", "enterprise"].index(subscription.get('plan', 'free')),
+                            options=plan_options,
+                            index=plan_options.index(current_plan) if current_plan in plan_options else 0,
                             key=f"plan_select_{company['id']}"
                         )
+                        print(f"   📋 New Plan Selected: {new_plan}")
                     
                     with col2:
                         duration = st.selectbox(
@@ -1222,35 +1240,117 @@ def render_company_management():
                             options=["monthly", "yearly"],
                             key=f"duration_select_{company['id']}"
                         )
+                        print(f"   📋 Duration Selected: {duration}")
                     
                     # Plan benefits
-                    plan_benefits = {
-                        "free": "• 5 analyses/month\n• Basic reports\n• Email support",
-                        "basic": "• 30 analyses/month\n• AI predictions\n• Priority support",
-                        "professional": "• Unlimited analyses\n• ML predictions\n• Team collaboration\n• Advanced reporting",
-                        "enterprise": "• Everything in Professional\n• Custom AI model\n• Dedicated support\n• API access"
-                    }
-                    st.info(plan_benefits.get(new_plan, ""))
+                    plan_config = plans.get(new_plan, {})
+                    features = plan_config.get('features', ['Basic features'])
+                    st.info("\n".join([f"• {f}" for f in features[:5]]))
                     
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button(f"💾 Update Subscription", key=f"update_sub_{company['id']}", type="primary"):
-                            success = db.update_company_subscription(company['id'], new_plan, duration, 'admin_manual')
-                            if success:
-                                st.success(f"✅ Subscription updated to {new_plan.upper()}!")
-                                st.rerun()
-                            else:
-                                st.error("Failed to update subscription")
+                            print("\n" + "=" * 60)
+                            print("🔄 UPDATE SUBSCRIPTION BUTTON CLICKED")
+                            print("=" * 60)
+                            print(f"   Company: {company.get('company_name', 'Unknown')} (ID: {company['id']})")
+                            print(f"   Current Plan: {current_plan}")
+                            print(f"   New Plan: {new_plan}")
+                            print(f"   Duration: {duration}")
+                            
+                            # ✅ Show confirmation dialog
+                            st.warning(f"⚠️ You are about to update subscription for **{company.get('company_name', 'Unknown')}** from **{current_plan.upper()}** to **{new_plan.upper()}**")
+                            
+                            col_confirm, col_cancel = st.columns(2)
+                            with col_confirm:
+                                if st.button("✅ Confirm Update", key=f"confirm_update_{company['id']}"):
+                                    print("   ✅ User confirmed update")
+                                    
+                                    # Execute update
+                                    success = db.update_company_subscription(
+                                        company['id'], 
+                                        new_plan, 
+                                        duration, 
+                                        'admin_manual',
+                                        f'ADMIN_{datetime.now().strftime("%Y%m%d%H%M%S")}'
+                                    )
+                                    
+                                    print(f"   📊 Update Result: {success}")
+                                    
+                                    if success:
+                                        # ✅ Verify the update
+                                        print("   🔍 Verifying update...")
+                                        updated_sub = db.get_company_subscription(company['id'])
+                                        updated_plan = updated_sub.get('subscription_tier') or updated_sub.get('plan', 'free')
+                                        
+                                        print(f"   📊 Verified Plan: {updated_plan}")
+                                        
+                                        # ✅ Check if update was successful
+                                        if updated_plan == new_plan:
+                                            print("   ✅ Update verified successfully!")
+                                            st.success(f"✅ Subscription for **{company.get('company_name', 'Unknown')}** updated from **{current_plan.upper()}** to **{new_plan.upper()}**!")
+                                            
+                                            # Clear cache
+                                            from modules.subscription_plans import refresh_plans_cache
+                                            refresh_plans_cache()
+                                            print("   ✅ Plans cache refreshed")
+                                            
+                                            st.rerun()
+                                        else:
+                                            print(f"   ❌ Verification failed: Expected {new_plan}, got {updated_plan}")
+                                            st.error(f"❌ Update verification failed. Expected {new_plan.upper()}, but got {updated_plan.upper()}")
+                                    else:
+                                        print("   ❌ Update returned False")
+                                        st.error("❌ Failed to update subscription. Please check logs.")
+                            with col_cancel:
+                                if st.button("❌ Cancel", key=f"cancel_update_{company['id']}"):
+                                    print("   ❌ User cancelled update")
+                                    st.rerun()
                     
                     with col2:
-                        if subscription.get('plan') != 'free':
+                        if subscription.get('plan') != 'free' and subscription.get('plan') != 'free':
                             if st.button(f"❌ Cancel Subscription", key=f"cancel_sub_{company['id']}"):
-                                success = db.update_company_subscription(company['id'], 'free', 'monthly', 'admin_cancelled')
-                                if success:
-                                    st.success("Subscription cancelled. Plan set to FREE.")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to cancel subscription")
+                                print("\n" + "=" * 60)
+                                print("🔄 CANCEL SUBSCRIPTION BUTTON CLICKED")
+                                print("=" * 60)
+                                print(f"   Company: {company.get('company_name', 'Unknown')} (ID: {company['id']})")
+                                print(f"   Current Plan: {current_plan}")
+                                
+                                st.warning(f"⚠️ You are about to cancel subscription for **{company.get('company_name', 'Unknown')}**")
+                                
+                                col_confirm, col_cancel = st.columns(2)
+                                with col_confirm:
+                                    if st.button("✅ Confirm Cancel", key=f"confirm_cancel_{company['id']}"):
+                                        print("   ✅ User confirmed cancellation")
+                                        
+                                        success = db.update_company_subscription(
+                                            company['id'], 
+                                            'free', 
+                                            'monthly', 
+                                            'admin_cancelled',
+                                            f'CANCEL_{datetime.now().strftime("%Y%m%d%H%M%S")}'
+                                        )
+                                        
+                                        print(f"   📊 Cancel Result: {success}")
+                                        
+                                        if success:
+                                            print("   ✅ Subscription cancelled successfully")
+                                            st.success(f"✅ Subscription for **{company.get('company_name', 'Unknown')}** cancelled. Plan set to FREE.")
+                                            
+                                            # Clear cache
+                                            from modules.subscription_plans import refresh_plans_cache
+                                            refresh_plans_cache()
+                                            print("   ✅ Plans cache refreshed")
+                                            
+                                            st.rerun()
+                                        else:
+                                            print("   ❌ Cancel returned False")
+                                            st.error("❌ Failed to cancel subscription. Please check logs.")
+                                
+                                with col_cancel:
+                                    if st.button("❌ Cancel Action", key=f"cancel_action_{company['id']}"):
+                                        print("   ❌ User cancelled action")
+                                        st.rerun()
                     
                     # Subscription details
                     st.markdown("---")
@@ -1261,6 +1361,11 @@ def render_company_management():
                         st.caption(f"**Payment Method:** {subscription.get('payment_method')}")
                     if subscription.get('transaction_id'):
                         st.caption(f"**Transaction ID:** {subscription.get('transaction_id')}")
+                    
+                    print("=" * 60)
+                    print("✅ SUBSCRIPTION MANAGEMENT UI RENDERED")
+                    print("=" * 60)
+
     else:
         st.info("No companies found")
 
@@ -1446,7 +1551,7 @@ def render_system_user_management():
                                         updates['company_id'] = new_company_id
                                     
                                     if updates:
-                                        if db.update_user(user_id, updates):
+                                        if db.update_user(user_id, **updates):
                                             st.success("User updated! Changes will appear after refresh.")
                                             st.rerun()
                                         else:

@@ -74,6 +74,16 @@ class HTMLReportGenerator:
         risk_assessment = self._generate_risk_assessment(risk_level, bid_ratio)
         nppi_table = self._generate_nppi_table(scenarios)
         
+        bid_ratio_pct = bid_ratio * 100
+        less_or_above = 100 - bid_ratio_pct
+
+        if less_or_above > 0:
+            vs_text = f'⬇️ {less_or_above:.1f}%'
+            vs_color = '#10b981'  # Green
+        else:
+            vs_text = f'⬆️ {abs(less_or_above):.1f}%'
+            vs_color = '#ef4444'  # Red
+
         html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -198,24 +208,25 @@ class HTMLReportGenerator:
         
         <div class="content">
             <!-- Key Metrics -->
-            <div class="stats-grid">
-                <div class="stat-card"><div class="stat-value">{competitor_count}</div><div class="stat-label">Competitors</div></div>
-                <div class="stat-card"><div class="stat-value">{win_probability*100:.0f}%</div><div class="stat-label">Win Probability</div></div>
-                <div class="stat-card"><div class="stat-value">BDT {recommended_bid:,.3f}</div><div class="stat-label">Recommended Bid</div></div>
-                <div class="stat-card"><div class="stat-value">{bid_ratio*100:.2f}%</div><div class="stat-label">of Estimate</div></div>
-            </div>
-            
-            <!-- NPPI Configuration Section -->
-            <div class="section">
-                <div class="section-title">📊 NPPI Configuration (PPR 2025)</div>
-                <div class="info-grid">
-                    <div class="info-item"><div class="info-label">NPPI Mode</div><div class="info-value">{nppi_mode}</div></div>
-                    <div class="info-item"><div class="info-label">NPPI Range</div><div class="info-value">{nppi_min:.3f} - {nppi_max:.3f}</div></div>
-                    <div class="info-item"><div class="info-label">Average NPPI Used</div><div class="info-value">{avg_nppi:.4f}</div></div>
-                    <div class="info-item"><div class="info-label">PPR 2025 Compliance</div><div class="info-value">{compliance_badge}</div></div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{competitor_count}</div>
+                        <div class="stat-label">Competitors</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{win_probability*100:.0f}%</div>
+                        <div class="stat-label">Win Probability</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">BDT {recommended_bid:,.3f}</div>
+                        <div class="stat-label">Recommended Bid</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: {vs_color};">{vs_text}</div>
+                        <div class="stat-label">vs OCE</div>
+                    </div>
                 </div>
-                {nppi_table}
-            </div>
+
             
             <!-- Tender Information -->
             <div class="section">
@@ -365,6 +376,90 @@ class HTMLReportGenerator:
             risk_level = s.get('risk_level', 'MEDIUM')
             risk_color = risk_colors.get(risk_level, '#f59e0b')
             
+            # ✅ Calculate vs OCE comparison
+            oce_value = s.get('official_estimate', 0)
+            bid_amount = s.get('optimized_bid', 0)
+            
+            if oce_value > 0:
+                bid_ratio_pct = (bid_amount / oce_value) * 100
+                less_or_above_than_oce = 100 - bid_ratio_pct
+                
+                # ✅ Below OCE = Green (⬇️), Above OCE = Red (⬆️)
+                if less_or_above_than_oce > 0:
+                    comparison_text = f"⬇️ {less_or_above_than_oce:.1f}%"
+                    vs_color = "#10b981"  # Green
+                else:
+                    comparison_text = f"⬆️ {abs(less_or_above_than_oce):.1f}%"
+                    vs_color = "#ef4444"  # Red
+            else:
+                comparison_text = "N/A"
+                vs_color = "#6b7280"
+            
+            rows.append(f'''
+            <tr>
+                <td style="text-align: center;">{s.get('scenario_id', '-')}</td>
+                <td style="text-align: center;">{s.get('num_competitors', 0)}</td>
+                <td style="text-align: center; font-family: monospace; font-weight: bold;">{s.get('nppi_factor', 0):.4f}</td>
+                <td style="text-align: right; font-family: monospace;">{s.get('optimized_bid', 0):,.3f}</td>
+                <td style="text-align: center; font-family: monospace;">{s.get('bid_ratio', 0)*100:.1f}%</td>
+                <td style="text-align: center; font-family: monospace; font-weight: bold; color: {vs_color};">{comparison_text}</td>
+                <td style="text-align: center;">
+                    <div style="background: #e2e8f0; border-radius: 10px; height: 6px; width: 100%;">
+                        <div style="background: #3b82f6; width: {win_prob*100:.0f}%; height: 100%; border-radius: 10px;"></div>
+                    </div>
+                    <span style="font-size: 11px;">{win_prob*100:.0f}%</span>
+                </td>
+                <td style="text-align: center;">
+                    <span class="badge" style="background:{risk_color}20; color:{risk_color};">{risk_level}</span>
+                </td>
+            </tr>
+            ''')
+        
+        return f'''
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                    <tr style="background: #1e3c72; color: white;">
+                        <th style="padding: 10px;">#</th>
+                        <th style="padding: 10px;">Competitors</th>
+                        <th style="padding: 10px;">NPPI</th>
+                        <th style="padding: 10px;">Optimal Bid (BDT)</th>
+                        <th style="padding: 10px;">Bid Ratio</th>
+                        <th style="padding: 10px;">vs OCE</th>
+                        <th style="padding: 10px;">Win Probability</th>
+                        <th style="padding: 10px;">Risk</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows)}
+                </tbody>
+            </table>
+        </div>
+        <p style="margin-top: 10px; font-size: 11px; color: #666; text-align: center;">
+            📊 Showing all {len(scenarios)} scenarios • NPPI factors vary per scenario
+        </p>
+        '''
+
+    def _generate_scenario_table_bak(self, scenarios):
+        """Generate scenario summary table with ALL scenarios"""
+        if not scenarios:
+            return '<p>No scenario data available</p>'
+        
+        # Risk color mapping
+        risk_colors = {
+            'LOW': '#10b981',
+            'MEDIUM': '#f59e0b',
+            'HIGH': '#ef4444',
+            'MEDIUM-HIGH': '#f97316',
+            'MEDIUM-LOW': '#84cc16'
+        }
+        
+        rows = []
+        for s in scenarios:
+            win_prob = s.get('win_probability', 0)
+            risk_level = s.get('risk_level', 'MEDIUM')
+            risk_color = risk_colors.get(risk_level, '#f59e0b')
+            
             rows.append(f'''
             <tr>
                 <td style="text-align: center;">{s.get('scenario_id', '-')}</td>
@@ -424,6 +519,33 @@ class HTMLReportGenerator:
             comp_bids = scenario.get('competitor_bids', [])
             stats = scenario.get('competitor_stats', {})
             
+            # ✅ Get official_estimate from scenario data
+            oce_value = scenario.get('official_estimate', 0)
+            bid_amount = scenario.get('optimized_bid', 0)
+            
+            # ✅ If oce_value is 0, try to get it from the parent object
+            if oce_value == 0:
+                # Try to get from the first scenario in the list
+                for s in scenarios_full:
+                    if s.get('official_estimate', 0) > 0:
+                        oce_value = s.get('official_estimate', 0)
+                        break
+            
+            # ✅ Calculate vs OCE
+            if oce_value > 0:
+                bid_ratio_pct = (bid_amount / oce_value) * 100
+                less_or_above_than_oce = 100 - bid_ratio_pct
+                
+                if less_or_above_than_oce > 0:
+                    vs_oce_text = f"⬇️ {less_or_above_than_oce:.1f}% below OCE"
+                    vs_oce_color = "#10b981"  # Green
+                else:
+                    vs_oce_text = f"⬆️ {abs(less_or_above_than_oce):.1f}% above OCE"
+                    vs_oce_color = "#ef4444"  # Red
+            else:
+                vs_oce_text = "N/A"
+                vs_oce_color = "#6b7280"
+            
             # Get zone info if available
             zone_info = ""
             if 'zone' in scenario:
@@ -450,18 +572,34 @@ class HTMLReportGenerator:
                 # Sort bids for better readability
                 sorted_bids = sorted(comp_bids) if isinstance(comp_bids[0], (int, float)) else sorted([b.get('bid', 0) if isinstance(b, dict) else b for b in comp_bids])
                 
-                for i, bid in enumerate(sorted_bids[:20], 1):  # Show up to 20 competitor bids
+                for i, bid in enumerate(sorted_bids[:20], 1):
                     # Highlight the optimal bid position
                     optimal_bid = scenario.get('optimized_bid', 0)
-                    is_optimal_position = abs(bid - optimal_bid) < (optimal_bid * 0.01)  # Within 1% of optimal
+                    is_optimal_position = abs(bid - optimal_bid) < (optimal_bid * 0.01)
                     row_style = 'background: #d1fae5;' if is_optimal_position else ''
+                    
+                    # ✅ Calculate vs OCE for each competitor
+                    if oce_value > 0:
+                        bid_pct = (bid / oce_value) * 100
+                        bid_vs_oce = bid_pct - 100
+                        if bid_vs_oce < 0:
+                            bid_vs_text = f"⬇️ {abs(bid_vs_oce):.1f}%"
+                            bid_vs_color = '#10b981'
+                        else:
+                            bid_vs_text = f"⬆️ {abs(bid_vs_oce):.1f}%"
+                            bid_vs_color = '#ef4444'
+                    else:
+                        bid_pct = 0
+                        bid_vs_text = "N/A"
+                        bid_vs_color = '#6b7280'
                     
                     bid_rows += f'''
                     <tr style="{row_style}">
                         <td style="text-align: center;">{i}</td>
                         <td>Competitor {i}</td>
                         <td style="text-align: right; font-family: monospace;">BDT {bid:,.3f}</td>
-                        <td style="text-align: center;">{((bid / scenario.get('official_estimate', 1)) * 100):.1f}%</td>
+                        <td style="text-align: center; font-family: monospace;">{bid_pct:.1f}%</td>
+                        <td style="text-align: center; font-family: monospace; color: {bid_vs_color};">{bid_vs_text}</td>
                     </tr>
                     '''
             
@@ -497,6 +635,10 @@ class HTMLReportGenerator:
                         <br><small style="color: #666;">{scenario.get('bid_ratio', 0)*100:.1f}% of OCE</small>
                     </div>
                     <div>
+                        <strong>📊 vs OCE</strong><br>
+                        <span style="font-size: 1.1rem; font-weight: bold; color: {vs_oce_color};">{vs_oce_text}</span>
+                    </div>
+                    <div>
                         <strong>🏆 Win Probability</strong><br>
                         <span style="font-size: 1.1rem; font-weight: bold; color: #10b981;">{scenario.get('win_probability', 0)*100:.0f}%</span>
                         <br><small style="color: #666;">AI prediction</small>
@@ -505,11 +647,6 @@ class HTMLReportGenerator:
                         <strong>🛡️ SLT Threshold</strong><br>
                         <span style="font-size: 1.1rem; font-weight: bold;">BDT {scenario.get('slt_threshold', 0):,.3f}</span>
                         <br><small style="color: #666;">PPR 2025 compliant</small>
-                    </div>
-                    <div>
-                        <strong>💰 Expected Profit</strong><br>
-                        <span style="font-size: 1.1rem; font-weight: bold; color: #f59e0b;">BDT {scenario.get('expected_profit', 0):,.3f}</span>
-                        <br><small style="color: #666;">At recommended bid</small>
                     </div>
                 </div>
                 
@@ -525,6 +662,7 @@ class HTMLReportGenerator:
                                     <th style="padding: 8px;">Competitor</th>
                                     <th style="padding: 8px;">Bid Amount (BDT)</th>
                                     <th style="padding: 8px;">% of OCE</th>
+                                    <th style="padding: 8px;">vs OCE</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -540,6 +678,7 @@ class HTMLReportGenerator:
             '''
         
         return html
+
     def _generate_detailed_scenarios_bak(self, scenarios_full):
         """Generate detailed scenario breakdown with competitor bids."""
         if not scenarios_full:
