@@ -11,6 +11,7 @@ from functools import wraps
 from database.unified_db_manager import db
 from modules.rbac import _rbac, ROLE_PERMISSIONS
 from modules.subscription_manager import SubscriptionManager, check_subscription_access, PLANS
+from modules.subscription import get_plans, get_plan, is_premium_plan
 
 
 
@@ -137,7 +138,14 @@ class AccessControl:
             (has_access: bool, plan: str, message: str)
         """
         company_id = st.session_state.get('company_id')
-        return check_subscription_access(company_id, self._subscription_manager)
+        user_id = st.session_state.get('user_id')
+        return check_subscription_access(
+            company_id=company_id,
+            user_id=user_id,
+            subscription_manager=self._subscription_manager
+        )
+
+        
 
     def has_feature_access(self, feature: str) -> Tuple[bool, str]:
         """

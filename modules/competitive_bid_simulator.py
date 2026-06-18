@@ -301,13 +301,17 @@ def render_competitive_bid_simulator_ui(db=None, subscription_manager=None):
     company_id = st.session_state.get('company_id')
     user_id = st.session_state.get('user_id')
     
-    has_subscription, current_plan, sub_msg = check_subscription_access(company_id, subscription_manager)
+    has_subscription, current_plan, sub_msg = check_subscription_access(
+        company_id=company_id, 
+        user_id=user_id,
+        subscription_manager=subscription_manager)
+
     if not has_subscription and user_role != 'system_admin':
         st.warning("🔒 Premium Feature")
         st.error(sub_msg)
         return
     
-    st.success(f"✅ Access Granted 2- {current_plan.upper()} Plan" if current_plan != 'system_admin' else "✅ System Admin Access")
+    st.success(f"✅ Access Granted - {current_plan.upper()} Plan" if current_plan != 'system_admin' else "✅ System Admin Access")
     
     can_generate = can_generate_scenarios()
     

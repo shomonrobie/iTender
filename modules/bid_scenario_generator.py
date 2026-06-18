@@ -456,7 +456,12 @@ def render_bid_scenario_generator_ui(db=None, subscription_manager=None):
     user_id = st.session_state.get('user_id')
     is_system_admin = user_role == 'system_admin'
     
-    has_subscription, current_plan, sub_message = check_subscription_access(company_id, subscription_manager)
+    
+    has_subscription, current_plan, sub_message = check_subscription_access(
+        company_id=company_id, 
+        user_id=user_id,
+        subscription_manager=subscription_manager
+    )
     
     if not has_subscription and not is_system_admin:
         st.warning("🔒 **Premium Feature - Subscription Required**")
