@@ -4,7 +4,8 @@ import streamlit as st
 import hashlib
 from datetime import datetime
 import streamlit.components.v1 as components
-
+from pathlib import Path
+import base64
 def init_theme():
     """Initialize theme settings"""
     if 'dark_mode' not in st.session_state:

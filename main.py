@@ -833,14 +833,14 @@ def render_sidebar() -> None:
             'viewer': '👁️ Viewer'
         }.get(user_role, '👤 User')
         
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
-                    padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
-            <strong>👋 {full_name}</strong><br>
-            <small>🏢 {company_name}<br>
-            ⭐ {role_display}</small>
-        </div>
-        """, unsafe_allow_html=True)
+        # st.markdown(f"""
+        # <div style="background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); 
+        #             padding: 0.75rem; border-radius: 8px; margin: 0.5rem 0;">
+        #     <strong>👋 {full_name}</strong><br>
+        #     <small>🏢 {company_name}<br>
+        #     ⭐ {role_display}</small>
+        # </div>
+        # """, unsafe_allow_html=True)
         
         # Premium badge
         badge_color = plan_config.get('color', '#6c757d') if is_premium else "#6b7280"

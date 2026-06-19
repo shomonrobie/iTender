@@ -92,7 +92,7 @@ def render_top_navigation():
         ]
 
     # ==================== RENDER NAV ====================
-    st.markdown('<div class="top-nav-container">', unsafe_allow_html=True)
+    # st.markdown('<div class="top-nav-container">', unsafe_allow_html=True)
 
     # Use columns with wrapping (best Streamlit approach)
     num_items = len(nav_items)
