@@ -15,8 +15,9 @@ def render_footer():
         "linkedin_share": f"https://www.linkedin.com/sharing/share-offsite/?url={urllib.parse.quote(share_url)}",
         "twitter_share": f"https://twitter.com/intent/tweet?text={urllib.parse.quote(share_title)}&url={urllib.parse.quote(share_url)}",
         "whatsapp_share": f"https://api.whatsapp.com/send?text={urllib.parse.quote(share_title + ' ' + share_url)}",
-        "email_share": f"mailto:?subject=TenderAI&body={urllib.parse.quote(share_title + '\n\nCheck out TenderAI: ' + share_url)}",
+        "email_share_url": f"mailto:?subject=TenderAI&body={urllib.parse.quote(share_title + '\n\nCheck out TenderAI: ' + share_url)}",
     }
+    
     st.markdown("""
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
         """, unsafe_allow_html=True)
@@ -258,7 +259,7 @@ def render_footer():
                         <a href="{share_links['linkedin_share']}" target="_blank" class="social-icon" title="LinkedIn"><i class="fab fa-linkedin-in"></i></a>
                         <a href="{share_links['twitter_share']}" target="_blank" class="social-icon" title="Twitter/X"><i class="fab fa-x-twitter"></i></a>
                         <a href="{share_links['whatsapp_share']}" target="_blank" class="social-icon" title="WhatsApp"><i class="fab fa-whatsapp"></i></a>
-                        <a href="{share_links['email_share']}" target="_blank" class="social-icon" title="Email"><i class="fas fa-envelope"></i></a>
+                        <a href="{share_links['email_share_url']}" target="_blank" class="social-icon" title="Email"><i class="fas fa-envelope"></i></a>
                     </div>
                 </div>
                 <a href="/?page=book_demo" onclick="window.location.href='/?page=book_demo'; return false;" class="demo-button">🚀 Book a Demo</a>
