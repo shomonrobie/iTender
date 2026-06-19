@@ -1472,15 +1472,15 @@ def render_header_nav() -> None:
 def debug_environment():
     from modules.google_auth import get_redirect_uri
     """Debug environment detection"""
-    print("=" * 60)
-    print("🔍 ENVIRONMENT DEBUG")
-    print("=" * 60)
-    print(f"STREAMLIT_SHARING_MODE: {os.getenv('STREAMLIT_SHARING_MODE')}")
-    print(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
-    print(f"HOSTNAME: {os.getenv('HOSTNAME')}")
-    print(f"/home/appuser exists: {os.path.exists('/home/appuser')}")
-    print(f"Redirect URI: {get_redirect_uri()}")
-    print("=" * 60)
+    st.write("=" * 60)
+    st.write("🔍 ENVIRONMENT DEBUG")
+    st.write("=" * 60)
+    st.write(f"STREAMLIT_SHARING_MODE: {os.getenv('STREAMLIT_SHARING_MODE')}")
+    st.write(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
+    st.write(f"HOSTNAME: {os.getenv('HOSTNAME')}")
+    st.write(f"/home/appuser exists: {os.path.exists('/home/appuser')}")
+    st.write(f"Redirect URI: {get_redirect_uri()}")
+    st.write("=" * 60)
 
 
 def main() -> None:

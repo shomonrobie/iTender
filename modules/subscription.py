@@ -2,7 +2,7 @@
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from database.unified_db_manager import UnifiedDatabaseManager
@@ -32,7 +32,7 @@ def get_plans_from_db(force_refresh: bool = False) -> Dict[str, Dict]:
     
     # Return cached plans if not expired (5 minutes)
     if not force_refresh and _plans_cache is not None:
-        from datetime import datetime, timedelta
+        
         if _plans_cache_time and datetime.now() - _plans_cache_time < timedelta(minutes=5):
             return _plans_cache
     
@@ -94,7 +94,7 @@ def get_plans_from_db(force_refresh: bool = False) -> Dict[str, Dict]:
             return plans
             
     except Exception as e:
-        print(f"⚠️ Error loading plans from database: {e}")
+        print(f"⚠️ subscription.py > Error loading plans from database: {e}")
         # Fallback to default plans
         return get_default_plans()
 
