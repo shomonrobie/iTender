@@ -1469,19 +1469,6 @@ def render_header_nav() -> None:
                         st.session_state.page = page_key
                         st.rerun()
 
-def debug_environment():
-    from modules.google_auth import get_redirect_uri
-    """Debug environment detection"""
-    st.write("=" * 60)
-    st.write("🔍 ENVIRONMENT DEBUG")
-    st.write("=" * 60)
-    st.write(f"STREAMLIT_SHARING_MODE: {os.getenv('STREAMLIT_SHARING_MODE')}")
-    st.write(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
-    st.write(f"HOSTNAME: {os.getenv('HOSTNAME')}")
-    st.write(f"/home/appuser exists: {os.path.exists('/home/appuser')}")
-    st.write(f"Redirect URI: {get_redirect_uri()}")
-    st.write("=" * 60)
-
 
 def main() -> None:
     """
@@ -1495,7 +1482,7 @@ def main() -> None:
     
     # Apply theme CSS
     apply_theme()
-    debug_environment()
+    
     # =========================================================================
     # FIRST: Check if user is already logged in - redirect immediately
     # =========================================================================
