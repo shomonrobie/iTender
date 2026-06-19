@@ -429,5 +429,6 @@ def show_about_page():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+    from modules.footer import render_footer
+    render_footer()
     debug_print("✅ About page render complete")

@@ -1,3 +1,4 @@
+#modules/user_management.py
 import streamlit as st
 import pandas as pd
 from database.unified_db_manager import UnifiedDatabaseManager
@@ -13,22 +14,31 @@ from utils.helpers import validate_password_strength
 import re
 
 db = UnifiedDatabaseManager()
-def render_user_management_bak():
-    """Full user management with CRUD, search, pagination, inline editing"""
+
+def render_user_management():
+    """Enhanced user management with profile fields, avatar, and social links"""
     
-    company_id = st.session_state.get('company_id')
-    company_name = st.session_state.get('company_name', 'Unknown Company')
+    # ✅ Use selected_company_id if set (from admin dashboard)
+    company_id = st.session_state.get('selected_company_id')
     
-    # ✅ Get company name from database if not in session
-    if not company_name or company_name == 'Unknown Company':
+    # If no selected_company_id, fallback to session company_id
+    if not company_id:
+        company_id = st.session_state.get('company_id')
+    
+    # Get company name
+    company_name = "Unknown Company"
+    if company_id:
         company = db.get_company_by_id(company_id)
         if company:
-            company_name = company.get('company_name', 'Unknown')
+            company_name = company.get('company_name', 'Unknown Company')
+        else:
+            st.error(f"Company with ID {company_id} not found!")
+            return
     
     st.markdown(f"""
     <div class="main-header">
         <h1>👥 User Management - {company_name}</h1>
-        <p>Manage team members, roles, and permissions for <strong>{company_name}</strong></p>
+        <p>Manage team members, roles, permissions, and profiles for <strong>{company_name}</strong></p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -45,10 +55,12 @@ def render_user_management_bak():
         st.session_state.user_role_filter = ""
     if 'user_status_filter' not in st.session_state:
         st.session_state.user_status_filter = None
+    if 'show_profile_fields' not in st.session_state:
+        st.session_state.show_profile_fields = False
     
     # ========== FILTERS & SEARCH ==========
     st.markdown("### 🔍 Filter Users")
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
     with col1:
         search_term = st.text_input("Search by name, username, or email", 
                                     value=st.session_state.user_search,
@@ -60,11 +72,18 @@ def render_user_management_bak():
         status_filter = st.selectbox("Status", ["All", "Active", "Inactive"],
                                      index=0, key="status_filter_select")
     with col4:
+        # Toggle profile fields display
+        show_profile = st.checkbox("Show Profile Fields", 
+                                   value=st.session_state.show_profile_fields,
+                                   key="show_profile_toggle")
+        st.session_state.show_profile_fields = show_profile
+    with col5:
         if st.button("🔄 Reset Filters", use_container_width=True):
             st.session_state.user_search = ""
             st.session_state.user_role_filter = ""
             st.session_state.user_status_filter = None
             st.session_state.user_page = 1
+            st.session_state.show_profile_fields = False
             st.rerun()
     
     # Update session state based on current inputs
@@ -85,8 +104,8 @@ def render_user_management_bak():
         offset=offset
     )
     
-    # Stats cards
-    col1, col2, col3, col4 = st.columns(4)
+    # ========== STATS CARDS ==========
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Total Users", total)
     with col2:
@@ -98,6 +117,10 @@ def render_user_management_bak():
     with col4:
         analyst_count = len([u for u in users if u.get('role') == 'analyst'])
         st.metric("Analysts", analyst_count)
+    with col5:
+        # Count users with profile pictures
+        avatar_count = len([u for u in users if u.get('avatar_url')])
+        st.metric("With Avatar", avatar_count)
     
     # ========== ADD USER FORM (Collapsible) ==========
     with st.expander(f"➕ Add New User to {company_name}", expanded=False):
@@ -111,6 +134,9 @@ def render_user_management_bak():
                 role = st.selectbox("Role *", ["company_admin", "manager", "analyst", "viewer"])
             with col2:
                 phone = st.text_input("Phone")
+                location = st.text_input("Location", help="City, State, or Country")
+                specialization = st.text_input("Specialization", help="e.g., Civil Engineer, Data Analyst")
+                years_experience = st.number_input("Years of Experience", min_value=0, max_value=50, value=0)
                 generate_password = st.checkbox("Auto-generate password")
                 if not generate_password:
                     password = st.text_input("Temporary Password *", type="password")
@@ -138,9 +164,12 @@ def render_user_management_bak():
                         'password': final_password,
                         'email': email.strip(),
                         'full_name': full_name.strip(),
-                        'phone': phone.strip(),
+                        'phone': phone.strip() if phone else None,
                         'mobile_number': mobile_number.strip(),
-                        'role': role
+                        'role': role,
+                        'location': location.strip() if location else None,
+                        'specialization': specialization.strip() if specialization else None,
+                        'years_experience': years_experience if years_experience > 0 else None
                     }
                     success, result = db.create_user(company_id, user_data, st.session_state.user_id)
                     if success:
@@ -173,36 +202,138 @@ def render_user_management_bak():
         created_at = user.get('created_at', 'N/A')
         last_login = user.get('last_login', None)
         
+        # Get profile fields (if available from user dict or fetch separately)
+        avatar_url = user.get('avatar_url')
+        bio = user.get('bio', '')
+        location = user.get('location', '')
+        website = user.get('website', '')
+        specialization = user.get('specialization', '')
+        years_experience = user.get('years_experience', 0)
+        
+        # Get social links for this user
+        social_links = []
+        try:
+            social_links = db.get_user_social_links(user_id)
+        except Exception:
+            pass  # Table might not exist yet
+        
         with st.expander(f"👤 {full_name} (@{username}) - {role.replace('_', ' ').title()}", expanded=False):
+            
+            # ========== USER HEADER WITH AVATAR ==========
+            col_avatar, col_info = st.columns([1, 4])
+            
+            with col_avatar:
+                if avatar_url:
+                    try:
+                        st.image(avatar_url, width=80)
+                    except:
+                        st.image(f"https://ui-avatars.com/api/?name={full_name}&size=80&background=6366f1&color=ffffff", width=80)
+                else:
+                    st.image(f"https://ui-avatars.com/api/?name={full_name}&size=80&background=6366f1&color=ffffff", width=80)
+            
+            with col_info:
+                st.markdown(f"**Status:** {'🟢 Active' if is_active else '🔴 Inactive'}")
+                st.markdown(f"**Mobile:** {mobile_number} {'✅ Verified' if mobile_verified else '❌ Not Verified'}")
+                if specialization:
+                    st.markdown(f"**Specialization:** {specialization}")
+                if years_experience and years_experience > 0:
+                    st.markdown(f"**Experience:** {years_experience} years")
+            
+            # ========== SOCIAL LINKS PREVIEW ==========
+            if social_links:
+                st.markdown("**Social Links:**")
+                platform_icons = {
+                    "facebook": "📘", "twitter": "🐦", "instagram": "📸", 
+                    "linkedin": "💼", "github": "🐙", "youtube": "📺",
+                    "tiktok": "🎵", "pinterest": "📌", "reddit": "🤖",
+                    "whatsapp": "📱", "telegram": "✈️", "discord": "🎮",
+                    "slack": "💬", "medium": "✍️", "dev.to": "💻"
+                }
+                link_cols = st.columns(min(len(social_links), 4))
+                for idx, link in enumerate(social_links[:4]):
+                    with link_cols[idx % 4]:
+                        platform = link.get('platform', '')
+                        url = link.get('url', '#')
+                        icon = platform_icons.get(platform, "🔗")
+                        st.markdown(f"{icon} [{platform.title()}]({url})")
+                if len(social_links) > 4:
+                    st.caption(f"and {len(social_links) - 4} more...")
+                st.divider()
+            
+            # ========== EDIT FORM ==========
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                # Display username as read-only
-                st.text_input("Username (Read-Only)", value=username, disabled=True, key=f"username_{user_id}")
+                st.markdown("#### 📝 Edit User Information")
                 
+                # Basic Information
                 new_full_name = st.text_input("Full Name", value=full_name, key=f"name_{user_id}")
                 new_email = st.text_input("Email", value=email, key=f"email_{user_id}")
                 new_phone = st.text_input("Phone", value=phone, key=f"phone_{user_id}")
                 
-                # Mobile number - read-only
+                # Read-only mobile
                 st.text_input("Mobile Number (Read-Only)", value=mobile_number, disabled=True, key=f"mobile_{user_id}")
                 
-                # Show verification status
+                # Mobile verification status
                 if mobile_verified:
                     st.success("📱 Mobile Verified ✅")
                 else:
                     st.warning("📱 Mobile Not Verified ⚠️")
+                    if st.button("📱 Verify Mobile", key=f"verify_mobile_{user_id}"):
+                        db.update_user(user_id, mobile_verified=1)
+                        st.success("Mobile verified successfully!")
+                        st.rerun()
                 
-                new_role = st.selectbox(
-                    "Role",
-                    options=["company_admin", "manager", "analyst", "viewer"],
-                    index=["company_admin", "manager", "analyst", "viewer"].index(role) if role in ["company_admin", "manager", "analyst", "viewer"] else 2,
-                    key=f"role_{user_id}"
-                )
-                new_status = st.checkbox("Active", value=bool(is_active), key=f"status_{user_id}")
+                # Role and Status
+                col_role, col_status = st.columns(2)
+                with col_role:
+                    new_role = st.selectbox(
+                        "Role",
+                        options=["company_admin", "manager", "analyst", "viewer"],
+                        index=["company_admin", "manager", "analyst", "viewer"].index(role) if role in ["company_admin", "manager", "analyst", "viewer"] else 2,
+                        key=f"role_{user_id}"
+                    )
+                with col_status:
+                    new_status = st.checkbox("Active", value=bool(is_active), key=f"status_{user_id}")
                 
-                if st.button("💾 Save Changes", key=f"save_{user_id}"):
+                st.divider()
+                
+                # Profile Fields (Enhanced)
+                st.markdown("#### 👤 Profile Information")
+                
+                # Only show profile fields if toggled or always show
+                if st.session_state.show_profile_fields:
+                    new_location = st.text_input("Location", value=location or "", key=f"location_{user_id}")
+                    new_website = st.text_input("Website", value=website or "", key=f"website_{user_id}")
+                    new_specialization = st.text_input("Specialization", value=specialization or "", key=f"specialization_{user_id}")
+                    new_years_experience = st.number_input("Years of Experience", 
+                                                         min_value=0, max_value=50, 
+                                                         value=years_experience or 0,
+                                                         key=f"experience_{user_id}")
+                    new_bio = st.text_area("Bio", value=bio or "", 
+                                         key=f"bio_{user_id}",
+                                         help="Brief description about the user (max 500 characters)",
+                                         max_chars=500)
+                else:
+                    # Show compact profile info
+                    if location or website or specialization:
+                        st.markdown("**Profile Info:**")
+                        if location:
+                            st.markdown(f"📍 **Location:** {location}")
+                        if website:
+                            st.markdown(f"🌐 **Website:** {website}")
+                        if specialization:
+                            st.markdown(f"🎯 **Specialization:** {specialization}")
+                        if years_experience:
+                            st.markdown(f"📅 **Experience:** {years_experience} years")
+                    else:
+                        st.info("No profile information added yet. Toggle 'Show Profile Fields' to add.")
+                
+                # Save button
+                if st.button("💾 Save All Changes", key=f"save_{user_id}", type="primary"):
                     updates = {}
+                    
+                    # Basic info updates
                     if new_full_name != full_name:
                         updates['full_name'] = new_full_name
                     if new_email != email:
@@ -217,39 +348,75 @@ def render_user_management_bak():
                     if new_status != bool(is_active):
                         updates['is_active'] = 1 if new_status else 0
                     
+                    # Profile field updates
+                    if st.session_state.show_profile_fields:
+                        if new_location != location:
+                            updates['location'] = new_location
+                        if new_website != website:
+                            updates['website'] = new_website
+                        if new_specialization != specialization:
+                            updates['specialization'] = new_specialization
+                        if new_years_experience != years_experience:
+                            updates['years_experience'] = new_years_experience
+                        if new_bio != bio:
+                            updates['bio'] = new_bio
+                    
                     if updates:
                         success = db.update_user(user_id, **updates)
                         if success:
-                            st.success("User updated successfully")
+                            # Log activity
+                            db.log_user_activity(user_id, 'profile_update', 'Updated user information by admin')
+                            st.success("User updated successfully!")
                             st.rerun()
                         else:
                             st.error("Failed to update user")
                     else:
                         st.info("No changes made")
             
+            # ========== ACTIONS PANEL ==========
             with col2:
-                st.markdown("#### Actions")
+                st.markdown("#### ⚡ Quick Actions")
                 
-                if st.button("🔑 Reset Password", key=f"reset_pw_{user_id}"):
+                # View full profile
+                if st.button("👤 View Full Profile", key=f"view_profile_{user_id}", use_container_width=True):
+                    st.session_state.view_user_id = user_id
+                    st.session_state.page = "view_user_profile"
+                    st.rerun()
+                
+                st.divider()
+                
+                # Reset password
+                if st.button("🔑 Reset Password", key=f"reset_pw_{user_id}", use_container_width=True):
                     success, new_pw = db.reset_user_password(user_id)
                     if success:
-                        st.success(f"New password: `{new_pw}`")
+                        st.success(f"✅ New password: `{new_pw}`")
+                        st.info("📋 Please copy this password and share it securely with the user.")
+                    else:
+                        st.error(f"Failed to reset password: {new_pw}")
                 
+                st.divider()
+                
+                # Delete user (except self)
                 if user_id != st.session_state.user_id:
-                    if st.button("🗑️ Delete User", key=f"delete_{user_id}", type="secondary"):
+                    if st.button("🗑️ Delete User", key=f"delete_{user_id}", type="secondary", use_container_width=True):
                         success = db.delete_user(user_id)
                         if success:
-                            st.success(f"User {full_name} deleted")
+                            st.success(f"User {full_name} deleted successfully")
                             st.rerun()
                         else:
                             st.error("Delete failed")
                 else:
-                    st.caption("(You cannot delete your own account)")
+                    st.warning("🔒 You cannot delete your own account")
                 
-                st.markdown("---")
-                st.markdown(f"**Created:** {str(created_at)[:16] if created_at else 'N/A'}")
-                st.markdown(f"**Last Login:** {str(last_login)[:16] if last_login else 'Never'}")
-                st.markdown(f"**Mobile Verified:** {'✅ Yes' if mobile_verified else '❌ No'}")
+                st.divider()
+                
+                # User metadata
+                st.markdown("**📊 User Info**")
+                st.caption(f"**Created:** {str(created_at)[:16] if created_at else 'N/A'}")
+                st.caption(f"**Last Login:** {str(last_login)[:16] if last_login else 'Never'}")
+                st.caption(f"**Mobile Verified:** {'✅ Yes' if mobile_verified else '❌ No'}")
+                if avatar_url:
+                    st.caption("**Has Profile Picture:** ✅")
     
     # ========== PAGINATION CONTROLS ==========
     total_pages = (total + users_per_page - 1) // users_per_page
@@ -261,12 +428,65 @@ def render_user_management_bak():
                 st.rerun()
         with col2:
             st.write(f"Page {st.session_state.user_page} of {total_pages}")
+            # Page input for direct navigation
+            page_input = st.number_input("Go to page", min_value=1, max_value=total_pages, 
+                                        value=st.session_state.user_page, step=1, 
+                                        key="page_input", label_visibility="collapsed")
+            if page_input != st.session_state.user_page:
+                st.session_state.user_page = page_input
+                st.rerun()
         with col3:
             if st.button("Next ▶", disabled=(st.session_state.user_page >= total_pages)):
                 st.session_state.user_page += 1
                 st.rerun()
+    
+    # ========== EXPORT OPTIONS ==========
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        if st.button("📊 Export Users (CSV)", use_container_width=True):
+            # Export current filtered users to CSV
+            if users:
+                df = pd.DataFrame(users)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="⬇️ Download CSV",
+                    data=csv,
+                    file_name=f"users_{company_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.warning("No users to export")
+    
+    with col2:
+        if st.button("📋 Copy Email List", use_container_width=True):
+            if users:
+                emails = [u.get('email') for u in users if u.get('email')]
+                st.code('\n'.join(emails), language="text")
+            else:
+                st.warning("No users to copy")
+    
+    with col3:
+        if st.button("📱 Copy Mobile List", use_container_width=True):
+            if users:
+                mobiles = [u.get('mobile_number') for u in users if u.get('mobile_number')]
+                st.code('\n'.join(mobiles), language="text")
+            else:
+                st.warning("No users to copy")
+    
+    # ========== BACK BUTTON ==========
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("← Back to Company Management", use_container_width=True):
+            # ✅ Clear selected company
+            if 'selected_company_id' in st.session_state:
+                del st.session_state.selected_company_id
+            st.session_state.page = "admin_dashboard"
+            st.rerun()
 
-def render_user_management():
+def render_user_management_bak():
     """Full user management with CRUD, search, pagination, inline editing"""
     
     # ✅ Use selected_company_id if set (from admin dashboard)

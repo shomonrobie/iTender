@@ -107,12 +107,12 @@ from _pages.company_dashboard import show as show_company_dashboard
 from _pages.dashboard import show as dashboard_page
 #from modules.navigation import render_top_navigation, render_page_header
 from modules.ui_components import (
-    render_app_header, 
-    render_dark_mode_toggle, 
+    render_app_header,      
     apply_theme, 
     init_theme,
-    render_footer
+    render_footer, get_theme_css
 )
+
 from modules.tender_analysis import render_tender_analysis
 
 from modules.subscription_manager import SubscriptionManager
@@ -615,6 +615,9 @@ def history_page() -> None:
 
 
 def profile_page() -> None:
+    from modules.profile_module import render_user_profile
+    render_user_profile()
+def profile_page_bak() -> None:
     """User profile view and edit"""
     debug_print("👤 Rendering profile page")
     
@@ -1560,11 +1563,12 @@ def main() -> None:
     # CONDITIONAL HEADER & SIDEBAR RENDERING
     # =========================================================================
     
-    # ONLY render app header for logged-in users
-    if st.session_state.logged_in:
-        # Pass the dark mode toggle to be rendered inside the header
-        render_app_header(show_dark_mode_toggle=True)
+    # # ONLY render app header for logged-in users
+    # if st.session_state.logged_in:
+    #     # Pass the dark mode toggle to be rendered inside the header
+    #     render_app_header(show_dark_mode_toggle=True)
     
+    render_app_header()
     if st.session_state.logged_in:
         # For logged-in users, show sidebar (without dark mode toggle)
         with st.sidebar:

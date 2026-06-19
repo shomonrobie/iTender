@@ -71,4 +71,6 @@ def show():
         - **General Questions**: < 48 hours  
         """)
     
+    from modules.footer import render_footer
+    render_footer()
     debug_print("✅ Contact page render complete")

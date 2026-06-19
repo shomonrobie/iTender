@@ -6,6 +6,7 @@ Subscription Plans - Loaded from database with fallback defaults
 import streamlit as st
 from typing import Dict, List, Optional
 from database.unified_db_manager import db
+from datetime import datetime, timedelta
 
 # Default plans (used only for initialization)
 DEFAULT_PLANS = [
@@ -190,7 +191,7 @@ def get_plans_from_db(force_refresh: bool = False) -> Dict[str, Dict]:
     
     # Return cached plans if not expired (5 minutes)
     if not force_refresh and _plans_cache is not None:
-        from datetime import datetime, timedelta
+        
         if _plans_cache_time and datetime.now() - _plans_cache_time < timedelta(minutes=5):
             return _plans_cache
     

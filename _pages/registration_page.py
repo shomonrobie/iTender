@@ -54,7 +54,8 @@ def show():
         st.info("💡 Already have an account?")
         if st.button("→ Login Instead", use_container_width=True):
             navigate_to("login")
-
+    from modules.footer import render_footer
+    render_footer()
 
 def render_company_registration():
     """Render company registration form"""

@@ -3,6 +3,8 @@ import streamlit as st
 import sqlite3
 import os
 import logging
+from database.crud_operations import DatabaseCRUD
+from migrations.v012_update_user_profile import MigrationV012  # ✅ FIXED IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +25,24 @@ class DatabaseSchema:
         """Create ALL tables from all migrations"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # Move ALL your CREATE TABLE statements here
-        # (Everything from your _create_all_tables() method)
-        
+        self._create_all_tables()
+
+        self.run_migrations()
         conn.commit()
         conn.close()
         print("✅ All tables created successfully")
-    
+    def run_migrations(self):
+        """Run all pending migrations"""
+        db = DatabaseCRUD(self.db_path)
+        migration = MigrationV012(db)
+        
+        # Check if migration is needed
+        if not db.table_exists('social_links'):
+            print("🔄 Running v012 migration...")
+            migration.up()
+        else:
+            print("✅ v012 migration already applied")
+
     def insert_default_data(self):
         """Insert default data if tables are empty"""
         conn = sqlite3.connect(self.db_path)

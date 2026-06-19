@@ -23,5 +23,7 @@ def show():
     # Import and call the subscription module
     from modules.subscription_plan_comparison import render_plan_comparison_page
     render_plan_comparison_page()
-    
+
+    from modules.footer import render_footer
+    render_footer()   
     debug_print("✅ Pricing page render complete")

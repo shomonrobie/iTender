@@ -2711,28 +2711,5 @@ def show_landing_page():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 আজই ডেমো বুক করুন", use_container_width=True, type="primary"):
-            st.info("Please call us at +880 1234 567890 or email sales@itenderbd.com")
-        st.markdown("""
-        <div style="text-align: center; margin-top: 1rem; color: #64748b;">
-            <p>📞 +880 1234 567890 | 📧 sales@itenderbd.com | 🌐 www.itenderbd.com</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Trust Badges
-    st.markdown("---")
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    badges = ["✓ PPR 2025", "✓ e-GP Ready", "✓ SSL Secure", "✓ 24/7 Support", "✓ BD Made", "✓ AI Powered"]
-    for idx, badge in enumerate(badges):
-        with [col1, col2, col3, col4, col5, col6][idx]:
-            st.markdown(f"<div class='trust-badge'>{badge}</div>", unsafe_allow_html=True)
-    
-    # Footer
-    st.markdown("""
-    <div style="text-align: center; padding: 2rem; color: #94a3b8; font-size: 0.85rem !important;">
-        <p>© 2026 TenderAI (BD). All rights reserved. | Bangladesh's First AI-Powered Tender Intelligence Platform</p>
-    </div>
-    """, unsafe_allow_html=True)
+    from modules.footer import render_footer
+    render_footer()

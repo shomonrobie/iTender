@@ -16,22 +16,6 @@ import string
 import os
 from unittest import result
 
-# import streamlit as st
-# import sqlite3
-# import hashlib
-# import json
-# from datetime import datetime, timedelta
-# from unittest import result
-# import pandas as pd
-# import numpy as np
-# import logging
-# import bcrypt
-# import os
-# from datetime import datetime, date
-# from typing import Optional, Dict, Any, List, Union  # ← Add this line
-# import secrets
-# import string
-# import re
 logger = logging.getLogger(__name__)
 
 class DatabaseCRUD:
@@ -238,10 +222,6 @@ class DatabaseCRUD:
             mobile = mobile[2:]
         return mobile
 
-    # ==================== USER METHODS ====================
-    # database/crud_operations.py - Replace your create_user method
-
-    # database/crud_operations.py - Fix create_user method
 
     def create_user(self, company_id: int, user_data: Dict, created_by: int = None) -> tuple:
         """
@@ -556,6 +536,284 @@ class DatabaseCRUD:
             
             return users, total
 
+    # ==================== USER PROFILE METHODS ====================
+
+    def get_user_profile(self, user_id: int) -> Optional[Dict]:
+        """Get complete user profile with social links"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            # Get user data with new fields
+            cursor.execute("""
+                SELECT id, username, email, mobile_number, full_name, phone,
+                    role, company_id, is_active, created_at, last_login,
+                    mobile_verified, email_verified,
+                    avatar_url, bio, location, website,
+                    specialization, years_experience
+                FROM users 
+                WHERE id = ?
+            """, (user_id,))
+            
+            user = cursor.fetchone()
+            if not user:
+                return None
+            
+            # Convert to dict
+            if isinstance(user, dict):
+                user_dict = user
+            else:
+                columns = [description[0] for description in cursor.description]
+                user_dict = dict(zip(columns, user))
+            
+            # Get social links
+            social_links = self.get_user_social_links(user_id)
+            user_dict['social_links'] = social_links
+            
+            return user_dict
+    
+    def update_user_profile(self, user_id: int, **kwargs) -> bool:
+        """Update user profile fields"""
+        allowed_fields = [
+            'full_name', 'phone', 'email', 'bio', 'location', 
+            'website', 'avatar_url', 'specialization', 'years_experience'
+        ]
+        
+        updates = {}
+        for key, value in kwargs.items():
+            if key in allowed_fields:
+                updates[key] = value
+        
+        if not updates:
+            return False
+        
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            set_clause = ', '.join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values())
+            values.append(user_id)
+            
+            cursor.execute(f"""
+                UPDATE users 
+                SET {set_clause}
+                WHERE id = ?
+            """, values)
+            
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def update_user_avatar(self, user_id: int, avatar_url: str) -> bool:
+        """Update user avatar URL"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("""
+                UPDATE users 
+                SET avatar_url = ? 
+                WHERE id = ?
+            """, (avatar_url, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    # ==================== SOCIAL LINKS METHODS ====================
+    
+    def get_user_social_links(self, user_id: int) -> List[Dict]:
+        """Get all social links for a user"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("""
+                SELECT id, platform, url, is_active, is_public, icon, display_order
+                FROM social_links 
+                WHERE user_id = ?
+                ORDER BY display_order ASC, platform ASC
+            """, (user_id,))
+            
+            rows = cursor.fetchall()
+            
+            # Convert to list of dicts
+            links = []
+            for row in rows:
+                if isinstance(row, dict):
+                    links.append(row)
+                else:
+                    columns = [description[0] for description in cursor.description]
+                    links.append(dict(zip(columns, row)))
+            
+            return links
+    
+    def add_social_link(self, user_id: int, platform: str, url: str, 
+                        is_public: bool = True, icon: str = None) -> bool:
+        """Add a social link for a user"""
+        # Validate platform
+        valid_platforms = [
+            'facebook', 'twitter', 'instagram', 'linkedin', 'github',
+            'youtube', 'tiktok', 'pinterest', 'reddit', 'whatsapp',
+            'telegram', 'discord', 'slack', 'medium', 'dev.to'
+        ]
+        
+        if platform.lower() not in valid_platforms:
+            return False
+        
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            # Check if platform already exists
+            cursor.execute("""
+                SELECT id FROM social_links 
+                WHERE user_id = ? AND platform = ?
+            """, (user_id, platform.lower()))
+            
+            if cursor.fetchone():
+                return False
+            
+            # Get max display order
+            cursor.execute("""
+                SELECT MAX(display_order) as max_order 
+                FROM social_links 
+                WHERE user_id = ?
+            """, (user_id,))
+            row = cursor.fetchone()
+            max_order = row['max_order'] if row and row['max_order'] is not None else -1
+            
+            cursor.execute("""
+                INSERT INTO social_links 
+                (user_id, platform, url, is_public, icon, display_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, platform.lower(), url, 1 if is_public else 0, icon, max_order + 1))
+            
+            conn.commit()
+            return True
+    
+    def update_social_link(self, link_id: int, **kwargs) -> bool:
+        """Update a social link"""
+        allowed_fields = ['url', 'is_active', 'is_public', 'icon', 'display_order']
+        
+        updates = {}
+        for key, value in kwargs.items():
+            if key in allowed_fields:
+                updates[key] = value
+        
+        if not updates:
+            return False
+        
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            set_clause = ', '.join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values())
+            values.append(link_id)
+            
+            cursor.execute(f"""
+                UPDATE social_links 
+                SET {set_clause}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, values)
+            
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def delete_social_link(self, link_id: int) -> bool:
+        """Delete a social link"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("DELETE FROM social_links WHERE id = ?", (link_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def reorder_social_links(self, user_id: int, link_order: List[int]) -> bool:
+        """Reorder social links for a user"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            for index, link_id in enumerate(link_order):
+                cursor.execute("""
+                    UPDATE social_links 
+                    SET display_order = ? 
+                    WHERE id = ? AND user_id = ?
+                """, (index, link_id, user_id))
+            
+            conn.commit()
+            return True
+    
+    # ==================== USER ACTIVITY LOG METHODS ====================
+    
+    def log_user_activity(self, user_id: int, action: str, details: str = None,
+                        ip_address: str = None, user_agent: str = None) -> bool:
+        """Log user activity"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("""
+                INSERT INTO user_activity_log 
+                (user_id, action, details, ip_address, user_agent)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, action, details, ip_address, user_agent))
+            conn.commit()
+            return True
+    
+    def get_user_activities(self, user_id: int, limit: int = 20) -> List[Dict]:
+        """Get user activity log"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            cursor.execute("""
+                SELECT id, action, details, ip_address, user_agent, created_at
+                FROM user_activity_log 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (user_id, limit))
+            
+            rows = cursor.fetchall()
+            
+            activities = []
+            for row in rows:
+                if isinstance(row, dict):
+                    activities.append(row)
+                else:
+                    columns = [description[0] for description in cursor.description]
+                    activities.append(dict(zip(columns, row)))
+            
+            return activities
+    
+    def get_user_activity_stats(self, user_id: int) -> Dict:
+        """Get user activity statistics"""
+        with self.get_connection() as conn:
+            cursor = self.db_conn.get_cursor(conn)
+            
+            # Total activities
+            cursor.execute("""
+                SELECT COUNT(*) as total_activities
+                FROM user_activity_log 
+                WHERE user_id = ?
+            """, (user_id,))
+            total = cursor.fetchone()
+            
+            # Activities by action
+            cursor.execute("""
+                SELECT action, COUNT(*) as count
+                FROM user_activity_log 
+                WHERE user_id = ?
+                GROUP BY action
+                ORDER BY count DESC
+            """, (user_id,))
+            
+            actions = cursor.fetchall()
+            
+            # Last 7 days activity
+            cursor.execute("""
+                SELECT DATE(created_at) as date, COUNT(*) as count
+                FROM user_activity_log 
+                WHERE user_id = ? 
+                AND created_at >= DATE('now', '-7 days')
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+            """, (user_id,))
+            
+            weekly = cursor.fetchall()
+            
+            return {
+                'total': total['total_activities'] if total else 0,
+                'by_action': [dict(row) if isinstance(row, dict) else dict(zip(['action', 'count'], row)) for row in actions],
+                'weekly': [dict(row) if isinstance(row, dict) else dict(zip(['date', 'count'], row)) for row in weekly]
+            }
 
     # ==================== SYSTEM CONFIG METHODS ====================
     
@@ -3025,23 +3283,144 @@ class DatabaseCRUD:
                 return True, user_id
             except Exception as e:
                 return False, str(e)
+    def _hash_password(self, password: str) -> str:
+        """Hash a password using bcrypt"""
+        return bcrypt.hashpw(
+            password.encode('utf-8'), 
+            bcrypt.gensalt()
+        ).decode('utf-8')
 
-    def reset_user_password(self, user_id: int, new_password: str = None) -> tuple:
-        """Reset user password. If new_password not provided, generate random."""
-        import string
-        import secrets
-        if not new_password:
-            alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-            new_password = ''.join(secrets.choice(alphabet) for _ in range(12))
-        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    # 2. Verify password
+    def _verify_password(self, password: str, hashed: str) -> bool:
+        """Verify a password against its hash"""
+        try:
+            return bcrypt.checkpw(
+                password.encode('utf-8'), 
+                hashed.encode('utf-8')
+            )
+        except bcrypt.InvalidHashError:
+            return False
+
+    def change_user_password(self, user_id: int, current_password: str, 
+                         new_password: str) -> Tuple[bool, str]:
+        """
+        Change user password with verification of current password.
+        
+        Args:
+            user_id: User ID
+            current_password: Current password for verification
+            new_password: New password to set
+        
+        Returns:
+            Tuple[bool, str]: (success, message)
+        """
         with self.get_connection() as conn:
             cursor = self.db_conn.get_cursor(conn)
+            
             try:
-                cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
-                return True, new_password
+                # Get current password hash
+                cursor.execute("SELECT password FROM users WHERE id = ?", (user_id,))
+                row = cursor.fetchone()
+                
+                if not row:
+                    return False, "User not found"
+                
+                # Extract password hash
+                if isinstance(row, dict):
+                    stored_hash = row.get('password')
+                else:
+                    stored_hash = row[0]
+                
+                # Verify current password
+                if not bcrypt.checkpw(
+                    current_password.encode('utf-8'), 
+                    stored_hash.encode('utf-8')
+                ):
+                    return False, "Current password is incorrect"
+                
+                # Hash new password
+                hashed = bcrypt.hashpw(
+                    new_password.encode('utf-8'), 
+                    bcrypt.gensalt()
+                ).decode('utf-8')
+                
+                # Update password
+                cursor.execute(
+                    "UPDATE users SET password = ? WHERE id = ?",
+                    (hashed, user_id)
+                )
+                conn.commit()
+                
+                # Log the activity
+                self.log_user_activity(
+                    user_id, 
+                    'password_change', 
+                    'Password changed successfully'
+                )
+                
+                return True, "Password changed successfully"
+                
+            except bcrypt.InvalidHashError:
+                logger.error(f"Invalid hash error for user {user_id}")
+                return False, "Password verification failed"
             except Exception as e:
-                logger.error(f"Password reset failed: {e}")
-                return False, None
+                logger.error(f"Password change failed for user {user_id}: {e}")
+                return False, f"Failed to change password: {str(e)}"
+
+    def reset_user_password(self, user_id: int, new_password: str = None) -> Tuple[bool, str]:
+        """
+        Reset user password. If new_password not provided, generate random.
+        
+        Args:
+            user_id: User ID to reset password for
+            new_password: Optional new password (if None, auto-generate)
+        
+        Returns:
+            Tuple[bool, str]: (success, password_or_error_message)
+        """
+        import string
+        import secrets
+        
+        try:
+            # Generate password if not provided
+            if not new_password:
+                alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+                new_password = ''.join(secrets.choice(alphabet) for _ in range(12))
+            
+            # Hash the password
+            hashed = bcrypt.hashpw(
+                new_password.encode('utf-8'), 
+                bcrypt.gensalt()
+            ).decode('utf-8')
+            
+            # Update in database
+            with self.get_connection() as conn:
+                cursor = self.db_conn.get_cursor(conn)
+                cursor.execute(
+                    "UPDATE users SET password = ? WHERE id = ?", 
+                    (hashed, user_id)
+                )
+                conn.commit()
+                
+                if cursor.rowcount == 0:
+                    return False, "User not found"
+                
+                # Log the activity
+                self.log_user_activity(
+                    user_id, 
+                    'password_reset', 
+                    'Password was reset by admin'
+                )
+                
+                return True, new_password
+                
+        except bcrypt.InvalidHashError:
+            logger.error(f"Invalid hash error for user {user_id}")
+            return False, "Password hashing failed"
+        except Exception as e:
+            logger.error(f"Password reset failed for user {user_id}: {e}")
+            return False, f"Failed to reset password: {str(e)}"
+
 
     def delete_user(self, user_id: int) -> bool:
         """Hard delete user (only allowed for non-admin users)"""

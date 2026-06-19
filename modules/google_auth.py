@@ -68,17 +68,42 @@ def get_google_credentials():
 
 
 def get_redirect_uri():
-    """Get the correct redirect URI dynamically"""
-    try:
-        if "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]:
-            return st.secrets["auth"]["redirect_uri"]
-    except:
-        pass
+    """Smart redirect URI detection for all environments"""
     
-    if os.getenv("STREAMLIT_SHARE") or "streamlit.app" in os.getenv("STREAMLIT_SERVER_HEADLESS", ""):
-        return "https://itender-bd.streamlit.app/oauth2callback"
+    # Priority 1: Explicit secret (most reliable)
+    for key_path in [
+        lambda: st.secrets["redirect_uri"],
+        lambda: st.secrets["auth"]["redirect_uri"],
+        lambda: st.secrets["google"]["redirect_uri"],
+    ]:
+        try:
+            uri = key_path()
+            if uri:
+                print(f"✅ Using redirect_uri from secrets: {uri}")
+                return uri
+        except:
+            continue
     
-    return "http://localhost:8501/oauth2callback"
+    # Priority 2: Environment detection
+    import os
+    
+    # Streamlit Cloud indicators
+    cloud_indicators = [
+        os.getenv("STREAMLIT_SHARING_MODE"),
+        os.getenv("DEPLOYMENT") == "streamlit",
+        "streamlit.app" in os.getenv("HOSTNAME", ""),
+        os.path.exists("/home/appuser"),  # Streamlit Cloud home dir
+    ]
+    
+    if any(cloud_indicators):
+        uri = "https://itender-bd.streamlit.app/"
+        print(f"✅ Detected Streamlit Cloud, using: {uri}")
+        return uri
+    
+    # Priority 3: Local development fallback
+    uri = "http://localhost:8501/"
+    print(f"✅ Using local development URI: {uri}")
+    return uri
 
 
 def get_google_auth_url():
@@ -90,6 +115,12 @@ def get_google_auth_url():
     
     redirect_uri = get_redirect_uri()
     
+    # 🔍 DEBUG: Print the exact redirect URI
+    print(f"🔍 DEBUG: redirect_uri = '{redirect_uri}'")
+    print(f"🔍 DEBUG: Length = {len(redirect_uri)}")
+    print(f"🔍 DEBUG: Ends with /? {redirect_uri.endswith('/')}")
+    print(f"🔍 DEBUG: Repr = {repr(redirect_uri)}")
+    
     params = {
         'client_id': client_id,
         'redirect_uri': redirect_uri,
@@ -100,7 +131,7 @@ def get_google_auth_url():
     }
     
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
-    print(f"🔗 Auth URL: {auth_url[:100]}...")
+    print(f"🔗 Full Auth URL: {auth_url}")
     return auth_url
 
 
