@@ -66,46 +66,46 @@ def get_google_credentials():
     
     return client_id, client_secret
 
-
 def get_redirect_uri():
-    """Smart redirect URI detection for all environments"""
-    
-    # Priority 1: Explicit secret (most reliable)
-    for key_path in [
-        lambda: st.secrets["redirect_uri"],
-        lambda: st.secrets["auth"]["redirect_uri"],
-        lambda: st.secrets["google"]["redirect_uri"],
-    ]:
-        try:
-            uri = key_path()
-            if uri:
-                print(f"✅ Using redirect_uri from secrets: {uri}")
-                return uri
-        except:
-            continue
-    
-    # Priority 2: Environment detection
+    """Get the correct redirect URI - works on both local and cloud"""
     import os
     
-    # Streamlit Cloud indicators
-    cloud_indicators = [
-        os.getenv("STREAMLIT_SHARING_MODE"),
-        os.getenv("DEPLOYMENT") == "streamlit",
-        "streamlit.app" in os.getenv("HOSTNAME", ""),
-        os.path.exists("/home/appuser"),  # Streamlit Cloud home dir
-    ]
+    # Priority 1: Check Streamlit Cloud secrets (dashboard)
+    try:
+        if "redirect_uri" in st.secrets:
+            uri = st.secrets["redirect_uri"]
+            print(f"✅ Found redirect_uri in Streamlit secrets: {uri}")
+            return uri
+    except:
+        pass
     
-    if any(cloud_indicators):
+    # Priority 2: Check [auth] section
+    try:
+        if "auth" in st.secrets and "redirect_uri" in st.secrets["auth"]:
+            uri = st.secrets["auth"]["redirect_uri"]
+            print(f"✅ Found redirect_uri in [auth]: {uri}")
+            return uri
+    except:
+        pass
+    
+    # Priority 3: Detect environment automatically
+    # Streamlit Cloud sets these environment variables
+    is_cloud = (
+        os.getenv("STREAMLIT_SHARING_MODE") or
+        os.getenv("DEPLOYMENT") == "streamlit" or
+        "streamlit.app" in os.getenv("HOSTNAME", "") or
+        os.path.exists("/home/appuser")  # Streamlit Cloud home directory
+    )
+    
+    if is_cloud:
         uri = "https://itender-bd.streamlit.app/"
         print(f"✅ Detected Streamlit Cloud, using: {uri}")
         return uri
+    else:
+        uri = "http://localhost:8501/"
+        print(f"✅ Local development, using: {uri}")
+        return uri
     
-    # Priority 3: Local development fallback
-    uri = "http://localhost:8501/"
-    print(f"✅ Using local development URI: {uri}")
-    return uri
-
-
 def get_google_auth_url():
     """Generate Google OAuth URL"""
     client_id, _ = get_google_credentials()

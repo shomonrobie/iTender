@@ -1468,6 +1468,21 @@ def render_header_nav() -> None:
                     if st.button(label, key=f"nav_{page_key}", use_container_width=True, type=button_type):
                         st.session_state.page = page_key
                         st.rerun()
+
+def debug_environment():
+    from modules.google_auth import get_redirect_uri
+    """Debug environment detection"""
+    print("=" * 60)
+    print("🔍 ENVIRONMENT DEBUG")
+    print("=" * 60)
+    print(f"STREAMLIT_SHARING_MODE: {os.getenv('STREAMLIT_SHARING_MODE')}")
+    print(f"DEPLOYMENT: {os.getenv('DEPLOYMENT')}")
+    print(f"HOSTNAME: {os.getenv('HOSTNAME')}")
+    print(f"/home/appuser exists: {os.path.exists('/home/appuser')}")
+    print(f"Redirect URI: {get_redirect_uri()}")
+    print("=" * 60)
+
+
 def main() -> None:
     """
     Main application entry point with optimized routing.
@@ -1480,7 +1495,7 @@ def main() -> None:
     
     # Apply theme CSS
     apply_theme()
-
+    debug_environment()
     # =========================================================================
     # FIRST: Check if user is already logged in - redirect immediately
     # =========================================================================
